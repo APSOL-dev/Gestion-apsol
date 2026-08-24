@@ -1,0 +1,42 @@
+{
+  "name": "apsol-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.104.1",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-react": "^1.11.0",
+    "moment": "^2.30.1",
+    "react": "^19.2.5",
+    "react-big-calendar": "^1.19.4",
+    "react-dom": "^19.2.5",
+    "react-router-dom": "^7.14.2",
+    "react-select": "^5.10.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.2.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.5.0",
+    "jsdom": "^29.1.1",
+    "vite": "^8.0.10",
+    "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^4.1.11"
+  }
+}

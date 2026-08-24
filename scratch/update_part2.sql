@@ -1,0 +1,62 @@
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Laboratorio', tamanio = 6, dias_espera_facturacion = 4 WHERE id = '3fcc2835-49a0-4e3d-a50e-3c09c9e44e00';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'Logistica', tamanio = 20, dias_espera_facturacion = 6 WHERE id = '1c4617b5-6e72-4eca-8f11-9ef8eafc8480';
+UPDATE apsol.empresas SET provincia = NULL, pais = 'Chile', industria = 'Logistica', tamanio = 10, dias_espera_facturacion = 4 WHERE id = 'f4762272-6225-46de-a166-66b5ef2024c5';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'consecionario', tamanio = 200, dias_espera_facturacion = 6 WHERE id = '4451954a-534b-40fb-a0fe-892d242a6727';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Agricultura', tamanio = 25, dias_espera_facturacion = 4 WHERE id = 'b109160d-0030-4fdd-93d1-d6951b3c42da';
+UPDATE apsol.empresas SET provincia = 'Buenos aires', pais = 'Argentina', industria = 'Seguros', tamanio = 10, dias_espera_facturacion = 4 WHERE id = 'ece8bdeb-4ae5-4257-9fb2-64f268f46790';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Comercio', tamanio = 10, dias_espera_facturacion = 4 WHERE id = '27fc8f05-a0f3-416c-b72b-482361e85eda';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Distribuidora', tamanio = 10, dias_espera_facturacion = 4 WHERE id = '9fabb9b5-996d-4476-842b-3a16241eb956';
+UPDATE apsol.empresas SET provincia = 'Minimercado', pais = 'Argentina', industria = 'Supermercados', tamanio = 2, dias_espera_facturacion = 4 WHERE id = '1a653f6d-0d0a-44be-b07f-6be6c348d0e8';
+UPDATE apsol.empresas SET provincia = 'Corrientes', pais = 'Argentina', industria = 'Muebles', tamanio = 6, dias_espera_facturacion = 4 WHERE id = '2cd9b7e5-df1d-417f-9d1b-814eed963831';
+UPDATE apsol.empresas SET provincia = 'San Luis', pais = 'Argentina', industria = 'Supermercados', tamanio = 0, dias_espera_facturacion = 4 WHERE id = 'fb3b640e-bad7-49f1-9389-8238b31c7b41';
+UPDATE apsol.empresas SET provincia = 'BS AS', pais = 'Argentina', industria = 'Distribuidora', tamanio = 200, dias_espera_facturacion = 4 WHERE id = 'd0cf91c6-638c-476e-bbd2-07c0cdec2aac';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'Automotor', tamanio = 30, dias_espera_facturacion = 4 WHERE id = 'f0e0dc25-7cf6-4911-ba2f-581b2ae0330f';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Industria Alimenticia', tamanio = 50, dias_espera_facturacion = 4 WHERE id = '90ab6de1-dbd1-4fb0-904a-21fec1817140';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'Industria Alimenticia', tamanio = 0, dias_espera_facturacion = 4 WHERE id = '8fb4192c-a199-4257-841b-a5f819bf086a';
+UPDATE apsol.empresas SET provincia = 'BS AS', pais = 'Argentina', industria = 'Educaci├│n', tamanio = 10, dias_espera_facturacion = 4 WHERE id = '139058ed-1fd8-4d0f-824c-0d38bde12bf8';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Industria Alimenticia', tamanio = 50, dias_espera_facturacion = 4 WHERE id = '67cd6c67-78b0-4282-9fd0-8bbd96292f77';
+UPDATE apsol.empresas SET provincia = 'Bs As', pais = 'Argentina', industria = 'Hoteler├¡a', tamanio = 200, dias_espera_facturacion = 4 WHERE id = '70cb0d85-e6ed-4101-8163-3b1945975823';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Papelera', tamanio = 50, dias_espera_facturacion = 4 WHERE id = 'c1ed2eb7-7fb3-4af1-b76c-64be29a917dd';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Servicios', tamanio = 0, dias_espera_facturacion = 4 WHERE id = 'b651c6f1-d8e3-4710-8c01-c3b243568699';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'Madera', tamanio = 100, dias_espera_facturacion = 4 WHERE id = '33681469-0dde-49ce-84cf-6c2638f7cb13';
+UPDATE apsol.empresas SET provincia = NULL, pais = 'Colombia', industria = 'Transporte de carga', tamanio = 10, dias_espera_facturacion = 4 WHERE id = '7d57f5bb-7e02-4321-a2ec-6e4e7bf179aa';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Industria Alimenticia', tamanio = 50, dias_espera_facturacion = 4 WHERE id = '501d6249-ddc6-4ec8-9a1a-a6dcfd35f353';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Comercio', tamanio = 20, dias_espera_facturacion = 4 WHERE id = '4063c5f1-a20a-4420-9fd6-15f7df8ceb1c';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Comercio', tamanio = 15, dias_espera_facturacion = 4 WHERE id = '4063c5f1-a20a-4420-9fd6-15f7df8ceb1c';
+UPDATE apsol.empresas SET provincia = 'Santa Cruz', pais = 'Argentina', industria = 'Distribuidora', tamanio = 200, dias_espera_facturacion = 4 WHERE id = '7284ad77-1913-4191-b819-a23e0ab7d671';
+UPDATE apsol.empresas SET provincia = 'Buenos Aires', pais = 'Argentina', industria = 'Club', tamanio = 50, dias_espera_facturacion = 4 WHERE id = '90f2ffcf-c3ae-45cc-805e-c7f201196a54';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'Automotor', tamanio = 5, dias_espera_facturacion = 4 WHERE id = 'c543eef5-3196-4f27-b6b1-0d4b9da5c8be';
+UPDATE apsol.empresas SET provincia = 'Rio Negro', pais = 'Argentina', industria = 'Laboratorio', tamanio = 100, dias_espera_facturacion = 4 WHERE id = 'd9cc3e32-b133-4fdb-ab42-a7e685d81de6';
+UPDATE apsol.empresas SET provincia = 'Santa fe', pais = 'Argentina', industria = 'Legal', tamanio = 5, dias_espera_facturacion = 4 WHERE id = 'a68a113d-fe2e-4a22-9425-8aa3711888b3';
+
+-- Inserts (New Companies)
+
+-- Refresh Razones Sociales for existing companies
+DELETE FROM apsol.razones_sociales WHERE empresa_id IN ('d8e3423e-dd19-44bd-8e1c-0ab44aa412af','70e32e93-bd73-42df-a7b4-cdb9dd2079c5','f67278c3-67ea-4d1e-ab0a-dc4ac39d2470','163af7bb-eff1-4e61-b78a-fc948849214a','cb357211-4a2f-4a14-95dc-6c2492338675','ddd21d41-4bee-4d7a-8fa3-d38de1de8c06','595928cc-7703-4aad-b698-e9dcffdfd65e','11ff3103-702c-4fbb-9b62-6202b67fe70b','5e551e4b-5f75-46e7-9226-e2fb4634544f','808a806d-f71e-4b60-bf7f-8018a9ad1568','c9b93c2a-043f-47e7-87f7-5bf267caecdc','275646fa-580c-4d70-97ca-05d76bd1c716','a898bcd9-44db-4f34-8b1d-bb3e820efa36','0ab60b02-fe7d-4b34-ba74-4f45ca9f397d','3fcc2835-49a0-4e3d-a50e-3c09c9e44e00','1c4617b5-6e72-4eca-8f11-9ef8eafc8480','4451954a-534b-40fb-a0fe-892d242a6727','139058ed-1fd8-4d0f-824c-0d38bde12bf8','c1ed2eb7-7fb3-4af1-b76c-64be29a917dd','c543eef5-3196-4f27-b6b1-0d4b9da5c8be');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('d8e3423e-dd19-44bd-8e1c-0ab44aa412af', 'AMIPACK ENVASES S. A.', '30674273300');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('70e32e93-bd73-42df-a7b4-cdb9dd2079c5', 'EMPRESA DE TRANSPORTES EL NORTE SA', '30546263483');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('70e32e93-bd73-42df-a7b4-cdb9dd2079c5', 'EMPRESA EL NORTE BIS SRL', '30546234246');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('70e32e93-bd73-42df-a7b4-cdb9dd2079c5', 'EMPRESA SAN CRISTOBAL S R L', '30546231964');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('f67278c3-67ea-4d1e-ab0a-dc4ac39d2470', 'GIAGNONI DARIO GERARDO', '20170072074');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('163af7bb-eff1-4e61-b78a-fc948849214a', 'NATION SA', '30581697488');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('163af7bb-eff1-4e61-b78a-fc948849214a', 'NATION LITORAL S.A.', '30712525742');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('163af7bb-eff1-4e61-b78a-fc948849214a', 'NATION MOTORS  S. A.', '30717391264');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('cb357211-4a2f-4a14-95dc-6c2492338675', 'FIGUEROA ELIZABETH CARLA', '27260748071');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('ddd21d41-4bee-4d7a-8fa3-d38de1de8c06', 'BIELEWICH MARTIN PABLO', '20349222494');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('595928cc-7703-4aad-b698-e9dcffdfd65e', 'INSUGA SA', '30540367120');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('595928cc-7703-4aad-b698-e9dcffdfd65e', 'INSUGA CHACO S.A.', '33711217679');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('11ff3103-702c-4fbb-9b62-6202b67fe70b', 'METALURGICA HUGO QUERO S.R.L', '30709816221');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('5e551e4b-5f75-46e7-9226-e2fb4634544f', 'LA MASTRA NICOLAS BERNARDINO', '20349069858');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('808a806d-f71e-4b60-bf7f-8018a9ad1568', 'CHADE ROBERTO MARIO - Monotributo', '20145189668');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('c9b93c2a-043f-47e7-87f7-5bf267caecdc', 'A TODO COLOR SRL', '30708385073');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('275646fa-580c-4d70-97ca-05d76bd1c716', 'La Francia Panificaci├│n SRL', NULL);
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('a898bcd9-44db-4f34-8b1d-bb3e820efa36', 'Cordilleranos srl', '30714223131');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('0ab60b02-fe7d-4b34-ba74-4f45ca9f397d', 'Autopartes sol SRL', '30708427450');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('3fcc2835-49a0-4e3d-a50e-3c09c9e44e00', 'Laboratorio Roca SRL', '30715059874');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('1c4617b5-6e72-4eca-8f11-9ef8eafc8480', 'CONEXION MARKET SAS', '30717078434');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('4451954a-534b-40fb-a0fe-892d242a6727', 'Escobar Automotores S.A.', '30711061327');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('4451954a-534b-40fb-a0fe-892d242a6727', 'Escobar Santa Fe', '30518849634');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('139058ed-1fd8-4d0f-824c-0d38bde12bf8', 'ASTRO ISAA', '30717565017');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('c1ed2eb7-7fb3-4af1-b76c-64be29a917dd', 'LABEL GROUP S.R.L.', '30709991112');
+INSERT INTO apsol.razones_sociales (empresa_id, razon_social, cuit) VALUES ('c543eef5-3196-4f27-b6b1-0d4b9da5c8be', 'NUTRYNOR S.A', '30707878718');
+
