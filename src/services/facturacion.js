@@ -1,28 +1,20 @@
 import { supabase } from '../lib/supabase'
 
 export async function getFacturas() {
-  const { data: facturas, error: facturasError } = await supabase
+  const { data: facturas, error } = await supabase
     .from('apsol_facturacion')
     .select(`
       *,
       prospectos:apsol_prospectos(nombre, empresas:apsol_empresas(nombre)),
       contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey(nombre, apellido, email),
-      contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(nombre, apellido, email)
+      contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(nombre, apellido, email),
+      pagos:apsol_pagos(facturacion_id, fecha)
     `)
     .order('fecha_emision', { ascending: false })
 
-  if (facturasError) throw facturasError
+  if (error) throw error
 
-  const { data: pagos, error: pagosError } = await supabase
-    .from('apsol_pagos')
-    .select('facturacion_id, fecha')
-
-  if (pagosError) throw pagosError
-
-  return facturas.map(f => ({
-    ...f,
-    pagos: pagos ? pagos.filter(p => p.facturacion_id === f.id) : []
-  }))
+  return facturas
 }
 
 export async function getFacturaById(id) {
