@@ -1,33 +1,23 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, FolderKanban, Building2, User, ChevronRight, ChevronDown } from 'lucide-react'
-import { getProspectos } from '../services/prospectos'
+import { useData } from '../context/DataContext'
 
 export default function Prospectos() {
-  const [prospectos, setProspectos] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { prospectos, loadingProspectos, refreshProspectos } = useData()
   const [search, setSearch] = useState('')
   const [filtroActivos, setFiltroActivos] = useState(true) // true = activos, false = historicos
   const [expandidos, setExpandidos] = useState({}) // { [estado]: boolean }
   const navigate = useNavigate()
 
   useEffect(() => {
-    cargarProspectos()
+    // Si ya hay prospectos en la caché global, hacemos un re-fetch silencioso (sin loader molesto)
+    // De lo contrario (primera carga), mostramos el spinner normal.
+    const esSilencioso = prospectos.length > 0
+    refreshProspectos(esSilencioso)
     // Resetear expandidos al cambiar filtro
     setExpandidos({})
   }, [filtroActivos])
-
-  async function cargarProspectos() {
-    setLoading(true)
-    try {
-      const data = await getProspectos(filtroActivos)
-      setProspectos(data)
-    } catch (error) {
-      console.error('Error al cargar prospectos:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const toggleExpandir = (estado) => {
     setExpandidos(prev => ({
@@ -127,7 +117,7 @@ export default function Prospectos() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingProspectos ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando prospectos...</p>

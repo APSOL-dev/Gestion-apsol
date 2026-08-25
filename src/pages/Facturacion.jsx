@@ -1,30 +1,20 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, Receipt, ChevronRight } from 'lucide-react'
-import { getFacturas } from '../services/facturacion'
+import { useData } from '../context/DataContext'
+import FacturacionDrawer from '../components/FacturacionDrawer'
 
 export default function Facturacion() {
   const navigate = useNavigate()
-  const [facturas, setFacturas] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { facturas, loadingFacturas, refreshFacturas } = useData()
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Todas')
+  const [facturaSeleccionadaId, setFacturaSeleccionadaId] = useState(null)
 
   useEffect(() => {
-    cargarFacturas()
+    const esSilencioso = facturas.length > 0
+    refreshFacturas(esSilencioso)
   }, [])
-
-  async function cargarFacturas() {
-    setLoading(true)
-    try {
-      const data = await getFacturas()
-      setFacturas(data)
-    } catch (error) {
-      console.error('Error al cargar facturas:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   // Filtrar facturas según el término de búsqueda
   const facturasFiltradas = facturas.filter(f => {
@@ -195,7 +185,7 @@ export default function Facturacion() {
         {/* Listado Principal de Facturas a la Derecha */}
         <div className="facturacion-main" style={{ flex: 1, minWidth: 0, backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
           
-          {loading ? (
+          {loadingFacturas ? (
             <div className="loading-screen" style={{ minHeight: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
               <div className="loading-spinner" style={{ width: '32px', height: '32px', border: '3px solid #ccc', borderTopColor: '#385723', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
               <p style={{ color: '#666', fontSize: '14px' }}>Cargando facturas...</p>
@@ -248,7 +238,7 @@ export default function Facturacion() {
                             return (
                               <tr 
                                 key={factura.id} 
-                                onClick={() => navigate(`/facturacion/${factura.id}`)}
+                                onClick={() => setFacturaSeleccionadaId(factura.id)}
                                 style={{ 
                                   cursor: 'pointer',
                                   borderBottom: '1px solid #eee'
@@ -316,6 +306,14 @@ export default function Facturacion() {
         </div>
 
       </div>
+
+      {facturaSeleccionadaId && (
+        <FacturacionDrawer 
+          id={facturaSeleccionadaId}
+          onClose={() => setFacturaSeleccionadaId(null)}
+          onPagoRegistrado={cargarFacturas}
+        />
+      )}
 
       {/* Inyección de estilos de hover sencillos */}
       <style>{`

@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Outlet, Link, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { DataProvider } from './context/DataContext'
 import { useState, useEffect } from 'react'
 import { 
   LayoutDashboard, Building2, Users, FileText, Target, Briefcase, 
@@ -348,69 +349,71 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route element={<Layout />}>
-              <Route index element={<Dashboard />} />
+        <DataProvider>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route element={<Layout />}>
+                <Route index element={<Dashboard />} />
 
-              <Route path="facturacion">
-                <Route index element={<Facturacion />} />
-                <Route path=":id" element={<FacturaDetalle />} />
-              </Route>
-              
+                <Route path="facturacion">
+                  <Route index element={<Facturacion />} />
+                  <Route path=":id" element={<FacturaDetalle />} />
+                </Route>
+                
 
-              <Route path="valores-uva" element={<ValoresUVA />} />
-              <Route path="cuentas-bancarias" element={<CuentasBancarias />} />
-              
-              <Route path="prospectos">
-                <Route index element={<Prospectos />} />
-                <Route path=":id" element={<ProspectoDetalle />} />
-              </Route>
-              
-              <Route path="empresas">
-                <Route index element={<Empresas />} />
-                <Route path=":id" element={<EmpresaDetalle />} />
-              </Route>
+                <Route path="valores-uva" element={<ValoresUVA />} />
+                <Route path="cuentas-bancarias" element={<CuentasBancarias />} />
+                
+                <Route path="prospectos">
+                  <Route index element={<Prospectos />} />
+                  <Route path=":id" element={<ProspectoDetalle />} />
+                </Route>
+                
+                <Route path="empresas">
+                  <Route index element={<Empresas />} />
+                  <Route path=":id" element={<EmpresaDetalle />} />
+                </Route>
 
-              <Route path="contactos">
-                <Route index element={<Contactos />} />
-                <Route path=":id" element={<ContactoDetalle />} />
-              </Route>
+                <Route path="contactos">
+                  <Route index element={<Contactos />} />
+                  <Route path=":id" element={<ContactoDetalle />} />
+                </Route>
 
-              <Route path="colaboradores">
-                <Route index element={<Colaboradores />} />
-                <Route path=":id" element={<ColaboradorDetalle />} />
-              </Route>
+                <Route path="colaboradores">
+                  <Route index element={<Colaboradores />} />
+                  <Route path=":id" element={<ColaboradorDetalle />} />
+                </Route>
 
-              <Route path="proyectos">
-                <Route index element={<Proyectos />} />
-                <Route path=":id" element={<ProyectoDetalle />} />
+                <Route path="proyectos">
+                  <Route index element={<Proyectos />} />
+                  <Route path=":id" element={<ProyectoDetalle />} />
+                </Route>
+                <Route path="tickets">
+                  <Route index element={<Tickets />} />
+                  <Route path=":id" element={<TicketDetalle />} />
+                </Route>
+                <Route path="preventivos">
+                  <Route index element={<Preventivos />} />
+                  <Route path=":id" element={<PreventivoDetalle />} />
+                </Route>
+                <Route path="capacitacion">
+                  <Route index element={<Capacitacion />} />
+                  <Route path=":id" element={<CapacitacionDetalle />} />
+                </Route>
+                <Route path="planificacion">
+                  <Route index element={<Planificacion />} />
+                  <Route path=":id" element={<PlanDetalle />} />
+                </Route>
+                <Route path="cronograma" element={<Cronograma />} />
+                <Route path="credenciales">
+                  <Route index element={<Credenciales />} />
+                  <Route path=":id" element={<CredencialDetalle />} />
+                </Route>
               </Route>
-              <Route path="tickets">
-                <Route index element={<Tickets />} />
-                <Route path=":id" element={<TicketDetalle />} />
-              </Route>
-              <Route path="preventivos">
-                <Route index element={<Preventivos />} />
-                <Route path=":id" element={<PreventivoDetalle />} />
-              </Route>
-              <Route path="capacitacion">
-                <Route index element={<Capacitacion />} />
-                <Route path=":id" element={<CapacitacionDetalle />} />
-              </Route>
-              <Route path="planificacion">
-                <Route index element={<Planificacion />} />
-                <Route path=":id" element={<PlanDetalle />} />
-              </Route>
-              <Route path="cronograma" element={<Cronograma />} />
-              <Route path="credenciales">
-                <Route index element={<Credenciales />} />
-                <Route path=":id" element={<CredencialDetalle />} />
-              </Route>
-            </Route>
-          </Routes>
-        </Suspense>
+            </Routes>
+          </Suspense>
+        </DataProvider>
       </AuthProvider>
     </BrowserRouter>
   )

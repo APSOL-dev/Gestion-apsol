@@ -1,28 +1,16 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Users, Phone, Mail, Award } from 'lucide-react'
-import { getColaboradores } from '../services/colaboradores'
+import { useData } from '../context/DataContext'
 
 export default function Colaboradores() {
-  const [colaboradores, setColaboradores] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { colaboradores, loadingColaboradores, refreshColaboradores } = useData()
   const [search, setSearch] = useState('')
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = colaboradores.length > 0
+    refreshColaboradores(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getColaboradores()
-      setColaboradores(data)
-    } catch (error) {
-      console.error('Error al cargar colaboradores:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const colaboradoresFiltrados = colaboradores.filter(c => 
     `${c.nombre || ''} ${c.apellido || ''}`.toLowerCase().includes(search.toLowerCase()) ||
@@ -55,7 +43,7 @@ export default function Colaboradores() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingColaboradores ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando colaboradores...</p>

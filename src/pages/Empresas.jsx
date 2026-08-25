@@ -1,30 +1,19 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Building2, MapPin, Briefcase, Trash2, CheckSquare, Square } from 'lucide-react'
-import { getEmpresas, deleteEmpresa } from '../services/empresas'
+import { useData } from '../context/DataContext'
+import { deleteEmpresa } from '../services/empresas'
 
 export default function Empresas() {
-  const [empresas, setEmpresas] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { empresas, loadingEmpresas, refreshEmpresas } = useData()
   const [search, setSearch] = useState('')
   const [seleccionados, setSeleccionados] = useState([])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    cargarEmpresas()
+    const esSilencioso = empresas.length > 0
+    refreshEmpresas(esSilencioso)
   }, [])
-
-  async function cargarEmpresas() {
-    setLoading(true)
-    try {
-      const data = await getEmpresas()
-      setEmpresas(data)
-    } catch (error) {
-      console.error('Error al cargar empresas:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   async function handleDelete(id, nombre) {
     const msg = `¿ESTÁS SEGURO? \n\nEliminar "${nombre}" también borrará permanentemente sus contactos y proyectos asociados. \n\nEsta acción no se puede deshacer.`
@@ -33,7 +22,7 @@ export default function Empresas() {
     setSaving(true)
     try {
       await deleteEmpresa(id)
-      await cargarEmpresas()
+      await refreshEmpresas()
       setSeleccionados(prev => prev.filter(sid => sid !== id))
     } catch (error) {
       console.error(error)
@@ -54,7 +43,7 @@ export default function Empresas() {
         await deleteEmpresa(id)
       }
       setSeleccionados([])
-      await cargarEmpresas()
+      await refreshEmpresas()
       alert('Empresas eliminadas correctamente')
     } catch (error) {
       console.error('Error en borrado múltiple:', error)
@@ -207,7 +196,7 @@ export default function Empresas() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingEmpresas ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando empresas...</p>

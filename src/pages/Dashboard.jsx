@@ -1,14 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { DollarSign, FileText, CheckCircle2, AlertCircle, TrendingUp, Building2, Calendar, Target, Wrench } from 'lucide-react'
-import { getFacturas } from '../services/facturacion'
-import { getProspectos } from '../services/prospectos'
+import { useData } from '../context/DataContext'
 import { getPreventivos } from '../services/operaciones'
 import { getEventosCronograma } from '../services/agenda'
 
 export default function Dashboard() {
-  const [facturas, setFacturas] = useState([])
-  const [prospectos, setProspectos] = useState([])
+  const { facturas, prospectos, refreshFacturas, refreshProspectos } = useData()
   const [preventivos, setPreventivos] = useState([])
   const [eventos, setEventos] = useState([])
   
@@ -19,16 +17,15 @@ export default function Dashboard() {
   }, [])
 
   async function cargarDatos() {
-    setLoading(true)
+    const esPrimeraCarga = facturas.length === 0 || prospectos.length === 0
+    if (esPrimeraCarga) setLoading(true)
     try {
-      const [fData, pData, prevData, eData] = await Promise.all([
-        getFacturas(),
-        getProspectos(),
+      const [prevData, eData] = await Promise.all([
         getPreventivos(),
-        getEventosCronograma()
+        getEventosCronograma(),
+        refreshFacturas(true),
+        refreshProspectos(true)
       ])
-      setFacturas(fData)
-      setProspectos(pData)
       setPreventivos(prevData)
       setEventos(eData)
     } catch (err) {
