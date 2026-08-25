@@ -25,7 +25,10 @@ export default function PlanDetalle() {
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
   const [colaboradores, setColaboradores] = useState([])
-  const [cellWidth, setCellWidth] = useState(100)
+  const [cellWidth, setCellWidth] = useState(() => {
+    const saved = localStorage.getItem('apsol_gantt_cell_width')
+    return saved ? Number(saved) : 100
+  })
   const [showDatesModal, setShowDatesModal] = useState(false)
   const [tempDates, setTempDates] = useState({ start: '', end: '' })
   const [assigningTask, setAssigningTask] = useState(null)
@@ -777,7 +780,11 @@ export default function PlanDetalle() {
               min="50"
               max="250"
               value={cellWidth}
-              onChange={e => setCellWidth(Number(e.target.value))}
+              onChange={e => {
+                const val = Number(e.target.value)
+                setCellWidth(val)
+                localStorage.setItem('apsol_gantt_cell_width', String(val))
+              }}
               style={{ width: '100px', cursor: 'pointer', height: '6px' }}
             />
             <span style={{ minWidth: '42px', textAlign: 'right', color: 'var(--color-primary)' }}>{cellWidth}px</span>
