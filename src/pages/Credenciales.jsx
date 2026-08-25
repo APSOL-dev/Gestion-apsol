@@ -1,29 +1,17 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, KeyRound, ExternalLink, ShieldAlert } from 'lucide-react'
-import { getCredenciales } from '../services/credenciales'
+import { useData } from '../context/DataContext'
 
 export default function Credenciales() {
-  const [credenciales, setCredenciales] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { credenciales, loadingCredenciales, refreshCredenciales } = useData()
   const [search, setSearch] = useState('')
   const [filtroAmbito, setFiltroAmbito] = useState('Todos')
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = credenciales.length > 0
+    refreshCredenciales(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getCredenciales()
-      setCredenciales(data)
-    } catch (error) {
-      console.error('Error al cargar credenciales:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const credencialesFiltradas = credenciales.filter(c => {
     const matchSearch = 
@@ -131,7 +119,7 @@ export default function Credenciales() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingCredenciales ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando credenciales...</p>

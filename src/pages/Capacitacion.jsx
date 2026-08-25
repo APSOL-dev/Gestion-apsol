@@ -1,29 +1,17 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, GraduationCap, Video } from 'lucide-react'
-import { getCapacitaciones } from '../services/capacitacion'
+import { useData } from '../context/DataContext'
 
 export default function Capacitacion() {
-  const [capacitaciones, setCapacitaciones] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { capacitaciones, loadingCapacitaciones, refreshCapacitaciones } = useData()
   const [search, setSearch] = useState('')
   const [filtroClasificacion, setFiltroClasificacion] = useState('Todas')
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = capacitaciones.length > 0
+    refreshCapacitaciones(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getCapacitaciones()
-      setCapacitaciones(data)
-    } catch (error) {
-      console.error('Error al cargar capacitaciones:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const capacitacionesFiltradas = capacitaciones.filter(c => {
     const matchSearch = 
@@ -75,7 +63,7 @@ export default function Capacitacion() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingCapacitaciones ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando capacitaciones...</p>

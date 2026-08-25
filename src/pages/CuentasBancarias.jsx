@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Plus, Trash2, Landmark, Building2 } from 'lucide-react'
-import { getCuentasBancarias, saveCuentaBancaria, deleteCuentaBancaria } from '../services/cuentasBancarias'
-import { getEmpresas } from '../services/empresas'
+import { useData } from '../context/DataContext'
+import { saveCuentaBancaria, deleteCuentaBancaria } from '../services/cuentasBancarias'
 
 export default function CuentasBancarias() {
-  const [cuentas, setCuentas] = useState([])
-  const [empresas, setEmpresas] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { cuentasBancarias, loadingCuentasBancarias, refreshCuentasBancarias } = useData()
   const [mostrandoForm, setMostrandoForm] = useState(false)
   const [saving, setSaving] = useState(false)
   
@@ -22,32 +20,20 @@ export default function CuentasBancarias() {
   })
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = cuentasBancarias.length > 0
+    refreshCuentasBancarias(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getCuentasBancarias()
-      setCuentas(data)
-    } catch (error) {
-      console.error('Error al cargar datos:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   async function handleAdd(e) {
     e.preventDefault()
     setSaving(true)
     try {
       const dataToSave = { ...nuevaCuenta }
-      // Aseguramos que nombre_interno tenga algo si está vacío
       if (!dataToSave.nombre_interno) dataToSave.nombre_interno = dataToSave.banco
 
-      const saved = await saveCuentaBancaria(dataToSave)
+      await saveCuentaBancaria(dataToSave)
+      await refreshCuentasBancarias()
       
-      setCuentas([...cuentas, saved])
       setNuevaCuenta({
         banco: '',
         tipo_cuenta: 'Cuenta Corriente',
@@ -72,7 +58,7 @@ export default function CuentasBancarias() {
     
     try {
       await deleteCuentaBancaria(id)
-      setCuentas(cuentas.filter(c => c.id !== id))
+      await refreshCuentasBancarias()
     } catch (err) {
       console.error(err)
       alert('Error al eliminar')
@@ -186,12 +172,12 @@ export default function CuentasBancarias() {
         </div>
       )}
 
-      {loading ? (
+      {loadingCuentasBancarias ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando cuentas...</p>
         </div>
-      ) : cuentas.length === 0 ? (
+      ) : cuentasBancarias.length === 0 ? (
         <div className="placeholder-card">
           <Landmark className="placeholder-icon" />
           <h3>No hay cuentas bancarias registradas</h3>
@@ -212,7 +198,7 @@ export default function CuentasBancarias() {
                 </tr>
               </thead>
               <tbody>
-                 {cuentas.map((c) => (
+                 {cuentasBancarias.map((c) => (
                   <tr key={c.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}>

@@ -1,29 +1,17 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Activity, Clock, AlertCircle, CheckCircle2 } from 'lucide-react'
-import { getTickets } from '../services/operaciones'
+import { useData } from '../context/DataContext'
 
 export default function Tickets() {
-  const [tickets, setTickets] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { tickets, loadingTickets, refreshTickets } = useData()
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Abiertos')
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = tickets.length > 0
+    refreshTickets(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getTickets()
-      setTickets(data)
-    } catch (error) {
-      console.error('Error al cargar tickets:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const ticketsFiltrados = tickets.filter(t => {
     const matchSearch = 
@@ -78,7 +66,7 @@ export default function Tickets() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingTickets ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando tickets...</p>

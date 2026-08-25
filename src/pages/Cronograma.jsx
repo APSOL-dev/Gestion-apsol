@@ -7,9 +7,8 @@ import {
   Plus, Search, ChevronLeft, ChevronRight, 
   Users, Target, Clock, Edit3, X, Video, Filter, BarChart3
 } from 'lucide-react'
-import { getActividades, saveActividad, deleteActividad } from '../services/cronograma'
-import { getProspectos } from '../services/prospectos'
-import { getColaboradores } from '../services/colaboradores'
+import { useData } from '../context/DataContext'
+import { saveActividad, deleteActividad } from '../services/cronograma'
 
 moment.locale('es')
 const localizer = momentLocalizer(moment)
@@ -31,10 +30,11 @@ const messages = {
 }
 
 export default function Cronograma() {
-  const [actividades, setActividades] = useState([])
-  const [prospectos, setProspectos] = useState([])
-  const [colaboradores, setColaboradores] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { 
+    actividades, loadingActividades, refreshActividades, 
+    prospectos, loadingProspectos, refreshProspectos, 
+    colaboradores, loadingColaboradores, refreshColaboradores 
+  } = useData()
   const [view, setView] = useState(Views.WEEK)
   const [date, setDate] = useState(new Date())
   
@@ -59,24 +59,23 @@ export default function Cronograma() {
   })
 
   useEffect(() => {
-    loadData()
+    const esSilencioso = actividades.length > 0 && prospectos.length > 0 && colaboradores.length > 0
+    Promise.all([
+      refreshActividades(esSilencioso),
+      refreshProspectos(esSilencioso),
+      refreshColaboradores(esSilencioso)
+    ])
   }, [])
 
   async function loadData() {
     try {
-      setLoading(true)
-      const [actData, prosData, colabData] = await Promise.all([
-        getActividades(),
-        getProspectos(false), // Traer todos para filtrar en el front
-        getColaboradores()
+      await Promise.all([
+        refreshActividades(true),
+        refreshProspectos(true),
+        refreshColaboradores(true)
       ])
-      setActividades(actData)
-      setProspectos(prosData)
-      setColaboradores(colabData)
     } catch (err) {
       console.error('Error cargando datos:', err)
-    } finally {
-      setLoading(false)
     }
   }
 

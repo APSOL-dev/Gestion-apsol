@@ -1,29 +1,17 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Wrench, Calendar, AlertTriangle } from 'lucide-react'
-import { getPreventivos } from '../services/operaciones'
+import { useData } from '../context/DataContext'
 
 export default function Preventivos() {
-  const [preventivos, setPreventivos] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { preventivos, loadingPreventivos, refreshPreventivos } = useData()
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Todos')
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = preventivos.length > 0
+    refreshPreventivos(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getPreventivos()
-      setPreventivos(data)
-    } catch (error) {
-      console.error('Error al cargar preventivos:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const estaVencido = (fecha) => {
     if (!fecha) return false
@@ -81,7 +69,7 @@ export default function Preventivos() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingPreventivos ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando planes preventivos...</p>

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Calendar, Trash2, X, FolderKanban } from 'lucide-react'
-import { getPlanes, crearPlan, eliminarPlan } from '../services/planificacion'
+import { useData } from '../context/DataContext'
+import { crearPlan, eliminarPlan } from '../services/planificacion'
 
 export default function Planificacion() {
-  const [planes, setPlanes] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { planes, loadingPlanes, refreshPlanes } = useData()
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Todos')
   const [showModal, setShowModal] = useState(false)
@@ -20,20 +20,9 @@ export default function Planificacion() {
   })
 
   useEffect(() => {
-    cargarPlanes()
+    const esSilencioso = planes.length > 0
+    refreshPlanes(esSilencioso)
   }, [])
-
-  async function cargarPlanes() {
-    setLoading(true)
-    try {
-      const data = await getPlanes()
-      setPlanes(data)
-    } catch (err) {
-      console.error('Error al cargar planes:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -50,8 +39,8 @@ export default function Planificacion() {
     setCreando(true)
     setError('')
     try {
-      const nuevoPlan = await crearPlan(formData)
-      setPlanes([nuevoPlan, ...planes])
+      await crearPlan(formData)
+      await refreshPlanes()
       setShowModal(false)
       setFormData({ nombre: '', fecha_inicio: '', fecha_fin: '' })
     } catch (err) {
@@ -71,7 +60,7 @@ export default function Planificacion() {
 
     try {
       await eliminarPlan(id)
-      setPlanes(planes.filter(p => p.id !== id))
+      await refreshPlanes()
     } catch (err) {
       console.error('Error al eliminar plan:', err)
       alert('No se pudo eliminar el plan. Intenta nuevamente.')
@@ -145,7 +134,7 @@ export default function Planificacion() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingPlanes ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando planes...</p>

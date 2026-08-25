@@ -311,7 +311,7 @@ export default function Facturacion() {
         <FacturacionDrawer 
           id={facturaSeleccionadaId}
           onClose={() => setFacturaSeleccionadaId(null)}
-          onPagoRegistrado={cargarFacturas}
+          onPagoRegistrado={refreshFacturas}
         />
       )}
 

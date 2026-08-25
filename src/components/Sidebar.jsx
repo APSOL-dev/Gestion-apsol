@@ -20,7 +20,7 @@ import {
   DollarSign,
   Wallet
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const navSections = [
   {
@@ -69,6 +69,19 @@ export default function Sidebar() {
   const { perfil, logout } = useAuth()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
+
+  useEffect(() => {
+    if (collapsed) return
+
+    if (!isHovered) {
+      const timer = setTimeout(() => {
+        setCollapsed(true)
+      }, 10000)
+
+      return () => clearTimeout(timer)
+    }
+  }, [collapsed, isHovered])
 
   async function handleLogout() {
     await logout()
@@ -76,7 +89,11 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}>
+    <aside 
+      className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <button 
         className="sidebar-toggle" 
         onClick={() => setCollapsed(!collapsed)}

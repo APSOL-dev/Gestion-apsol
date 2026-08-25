@@ -1,38 +1,25 @@
 import { useState, useEffect } from 'react'
 import { Plus, Trash2, CalendarDays } from 'lucide-react'
-import { getValoresUVA, saveValorUVA, deleteValorUVA } from '../services/valoresUva'
+import { useData } from '../context/DataContext'
+import { saveValorUVA, deleteValorUVA } from '../services/valoresUva'
 
 export default function ValoresUVA() {
-  const [valores, setValores] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { valoresUVA, loadingValoresUVA, refreshValoresUVA } = useData()
   const [nuevoValor, setNuevoValor] = useState({ fecha: '', valor: '' })
   const [mostrandoForm, setMostrandoForm] = useState(false)
 
   useEffect(() => {
-    cargarValores()
+    const esSilencioso = valoresUVA.length > 0
+    refreshValoresUVA(esSilencioso)
   }, [])
-
-  async function cargarValores() {
-    setLoading(true)
-    try {
-      const data = await getValoresUVA()
-      setValores(data)
-    } catch (error) {
-      console.error('Error al cargar valores UVA:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   async function handleAdd(e) {
     e.preventDefault()
     if (!nuevoValor.fecha || !nuevoValor.valor) return
     
     try {
-      const saved = await saveValorUVA(nuevoValor)
-      // Agregarlo a la lista y re-ordenar por fecha descendente
-      const nuevos = [...valores, saved].sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
-      setValores(nuevos)
+      await saveValorUVA(nuevoValor)
+      await refreshValoresUVA()
       setNuevoValor({ fecha: '', valor: '' })
       setMostrandoForm(false)
     } catch (err) {
@@ -46,7 +33,7 @@ export default function ValoresUVA() {
     
     try {
       await deleteValorUVA(id)
-      setValores(valores.filter(v => v.id !== id))
+      await refreshValoresUVA()
     } catch (err) {
       console.error(err)
       alert('Error al eliminar')
@@ -94,12 +81,12 @@ export default function ValoresUVA() {
         </div>
       )}
 
-      {loading ? (
+      {loadingValoresUVA ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando histórico...</p>
         </div>
-      ) : valores.length === 0 ? (
+      ) : valoresUVA.length === 0 ? (
         <div className="placeholder-card">
           <CalendarDays className="placeholder-icon" />
           <h3>No hay valores registrados</h3>
@@ -117,7 +104,7 @@ export default function ValoresUVA() {
                 </tr>
               </thead>
               <tbody>
-                {valores.map((v) => (
+                {valoresUVA.map((v) => (
                   <tr key={v.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

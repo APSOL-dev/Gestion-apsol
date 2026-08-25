@@ -1,30 +1,18 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, Users, Building2, Phone, Mail } from 'lucide-react'
-import { getContactos } from '../services/contactos'
+import { useData } from '../context/DataContext'
 
 export default function Contactos() {
   const navigate = useNavigate()
-  const [contactos, setContactos] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { contactos, loadingContactos, refreshContactos } = useData()
   const [search, setSearch] = useState('')
   const [mostrarInactivos, setMostrarInactivos] = useState(false)
 
   useEffect(() => {
-    cargarContactos()
+    const esSilencioso = contactos.length > 0
+    refreshContactos(esSilencioso)
   }, [])
-
-  async function cargarContactos() {
-    setLoading(true)
-    try {
-      const data = await getContactos()
-      setContactos(data)
-    } catch (error) {
-      console.error('Error al cargar contactos:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const contactosFiltrados = contactos.filter(contacto => {
     if (!mostrarInactivos && contacto.activo === false) return false
@@ -70,7 +58,7 @@ export default function Contactos() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingContactos ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando contactos...</p>

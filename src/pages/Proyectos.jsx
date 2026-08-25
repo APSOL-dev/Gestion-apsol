@@ -1,29 +1,17 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, FileText, Target, Calendar } from 'lucide-react'
-import { getProyectos } from '../services/proyectos'
+import { useData } from '../context/DataContext'
 
 export default function Proyectos() {
-  const [proyectos, setProyectos] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { proyectos, loadingProyectos, refreshProyectos } = useData()
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Activo')
 
   useEffect(() => {
-    cargarDatos()
+    const esSilencioso = proyectos.length > 0
+    refreshProyectos(esSilencioso)
   }, [])
-
-  async function cargarDatos() {
-    setLoading(true)
-    try {
-      const data = await getProyectos()
-      setProyectos(data)
-    } catch (error) {
-      console.error('Error al cargar proyectos:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const proyectosFiltrados = proyectos.filter(p => {
     const matchSearch = 
@@ -73,7 +61,7 @@ export default function Proyectos() {
         </div>
       </div>
 
-      {loading ? (
+      {loadingProyectos ? (
         <div className="loading-screen" style={{ minHeight: '300px' }}>
           <div className="loading-spinner" />
           <p>Cargando proyectos...</p>

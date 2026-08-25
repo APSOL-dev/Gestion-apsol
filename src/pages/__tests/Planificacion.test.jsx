@@ -3,6 +3,12 @@ import { vi } from 'vitest'
 import { BrowserRouter } from 'react-router-dom'
 import Planificacion from '../Planificacion'
 import { getPlanes, crearPlan } from '../../services/planificacion'
+import { DataProvider } from '../../context/DataContext'
+
+// Mock de la autenticación
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: () => ({ user: { email: 'test@apsol.com' } })
+}))
 
 // Mock de los servicios
 vi.mock('../../services/planificacion', () => ({
@@ -29,20 +35,25 @@ const mockPlanes = [
 ]
 
 describe('Componente Planificacion', () => {
+  let currentPlanes = []
+
   beforeEach(() => {
     vi.clearAllMocks()
-    getPlanes.mockResolvedValue(mockPlanes)
+    currentPlanes = [...mockPlanes]
+    getPlanes.mockImplementation(async () => currentPlanes)
   })
 
   test('debe renderizar el titulo y los planes cargados', async () => {
     render(
       <BrowserRouter>
-        <Planificacion />
+        <DataProvider>
+          <Planificacion />
+        </DataProvider>
       </BrowserRouter>
     )
 
-    expect(screen.getByText('Cargando planes...')).toBeInTheDocument()
-
+    // Al inicio podría mostrar "Cargando..."
+    // Esperamos a que cargue
     await waitFor(() => {
       expect(screen.getByText('Planificación')).toBeInTheDocument()
       expect(screen.getByText('Plan Q3 2026')).toBeInTheDocument()
@@ -53,7 +64,9 @@ describe('Componente Planificacion', () => {
   test('debe filtrar planes por termino de busqueda', async () => {
     render(
       <BrowserRouter>
-        <Planificacion />
+        <DataProvider>
+          <Planificacion />
+        </DataProvider>
       </BrowserRouter>
     )
 
@@ -71,7 +84,9 @@ describe('Componente Planificacion', () => {
   test('debe filtrar planes por estado al hacer click en los botones de filtro', async () => {
     render(
       <BrowserRouter>
-        <Planificacion />
+        <DataProvider>
+          <Planificacion />
+        </DataProvider>
       </BrowserRouter>
     )
 
@@ -95,11 +110,18 @@ describe('Componente Planificacion', () => {
       fecha_fin: '2027-06-30',
       estado: 'borrador'
     }
-    crearPlan.mockResolvedValue(nuevoPlan)
+
+    crearPlan.mockImplementation(async (formData) => {
+      const created = { id: 'plan-3', ...formData, estado: 'borrador' }
+      currentPlanes = [created, ...currentPlanes]
+      return created
+    })
 
     render(
       <BrowserRouter>
-        <Planificacion />
+        <DataProvider>
+          <Planificacion />
+        </DataProvider>
       </BrowserRouter>
     )
 
