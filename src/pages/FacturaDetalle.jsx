@@ -4,10 +4,12 @@ import { ArrowLeft, Save, Trash2, Receipt, DollarSign, Calendar, UploadCloud, Pl
 import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber } from '../services/facturacion'
 import { getContactos } from '../services/contactos'
 import { getProspectos } from '../services/prospectos'
-import { getValoresUVA, getValorUVAByDate } from '../services/valoresUva'
+import { getValoresUVA } from '../services/valoresUva'
+import { obtenerUVAParaFecha } from '../services/sincronizacionUva'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
 import { getRazonesSocialesByEmpresa } from '../services/empresas'
 import { uploadFile } from '../services/storage'
+import { formatearMonto } from '../utils/formateo'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -32,7 +34,7 @@ export default function FacturaDetalle() {
     porcentaje_descuento: 0,
     monto_neto: 0,
     saldo_pendiente: 0,
-    estado: 'Pendiente de pago',
+    estado: 'Pendiente',
     comprobantes_adjuntos: [],
     documento_general: '',
     notas: '',
@@ -53,6 +55,7 @@ export default function FacturaDetalle() {
   
   const [loading, setLoading] = useState(!esNueva)
   const [saving, setSaving] = useState(false)
+  const [loadingRazones, setLoadingRazones] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -85,11 +88,11 @@ export default function FacturaDetalle() {
     let nuevoEstado = factura.estado
     if (nuevoEstado !== 'Anulada') {
       if (totalPagado <= 0) {
-        nuevoEstado = 'Pendiente de pago'
+        nuevoEstado = 'Pendiente'
       } else if (saldo > 0) {
-        nuevoEstado = 'Pagado parcial'
+        nuevoEstado = 'Cobrada parcial'
       } else {
-        nuevoEstado = 'Pagado'
+        nuevoEstado = 'Cobrada total'
       }
     }
 
@@ -120,6 +123,7 @@ export default function FacturaDetalle() {
 
           // Cargar Razones Sociales
           try {
+            setLoadingRazones(true)
             const rs = await getRazonesSocialesByEmpresa(prosp.empresa_id)
             setRazonesSociales(rs)
             if (rs.length > 0 && !factura.razon_social_id) {
@@ -127,6 +131,8 @@ export default function FacturaDetalle() {
             }
           } catch (err) {
             console.error('Error al cargar razones sociales:', err)
+          } finally {
+            setLoadingRazones(false)
           }
 
           // Contactos
@@ -180,7 +186,7 @@ export default function FacturaDetalle() {
     async function buscarUVA() {
       if (factura.periodo_desde) {
         try {
-          const valor = await getValorUVAByDate(factura.periodo_desde)
+          const valor = await obtenerUVAParaFecha(factura.periodo_desde)
           if (valor) {
             setFactura(prev => ({ ...prev, valor_uva_referencia: valor }))
           }
@@ -210,12 +216,12 @@ export default function FacturaDetalle() {
     autoNumerar()
   }, [factura.solo_invoice, esNueva])
 
-  // Efecto para buscar valor UVA por fecha 'Desde'
+  // Efecto para buscar valor UVA por fecha 'Desde' (con fallback a API externa)
   useEffect(() => {
     async function buscarUVA() {
       if (factura.periodo_desde && esNueva) {
         try {
-          const valor = await getValorUVAByDate(factura.periodo_desde)
+          const valor = await obtenerUVAParaFecha(factura.periodo_desde)
           if (valor) {
             setFactura(prev => ({ ...prev, valor_uva_dia: valor }))
           }
@@ -764,7 +770,9 @@ export default function FacturaDetalle() {
               <Building2 size={20} className="text-primary" />
               3. Razón Social y CUIT
             </h3>
-            {razonesSociales.length === 0 ? (
+            {loadingRazones ? (
+              <div style={{ color: 'var(--color-text-secondary)', fontSize: '14px' }}>Cargando razones sociales...</div>
+            ) : razonesSociales.length === 0 ? (
               <div className="alert alert-error">Esta empresa no tiene razones sociales cargadas.</div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '12px' }}>
@@ -931,23 +939,23 @@ export default function FacturaDetalle() {
               <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>Bruto:</span>
-                  <span style={{ fontWeight: '600' }}>${Number(factura.monto_bruto).toLocaleString('es-AR')}</span>
+                  <span style={{ fontWeight: '600' }}>${formatearMonto(factura.monto_bruto)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>Descuento:</span>
-                  <span style={{ fontWeight: '600', color: 'var(--color-danger)' }}>-${Number(factura.descuento).toLocaleString('es-AR')}</span>
+                  <span style={{ fontWeight: '600', color: 'var(--color-danger)' }}>-${formatearMonto(factura.descuento)}</span>
                 </div>
               </div>
             </div>
             <div style={{ padding: '20px', background: 'var(--color-surface)', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '4px' }}>TOTAL NETO A COBRAR</div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary)' }}>${Number(factura.monto_neto).toLocaleString('es-AR')}</div>
+                <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary)' }}>${formatearMonto(factura.monto_neto)}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '4px' }}>SALDO PENDIENTE</div>
                 <div style={{ fontSize: '24px', fontWeight: '800', color: factura.saldo_pendiente > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>
-                  ${Number(factura.saldo_pendiente).toLocaleString('es-AR')}
+                  ${formatearMonto(factura.saldo_pendiente)}
                 </div>
               </div>
             </div>

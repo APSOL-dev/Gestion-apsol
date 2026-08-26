@@ -22,26 +22,29 @@ export async function getActividadById(id) {
 }
 
 export async function saveActividad(actividad) {
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  const payload = {
-    ...actividad,
-    modificado_por: user?.id,
-    modificado_at: new Date().toISOString()
+  if (actividad.id) {
+    // Edición (UPDATE)
+    const { data, error } = await supabase
+      .from('apsol_cronograma')
+      .update(actividad)
+      .eq('id', actividad.id)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  } else {
+    // Creación (INSERT)
+    const { id, ...payload } = actividad
+    const { data, error } = await supabase
+      .from('apsol_cronograma')
+      .insert(payload)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
   }
-
-  if (!actividad.id) {
-    payload.creado_por = user?.id
-  }
-
-  const { data, error } = await supabase
-    .from('apsol_cronograma')
-    .upsert(payload)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
 }
 
 export async function deleteActividad(id) {
