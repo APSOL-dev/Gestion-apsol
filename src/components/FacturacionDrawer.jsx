@@ -315,6 +315,45 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
                 )}
               </div>
 
+              {/* Sección de Cuenta Bancaria para Depósito */}
+              {factura.cuenta_bancaria && (
+                <div style={{ backgroundColor: '#f0f7ff', border: '1px solid #cce0ff', borderRadius: '6px', padding: '16px' }}>
+                  <h3 style={{ fontSize: '13px', fontWeight: 'bold', color: '#1a56db', margin: '0 0 10px 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    💳 Cuenta para Depósito
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                    {factura.cuenta_bancaria.banco && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#555' }}>Banco</span>
+                        <span style={{ fontWeight: '600', color: '#333' }}>{factura.cuenta_bancaria.banco}</span>
+                      </div>
+                    )}
+                    {factura.cuenta_bancaria.titular && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#555' }}>Titular</span>
+                        <span style={{ fontWeight: '600', color: '#333' }}>{factura.cuenta_bancaria.titular}</span>
+                      </div>
+                    )}
+                    {factura.cuenta_bancaria.cbu && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: '#555' }}>CBU</span>
+                        <code style={{ fontSize: '12px', backgroundColor: '#e8f0fe', padding: '2px 6px', borderRadius: '3px', letterSpacing: '0.03em' }}>
+                          {factura.cuenta_bancaria.cbu}
+                        </code>
+                      </div>
+                    )}
+                    {factura.cuenta_bancaria.alias && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: '#555' }}>Alias</span>
+                        <code style={{ fontSize: '12px', backgroundColor: '#e8f0fe', padding: '2px 6px', borderRadius: '3px' }}>
+                          {factura.cuenta_bancaria.alias}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Sección de Historial de Pagos */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>

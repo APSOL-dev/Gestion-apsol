@@ -8,13 +8,28 @@ export async function getFacturas() {
       prospectos:apsol_prospectos(nombre, empresas:apsol_empresas(nombre)),
       contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey(nombre, apellido, email),
       contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(nombre, apellido, email),
-      pagos:apsol_pagos(facturacion_id, fecha)
+      pagos:apsol_pagos(facturacion_id, fecha, monto)
     `)
     .order('fecha_emision', { ascending: false })
 
   if (error) throw error
 
-  return facturas
+  return (facturas || []).map(f => {
+    const m_bruto = Number(f.tarifa_base_uva || 0) * Number(f.valor_uva_dia || 0)
+    const desc = m_bruto * (Number(f.porcentaje_descuento || 0) / 100)
+    const m_neto = m_bruto - desc
+    const totalPagos = (f.pagos || []).reduce((sum, p) => sum + Number(p.monto || 0), 0)
+    const saldo = m_neto - totalPagos
+
+    return {
+      ...f,
+      monto_bruto: m_bruto,
+      descuento: desc,
+      monto_neto: m_neto,
+      saldo_pendiente: saldo > 0 ? saldo : 0,
+      contacto_id: f.contacto_cobro_id
+    }
+  })
 }
 
 export async function getFacturaById(id) {
@@ -25,7 +40,8 @@ export async function getFacturaById(id) {
       *,
       prospectos:apsol_prospectos(id, nombre, empresa_id, empresas:apsol_empresas(nombre)),
       contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey(id, nombre, apellido, email),
-      contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(id, nombre, apellido, email)
+      contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(id, nombre, apellido, email),
+      cuenta_bancaria:apsol_cuentas_bancarias(id, nombre_interno, banco, titular, cbu, alias)
     `)
     .eq('id', id)
     .single()
@@ -41,15 +57,47 @@ export async function getFacturaById(id) {
 
   if (pagosError) throw pagosError
 
+  const m_bruto = Number(factura.tarifa_base_uva || 0) * Number(factura.valor_uva_dia || 0)
+  const desc = m_bruto * (Number(factura.porcentaje_descuento || 0) / 100)
+  const m_neto = m_bruto - desc
+  const totalPagos = (pagos || []).reduce((sum, p) => sum + Number(p.monto || 0), 0)
+  const saldo = m_neto - totalPagos
+
   return {
     ...factura,
+    monto_bruto: m_bruto,
+    descuento: desc,
+    monto_neto: m_neto,
+    saldo_pendiente: saldo > 0 ? saldo : 0,
+    contacto_id: factura.contacto_cobro_id,
     pagos: pagos || []
   }
 }
 
 export async function saveFactura(factura) {
   // Limpiar campos que vienen de joins para evitar error 400
-  const { prospectos, contactos, contacto2, pagos, ...dataToSave } = factura
+  const { prospectos, contactos, contacto2, pagos, cuenta_bancaria, ...dataToSave } = factura
+
+  // Mapear contacto_id a la columna de la DB contacto_cobro_id
+  if ('contacto_id' in dataToSave) {
+    dataToSave.contacto_cobro_id = dataToSave.contacto_id
+    delete dataToSave.contacto_id
+  }
+
+  // Mapear el monto_neto calculado al campo 'monto' de la base de datos
+  dataToSave.monto = dataToSave.monto_neto
+
+  // Eliminar propiedades calculadas del frontend que no existen en la DB física
+  delete dataToSave.monto_bruto
+  delete dataToSave.monto_neto
+  delete dataToSave.descuento
+  delete dataToSave.saldo_pendiente
+
+  // Eliminar campos de UI que no tienen columna física en la DB
+  delete dataToSave.fecha_vencimiento
+  delete dataToSave.leyenda
+  delete dataToSave.documento_general
+  delete dataToSave.valor_uva_referencia
 
   if (dataToSave.id) {
     const { data, error } = await supabase
@@ -59,7 +107,11 @@ export async function saveFactura(factura) {
       .select()
       .single()
     if (error) throw error
-    return data
+    
+    return {
+      ...data,
+      contacto_id: data.contacto_cobro_id
+    }
   } else {
     const { data, error } = await supabase
       .from('apsol_facturacion')
@@ -67,7 +119,11 @@ export async function saveFactura(factura) {
       .select()
       .single()
     if (error) throw error
-    return data
+    
+    return {
+      ...data,
+      contacto_id: data.contacto_cobro_id
+    }
   }
 }
 
