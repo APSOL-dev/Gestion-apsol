@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Building2, Plus, ChevronRight, Globe, FileText, Calendar, Users, Target } from 'lucide-react'
-import { getEmpresaById, saveEmpresa, deleteEmpresa, getEmpresas } from '../services/empresas'
+import { getEmpresaById, saveEmpresa, deleteEmpresa, getEmpresas, saveRazonSocial, deleteRazonSocial } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
 
 const PAISES_LATAM = [
@@ -28,14 +28,12 @@ export default function EmpresaDetalle() {
     provincia: '',
     industria: '',
     tamaño_personas: '',
-    dias_espera_facturacion: 5,
-    razon_social_1: '',
-    cuit_1: '',
-    razon_social_2: '',
-    cuit_2: '',
-    razon_social_3: '',
-    cuit_3: ''
+    dias_espera_facturacion: 5
   })
+
+  const [razonesSociales, setRazonesSociales] = useState([])
+  const [nuevaRazon, setNuevaRazon] = useState({ razon_social: '', cuit: '' })
+  const [savingRazon, setSavingRazon] = useState(false)
 
   const [modoContacto, setModoContacto] = useState('nuevo') // 'nuevo' o 'existente'
   const [contactoSeleccionadoId, setContactoSeleccionadoId] = useState('')
@@ -85,16 +83,11 @@ export default function EmpresaDetalle() {
         provincia: data.provincia || '',
         industria: data.industria || '',
         tamaño_personas: data.tamaño_personas || '',
-        dias_espera_facturacion: data.dias_espera_facturacion || 5,
-        razon_social_1: data.razon_social_1 || '',
-        cuit_1: data.cuit_1 || '',
-        razon_social_2: data.razon_social_2 || '',
-        cuit_2: data.cuit_2 || '',
-        razon_social_3: data.razon_social_3 || '',
-        cuit_3: data.cuit_3 || ''
+        dias_espera_facturacion: data.dias_espera_facturacion || 5
       })
       setContactos(data.contactos || [])
       setProspectos(data.prospectos || [])
+      setRazonesSociales(data.razones_sociales || [])
     } catch (err) {
       console.error(err)
       setError('Error al cargar la empresa.')
@@ -159,6 +152,33 @@ export default function EmpresaDetalle() {
       cargarDatos() // Recargamos para ver el nuevo contacto
     } catch (err) {
       alert('Error al asociar contacto')
+    }
+  }
+
+  async function agregarRazonSocial(e) {
+    e.preventDefault()
+    if (!nuevaRazon.razon_social.trim()) return
+    setSavingRazon(true)
+    try {
+      const guardada = await saveRazonSocial({ ...nuevaRazon, empresa_id: id })
+      setRazonesSociales(prev => [...prev, guardada])
+      setNuevaRazon({ razon_social: '', cuit: '' })
+    } catch (err) {
+      console.error(err)
+      alert('Error al guardar la razón social: ' + (err.message || 'Error desconocido'))
+    } finally {
+      setSavingRazon(false)
+    }
+  }
+
+  async function quitarRazonSocial(razonId) {
+    if (!window.confirm('¿Eliminar esta razón social?')) return
+    try {
+      await deleteRazonSocial(razonId)
+      setRazonesSociales(prev => prev.filter(r => r.id !== razonId))
+    } catch (err) {
+      console.error(err)
+      alert('Error al eliminar la razón social: ' + (err.message || 'Error desconocido'))
     }
   }
 
@@ -380,19 +400,56 @@ export default function EmpresaDetalle() {
               <FileText size={20} className="text-primary" />
               Facturación (Razones Sociales)
             </h3>
-            <div style={{ display: 'grid', gap: '12px' }}>
-              {[1, 2, 3].map(num => (
-                <div key={num} style={{ padding: '12px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)' }}>
-                  <p style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '8px', opacity: 0.6 }}>OPCIÓN {num}</p>
-                  <div className="field" style={{ marginBottom: '8px' }}>
-                    <input type="text" placeholder="Razón Social" value={empresa[`razon_social_${num}`]} onChange={e => setEmpresa({...empresa, [`razon_social_${num}`]: e.target.value})} />
+
+            {esNueva ? (
+              <p className="text-muted text-sm">Guardá primero los datos institucionales para poder cargar razones sociales.</p>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {razonesSociales.length === 0 && (
+                  <p className="text-muted text-sm">Sin razones sociales cargadas.</p>
+                )}
+                {razonesSociales.map(rs => (
+                  <div key={rs.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: '500' }}>{rs.razon_social}</div>
+                      <div style={{ fontSize: '11px', opacity: 0.6 }}>{rs.cuit || 'Sin CUIT'}</div>
+                    </div>
+                    <button type="button" className="btn btn-icon text-danger" onClick={() => quitarRazonSocial(rs.id)} title="Eliminar">
+                      <Trash2 size={14} />
+                    </button>
                   </div>
-                  <div className="field">
-                    <input type="text" placeholder="CUIT" value={empresa[`cuit_${num}`]} onChange={e => setEmpresa({...empresa, [`cuit_${num}`]: e.target.value})} />
+                ))}
+
+                {/* <div>, no <form>: esta sección vive dentro del <form onSubmit={handleSave}>
+                    de la empresa, y un <form> anidado hace que el "submit" burbujee hasta
+                    ese form externo y también dispare handleSave (re-guardando la empresa,
+                    y navegando a otra pantalla si es una empresa nueva). */}
+                <div
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarRazonSocial(e) } }}
+                  style={{ display: 'grid', gap: '8px', marginTop: '8px' }}
+                >
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <input
+                      type="text"
+                      placeholder="Razón Social"
+                      value={nuevaRazon.razon_social}
+                      onChange={e => setNuevaRazon({...nuevaRazon, razon_social: e.target.value})}
+                    />
                   </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <input
+                      type="text"
+                      placeholder="CUIT"
+                      value={nuevaRazon.cuit}
+                      onChange={e => setNuevaRazon({...nuevaRazon, cuit: e.target.value})}
+                    />
+                  </div>
+                  <button type="button" className="btn btn-secondary" onClick={agregarRazonSocial} disabled={savingRazon || !nuevaRazon.razon_social.trim()}>
+                    <Plus size={14} /> {savingRazon ? 'Guardando...' : 'Agregar Razón Social'}
+                  </button>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -448,8 +505,8 @@ export default function EmpresaDetalle() {
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                           <span style={{ fontWeight: '600', fontSize: '14px' }}>{p.nombre}</span>
-                          <span className={`badge ${p.estado.includes('A') ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: '10px' }}>
-                            {p.estado}
+                          <span className={`badge ${(p.estado || '').includes('A') ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: '10px' }}>
+                            {p.estado || 'Sin estado'}
                           </span>
                         </div>
                         <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', opacity: 0.7 }}>

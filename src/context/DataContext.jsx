@@ -11,6 +11,7 @@ import { getPlanes } from '../services/planificacion'
 import { getActividades } from '../services/cronograma'
 import { getCredenciales } from '../services/credenciales'
 import { getValoresUVA } from '../services/valoresUva'
+import { sincronizarHistoricoUVA } from '../services/sincronizacionUva'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
 import { useAuth } from './AuthContext'
 
@@ -208,6 +209,20 @@ export function DataProvider({ children }) {
     }
   }
 
+  // Sincroniza en segundo plano las cotizaciones UVA faltantes desde la API
+  // pública (Argentina Datos) al abrir la app. Solo inserta fechas que
+  // todavía no existen en la base, así nunca duplica un día ya cargado.
+  async function sincronizarValoresUVA() {
+    try {
+      const { insertados } = await sincronizarHistoricoUVA()
+      if (insertados > 0) {
+        await refreshValoresUVA(true)
+      }
+    } catch (err) {
+      console.error('Error al sincronizar histórico de valores UVA:', err)
+    }
+  }
+
   async function refreshCuentasBancarias(silencioso = false) {
     if (!silencioso) setLoadingCuentasBancarias(true)
     try {
@@ -238,6 +253,7 @@ export function DataProvider({ children }) {
       refreshCredenciales(true)
       refreshValoresUVA(true)
       refreshCuentasBancarias(true)
+      sincronizarValoresUVA()
     } else {
       // Limpiar datos al cerrar sesión
       setFacturas([])

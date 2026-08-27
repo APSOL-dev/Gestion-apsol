@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Plus, Search, FolderKanban, Building2, User, ChevronRight, ChevronDown } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { getEstadoProspectoStyle } from '../utils/formateo'
+import ProspectoDrawer from '../components/ProspectoDrawer'
 
 export default function Prospectos() {
   const { prospectos, loadingProspectos, refreshProspectos } = useData()
   const [search, setSearch] = useState('')
   const [filtroActivos, setFiltroActivos] = useState(true) // true = activos, false = historicos
   const [expandidos, setExpandidos] = useState({}) // { [estado]: boolean }
-  const navigate = useNavigate()
+  const [prospectoSeleccionadoId, setProspectoSeleccionadoId] = useState(null)
 
   useEffect(() => {
     // Si ya hay prospectos en la caché global, hacemos un re-fetch silencioso (sin loader molesto)
@@ -32,18 +34,7 @@ export default function Prospectos() {
     (prospecto.estado && prospecto.estado.toLowerCase().includes(search.toLowerCase()))
   )
 
-  const getEstadoStyle = (estado) => {
-    switch (estado) {
-      case '1 - Nuevo': return { bg: '#eff6ff', text: '#2563eb' }
-      case '2 - Contactado': return { bg: '#fef3c7', text: '#d97706' }
-      case '3 - En negociación': return { bg: '#f3e8ff', text: '#9333ea' }
-      case '4 - Propuesta enviada': return { bg: '#ecfdf5', text: '#059669' }
-      case '5A - Ganado': return { bg: '#dcfce7', text: '#15803d' }
-      case '5B - Perdido': return { bg: '#fee2e2', text: '#b91c1c' }
-      case '6A - En producción': return { bg: '#d1fae5', text: '#065f46' }
-      default: return { bg: '#f1f5f9', text: '#475569' }
-    }
-  } // Agrupar prospectos por estado real
+  // Agrupar prospectos por estado real
   const prospectosPorEstado = prospectosFiltrados.reduce((acc, p) => {
     const estado = p.estado || 'Nuevo'
     if (!acc[estado]) acc[estado] = []
@@ -158,7 +149,7 @@ export default function Prospectos() {
                       width: '10px', 
                       height: '10px', 
                       borderRadius: '50%', 
-                      background: getEstadoStyle(estado).text 
+                      background: getEstadoProspectoStyle(estado).text 
                     }} />
                     <div style={{ fontWeight: '700', color: 'var(--color-text)', fontSize: '14px' }}>
                       {estado}
@@ -200,7 +191,7 @@ export default function Prospectos() {
                         {items.map((prospecto) => (
                           <tr 
                             key={prospecto.id}
-                            onClick={() => navigate(`/prospectos/${prospecto.id}`)}
+                            onClick={() => setProspectoSeleccionadoId(prospecto.id)}
                             style={{ cursor: 'pointer' }}
                           >
                             <td style={{ paddingLeft: '20px' }}>
@@ -229,9 +220,9 @@ export default function Prospectos() {
                                 fontSize: '11px', 
                                 fontWeight: '700', 
                                 textTransform: 'uppercase',
-                                background: getEstadoStyle(prospecto.estado).bg,
-                                color: getEstadoStyle(prospecto.estado).text,
-                                border: `1px solid ${getEstadoStyle(prospecto.estado).text}20`
+                                background: getEstadoProspectoStyle(prospecto.estado).bg,
+                                color: getEstadoProspectoStyle(prospecto.estado).text,
+                                border: `1px solid ${getEstadoProspectoStyle(prospecto.estado).text}20`
                               }}>
                                 {prospecto.estado || 'Nuevo'}
                               </span>
@@ -275,6 +266,14 @@ export default function Prospectos() {
             )
           })}
         </div>
+      )}
+
+      {prospectoSeleccionadoId && (
+        <ProspectoDrawer
+          id={prospectoSeleccionadoId}
+          onClose={() => setProspectoSeleccionadoId(null)}
+          onChanged={() => refreshProspectos()}
+        />
       )}
     </div>
   )

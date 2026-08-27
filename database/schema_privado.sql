@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS apsol_private.prospectos (
   frecuencia_actualizacion INTEGER DEFAULT 1,
   inicio_servicio DATE,
   proxima_actualizacion_tarifa DATE,
+  base_indice_valor NUMERIC,
+  hs_mensuales NUMERIC,
+  mensualidad_vigente_actual NUMERIC,
+  moneda_cobro TEXT DEFAULT 'Pesos',
+  indice_cobro TEXT,
+  proxima_factura DATE,
+  ultima_actualizacion_tarifa DATE,
+  dias_entre_reuniones INTEGER,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -119,6 +127,9 @@ CREATE TABLE IF NOT EXISTS apsol_private.facturacion (
   numero_factura TEXT,
   archivo_factura TEXT,
   notas TEXT,
+  documento_general TEXT,
+  fecha_vencimiento DATE,
+  leyenda TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -141,6 +152,12 @@ CREATE TABLE IF NOT EXISTS apsol_private.cuentas_bancarias (
   alias TEXT,
   banco TEXT,
   titular TEXT,
+  red TEXT,
+  wallet_address TEXT,
+  direccion_banco TEXT,
+  numero_ruta_aba TEXT,
+  codigo_swift TEXT,
+  numero_cuenta_intl TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

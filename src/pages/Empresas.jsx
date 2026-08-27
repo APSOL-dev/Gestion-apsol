@@ -3,12 +3,15 @@ import { Link } from 'react-router-dom'
 import { Plus, Search, Building2, MapPin, Briefcase, Trash2, CheckSquare, Square } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { deleteEmpresa } from '../services/empresas'
+import { getEstadoProspectoStyle } from '../utils/formateo'
+import EmpresaDrawer from '../components/EmpresaDrawer'
 
 export default function Empresas() {
   const { empresas, loadingEmpresas, refreshEmpresas } = useData()
   const [search, setSearch] = useState('')
   const [seleccionados, setSeleccionados] = useState([])
   const [saving, setSaving] = useState(false)
+  const [empresaSeleccionadaId, setEmpresaSeleccionadaId] = useState(null)
 
   useEffect(() => {
     const esSilencioso = empresas.length > 0
@@ -107,35 +110,41 @@ export default function Empresas() {
                       {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                     </button>
                   </td>
-                  <td>
-                    <Link to={`/empresas/${empresa.id}`} style={{ color: 'inherit', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}>
+                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}>
                       <div className="sidebar-avatar" style={{ width: '28px', height: '28px', fontSize: '12px' }}>
                         {empresa.nombre.charAt(0)}
                       </div>
                       {empresa.nombre}
-                    </Link>
+                    </div>
                   </td>
-                  <td>
+                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>
                     {empresa.industria ? (
                       <span className="badge badge-gray" style={{ display: 'flex', alignItems: 'center', gap: '4px', width: 'fit-content' }}>
                         <Briefcase size={12} /> {empresa.industria}
                       </span>
                     ) : '-'}
                   </td>
-                  <td>
+                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>
                     {(empresa.provincia || empresa.pais) ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-muted)' }}>
-                        <MapPin size={14} /> 
+                        <MapPin size={14} />
                         {[empresa.provincia, empresa.pais].filter(Boolean).join(', ')}
                       </span>
                     ) : '-'}
                   </td>
-                  <td>{empresa.tamaño_personas ? `${empresa.tamaño_personas} emp.` : '-'}</td>
-                  <td>
+                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>{empresa.tamaño_personas ? `${empresa.tamaño_personas} emp.` : '-'}</td>
+                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                       {activos.length > 0 ? (
                         activos.map((p, idx) => (
-                          <span key={idx} className="badge badge-blue" style={{ fontSize: '10px' }}>
+                          <span
+                            key={idx}
+                            style={{
+                              fontSize: '10px', padding: '3px 8px', borderRadius: '10px', fontWeight: '700', textTransform: 'uppercase',
+                              background: getEstadoProspectoStyle(p.estado).bg, color: getEstadoProspectoStyle(p.estado).text
+                            }}
+                          >
                             {p.estado.split('-')[1]?.trim() || p.estado}
                           </span>
                         ))
@@ -212,6 +221,14 @@ export default function Empresas() {
           {conProspectosActivos.length > 0 && renderTabla(conProspectosActivos, 'Empresas con Prospectos Activos')}
           {sinProspectosActivos.length > 0 && renderTabla(sinProspectosActivos, conProspectosActivos.length > 0 ? 'Otras Empresas' : 'Listado de Empresas')}
         </>
+      )}
+
+      {empresaSeleccionadaId && (
+        <EmpresaDrawer
+          id={empresaSeleccionadaId}
+          onClose={() => setEmpresaSeleccionadaId(null)}
+          onChanged={refreshEmpresas}
+        />
       )}
     </div>
   )

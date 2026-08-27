@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Save, Trash2, Video, MessageSquare, Plus, FileText, Send } from 'lucide-react'
-import { 
-  getCapacitacionById, saveCapacitacion, deleteCapacitacion, 
-  saveVideo, deleteVideo, saveComentario, deleteComentario 
+import { ArrowLeft, Save, Trash2, Video, MessageSquare, Plus, FileText, Send, Eye, ExternalLink } from 'lucide-react'
+import {
+  getCapacitacionById, saveCapacitacion, deleteCapacitacion,
+  saveVideo, deleteVideo, saveComentario, deleteComentario,
+  getUsuarios, marcarVideoVisto, getVideoPlaybackInfo, buildDriveProxyUrl, nombreUsuario
 } from '../services/capacitacion'
 import { useAuth } from '../context/AuthContext'
+import { supabase, supabaseUrl } from '../lib/supabase'
 
 export default function CapacitacionDetalle() {
   const { id } = useParams()
@@ -17,26 +19,38 @@ export default function CapacitacionDetalle() {
     titulo: '',
     descripcion: '',
     clasificacion: 'SGI - Calidad',
-    fecha_publicacion: new Date().toISOString().split('T')[0],
-    destinatarios: 'Todos',
+    fecha_creacion: new Date().toISOString().split('T')[0],
   })
-  
+
   const [videos, setVideos] = useState([])
   const [comentarios, setComentarios] = useState([])
-  
+  const [usuarios, setUsuarios] = useState([])
+  const [accessToken, setAccessToken] = useState(null)
+
   const [loading, setLoading] = useState(!esNuevo)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   // Formularios modales/inline
   const [mostrandoFormVideo, setMostrandoFormVideo] = useState(false)
-  const [nuevoVideo, setNuevoVideo] = useState({ titulo: '', link_video: '', orden: 1 })
-  
+  const [nuevoVideo, setNuevoVideo] = useState({ titulo: '', link_video: '', destinatarios: [] })
+
   const [nuevoComentarioText, setNuevoComentarioText] = useState('')
 
   useEffect(() => {
     if (!esNuevo) cargarCapacitacion()
+    cargarUsuarios()
+    supabase.auth.getSession().then(({ data }) => setAccessToken(data?.session?.access_token || null))
   }, [id])
+
+  async function cargarUsuarios() {
+    try {
+      const data = await getUsuarios()
+      setUsuarios(data)
+    } catch (err) {
+      console.error('Error al cargar usuarios:', err)
+    }
+  }
 
   async function cargarCapacitacion() {
     setLoading(true)
@@ -44,7 +58,7 @@ export default function CapacitacionDetalle() {
       const data = await getCapacitacionById(id)
       setCapacitacion({
         ...data,
-        fecha_publicacion: data.fecha_publicacion ? data.fecha_publicacion.split('T')[0] : ''
+        fecha_creacion: data.fecha_creacion ? data.fecha_creacion.split('T')[0] : ''
       })
       setVideos(data.videos || [])
       setComentarios(data.comentarios || [])
@@ -62,7 +76,7 @@ export default function CapacitacionDetalle() {
     setError('')
     try {
       const dataToSave = { ...capacitacion }
-      if (!dataToSave.fecha_publicacion) dataToSave.fecha_publicacion = null
+      if (!dataToSave.fecha_creacion) dataToSave.fecha_creacion = null
 
       const saved = await saveCapacitacion(dataToSave)
       if (esNuevo) {
@@ -88,13 +102,32 @@ export default function CapacitacionDetalle() {
   }
 
   // VIDEOS
+  function toggleDestinatario(usuarioId) {
+    setNuevoVideo(v => {
+      const yaEsta = v.destinatarios.includes(usuarioId)
+      return {
+        ...v,
+        destinatarios: yaEsta ? v.destinatarios.filter(id => id !== usuarioId) : [...v.destinatarios, usuarioId]
+      }
+    })
+  }
+
   async function handleAddVideo(e) {
     e.preventDefault()
     if (!nuevoVideo.titulo || !nuevoVideo.link_video) return
     try {
-      const saved = await saveVideo({ ...nuevoVideo, capacitacion_id: id })
-      setVideos([...videos, saved].sort((a,b) => a.orden - b.orden))
-      setNuevoVideo({ titulo: '', link_video: '', orden: videos.length + 2 })
+      const saved = await saveVideo({
+        capacitacion_id: id,
+        resumen: nuevoVideo.titulo,
+        link: nuevoVideo.link_video,
+        es_link_externo: true,
+        destinatarios: nuevoVideo.destinatarios,
+        visto_por: [],
+        autor: user?.email || null,
+        fecha_subida: new Date().toISOString().split('T')[0],
+      })
+      setVideos([...videos, saved])
+      setNuevoVideo({ titulo: '', link_video: '', destinatarios: [] })
       setMostrandoFormVideo(false)
     } catch (err) {
       console.error(err)
@@ -112,15 +145,25 @@ export default function CapacitacionDetalle() {
     }
   }
 
+  async function handleMarcarVisto(video) {
+    if (!user) return
+    try {
+      const actualizado = await marcarVideoVisto(video, user.id)
+      setVideos(videos.map(v => v.id === video.id ? actualizado : v))
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   // COMENTARIOS
   async function handleAddComentario(e) {
     e.preventDefault()
     if (!nuevoComentarioText.trim() || !user) return
     try {
-      const saved = await saveComentario({ 
+      const saved = await saveComentario({
         capacitacion_id: id,
-        usuario_id: user.id,
-        texto: nuevoComentarioText.trim()
+        creado_por: user.id,
+        comentario: nuevoComentarioText.trim()
       })
       setComentarios([saved, ...comentarios])
       setNuevoComentarioText('')
@@ -140,18 +183,58 @@ export default function CapacitacionDetalle() {
     }
   }
 
-  // Utilidad para extraer el ID de un video de YouTube para el embed (Simplificado)
-  const getYouTubeEmbedUrl = (url) => {
-    if (!url) return null;
-    let videoId = '';
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    if (match && match[2].length === 11) {
-      videoId = match[2];
-      return `https://www.youtube.com/embed/${videoId}`;
+  function renderVideoPlayer(v) {
+    const info = getVideoPlaybackInfo(v)
+    switch (info.kind) {
+      case 'youtube':
+      case 'drive-embed':
+        return (
+          <iframe
+            width="100%"
+            height="100%"
+            src={info.embedUrl}
+            title={v.resumen || 'Video'}
+            frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          ></iframe>
+        )
+      case 'mp4':
+        return (
+          <video width="100%" height="100%" controls>
+            <source src={info.url} type="video/mp4" />
+            Tu navegador no soporta el tag de video.
+          </video>
+        )
+      case 'drive-proxy':
+        if (!accessToken) {
+          return <div style={{ color: '#fff', padding: '20px', textAlign: 'center' }}>Iniciá sesión para ver este video.</div>
+        }
+        return (
+          <video width="100%" height="100%" controls>
+            <source src={buildDriveProxyUrl(supabaseUrl, v.id, accessToken)} type="video/mp4" />
+            Tu navegador no soporta el tag de video.
+          </video>
+        )
+      case 'external-link':
+        return (
+          <a
+            href={info.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', height: '100%', color: '#fff', textDecoration: 'none' }}
+          >
+            <ExternalLink size={18} /> Abrir video en pestaña nueva
+          </a>
+        )
+      default:
+        return (
+          <div style={{ color: 'var(--color-text-muted)', padding: '20px', textAlign: 'center' }}>
+            Video pendiente de carga
+          </div>
+        )
     }
-    return url; // Si no es youtube, asume que es una URL de MP4 directa (Supabase Storage, etc)
-  };
+  }
 
   if (loading) {
     return (
@@ -185,7 +268,7 @@ export default function CapacitacionDetalle() {
       {error && <div className="alert alert-error" style={{ marginBottom: '20px' }}>{error}</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-        
+
         {/* SECCIÓN DATOS */}
         <div className="card">
           <h3 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -197,7 +280,7 @@ export default function CapacitacionDetalle() {
               <label>Título *</label>
               <input type="text" required value={capacitacion.titulo} onChange={e => setCapacitacion({...capacitacion, titulo: e.target.value})} />
             </div>
-            
+
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label>Descripción / Objetivos</label>
               <textarea rows="3" value={capacitacion.descripcion || ''} onChange={e => setCapacitacion({...capacitacion, descripcion: e.target.value})} />
@@ -212,17 +295,15 @@ export default function CapacitacionDetalle() {
                 <option value="Comercial / Ventas">Comercial / Ventas</option>
                 <option value="Administrativo">Administrativo / RRHH</option>
                 <option value="Onboarding">Onboarding Nuevo Ingreso</option>
+                <option value="Antigravity">Antigravity</option>
+                <option value="N8N">N8N</option>
+                <option value="Gestión Interna">Gestión Interna</option>
               </select>
             </div>
 
             <div className="field">
-              <label>Destinatarios</label>
-              <input type="text" placeholder="Ej. Todos, Técnicos, Ventas..." value={capacitacion.destinatarios || ''} onChange={e => setCapacitacion({...capacitacion, destinatarios: e.target.value})} />
-            </div>
-
-            <div className="field">
-              <label>Fecha de Publicación</label>
-              <input type="date" value={capacitacion.fecha_publicacion} onChange={e => setCapacitacion({...capacitacion, fecha_publicacion: e.target.value})} />
+              <label>Fecha de Creación</label>
+              <input type="date" value={capacitacion.fecha_creacion} onChange={e => setCapacitacion({...capacitacion, fecha_creacion: e.target.value})} />
             </div>
 
             <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
@@ -236,7 +317,7 @@ export default function CapacitacionDetalle() {
 
         {!esNuevo && (
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', alignItems: 'start' }}>
-            
+
             {/* COLUMNA VIDEOS */}
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -252,16 +333,33 @@ export default function CapacitacionDetalle() {
               {mostrandoFormVideo && (
                 <form onSubmit={handleAddVideo} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '24px', padding: '16px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)' }}>
                   <div className="field">
-                    <label>Título del Video *</label>
+                    <label>Título / Resumen del Video *</label>
                     <input type="text" required value={nuevoVideo.titulo} onChange={e => setNuevoVideo({...nuevoVideo, titulo: e.target.value})} />
                   </div>
                   <div className="field">
-                    <label>URL (YouTube o Link Directo MP4) *</label>
+                    <label>URL (YouTube, Drive o Link Directo) *</label>
                     <input type="url" required value={nuevoVideo.link_video} onChange={e => setNuevoVideo({...nuevoVideo, link_video: e.target.value})} />
                   </div>
-                  <div className="field" style={{ maxWidth: '150px' }}>
-                    <label>Orden</label>
-                    <input type="number" required value={nuevoVideo.orden} onChange={e => setNuevoVideo({...nuevoVideo, orden: e.target.value})} />
+                  <div className="field">
+                    <label>¿Quién puede ver este video?</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                      {usuarios.map(u => (
+                        <label key={u.id} className="badge" style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', background: nuevoVideo.destinatarios.includes(u.id) ? 'var(--color-primary)' : 'var(--color-surface)', color: nuevoVideo.destinatarios.includes(u.id) ? '#fff' : 'inherit', border: '1px solid var(--color-border)' }}>
+                          <input
+                            type="checkbox"
+                            checked={nuevoVideo.destinatarios.includes(u.id)}
+                            onChange={() => toggleDestinatario(u.id)}
+                            style={{ margin: 0 }}
+                          />
+                          {u.nombre} {u.apellido || ''}
+                        </label>
+                      ))}
+                    </div>
+                    {nuevoVideo.destinatarios.length === 0 && (
+                      <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '6px' }}>
+                        Sin nadie seleccionado, solo el Admin va a poder ver este video.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <button type="submit" className="btn btn-primary">Guardar Video</button>
@@ -276,33 +374,26 @@ export default function CapacitacionDetalle() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                   {videos.map((v) => {
-                    const embedUrl = getYouTubeEmbedUrl(v.link_video)
-                    const isYoutube = embedUrl && embedUrl.includes('youtube')
-                    
+                    const yaVisto = user && (v.visto_por || []).includes(user.id)
                     return (
                       <div key={v.id} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--color-surface2)', borderBottom: '1px solid var(--color-border)' }}>
-                          <h4 style={{ margin: 0, fontSize: '15px' }}>{v.orden}. {v.titulo}</h4>
+                          <h4 style={{ margin: 0, fontSize: '15px' }}>{v.resumen || 'Video'}</h4>
                           <button className="btn btn-secondary" style={{ padding: '4px', color: 'var(--color-danger)', borderColor: 'transparent', background: 'transparent' }} onClick={() => handleDeleteVideo(v.id)}>
                             <Trash2 size={16} />
                           </button>
                         </div>
                         <div style={{ background: '#000', width: '100%', aspectRatio: '16 / 9' }}>
-                          {isYoutube ? (
-                            <iframe 
-                              width="100%" 
-                              height="100%" 
-                              src={embedUrl} 
-                              title={v.titulo} 
-                              frameBorder="0" 
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                              allowFullScreen
-                            ></iframe>
-                          ) : (
-                            <video width="100%" height="100%" controls>
-                              <source src={v.link_video} type="video/mp4" />
-                              Tu navegador no soporta el tag de video.
-                            </video>
+                          {renderVideoPlayer(v)}
+                        </div>
+                        <div style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--color-text-muted)', flexWrap: 'wrap', gap: '8px' }}>
+                          <span>
+                            Visto por: {(v.visto_por || []).length === 0 ? 'nadie todavía' : (v.visto_por || []).map(uid => nombreUsuario(usuarios, uid)).join(', ')}
+                          </span>
+                          {!yaVisto && user && (
+                            <button className="btn btn-secondary" style={{ fontSize: '12px', padding: '4px 10px' }} onClick={() => handleMarcarVisto(v)}>
+                              <Eye size={14} /> Marcar como visto
+                            </button>
                           )}
                         </div>
                       </div>
@@ -320,8 +411,8 @@ export default function CapacitacionDetalle() {
               </h3>
 
               <form onSubmit={handleAddComentario} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
-                <textarea 
-                  rows="3" 
+                <textarea
+                  rows="3"
                   placeholder="Escribe un comentario o duda sobre la capacitación..."
                   value={nuevoComentarioText}
                   onChange={e => setNuevoComentarioText(e.target.value)}
@@ -344,15 +435,15 @@ export default function CapacitacionDetalle() {
                         </span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
-                            {new Date(c.fecha_creacion).toLocaleDateString('es-AR')}
+                            {new Date(c.fecha).toLocaleDateString('es-AR')}
                           </span>
-                          {(user?.id === c.usuario_id) && ( // Si soy el dueño del comentario
+                          {(user?.id === c.creado_por) && (
                             <Trash2 size={14} style={{ cursor: 'pointer', color: 'var(--color-danger)' }} onClick={() => handleDeleteComentario(c.id)}/>
                           )}
                         </div>
                       </div>
                       <p style={{ fontSize: '14px', lineHeight: '1.4', margin: 0, whiteSpace: 'pre-wrap' }}>
-                        {c.texto}
+                        {c.comentario}
                       </p>
                     </div>
                   ))

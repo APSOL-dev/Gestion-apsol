@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { X, Calendar, DollarSign, MessageCircle, ArrowUpRight, Plus, Trash2 } from 'lucide-react'
-import { getFacturaById, savePago, deletePago } from '../services/facturacion'
+import { X, MessageCircle, Plus, Trash2, Pencil, FileText } from 'lucide-react'
+import { getFacturaById, savePago, deletePago, deleteFactura } from '../services/facturacion'
+import { fechaLocalISO } from '../utils/fecha'
 
 export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
   const navigate = useNavigate()
@@ -9,9 +11,10 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
   const [pagos, setPagos] = useState([])
   const [loading, setLoading] = useState(true)
   const [savingPago, setSavingPago] = useState(false)
+  const [eliminando, setEliminando] = useState(false)
   const [mostrandoFormPago, setMostrandoFormPago] = useState(false)
   const [nuevoPago, setNuevoPago] = useState({
-    fecha: new Date().toISOString().split('T')[0],
+    fecha: fechaLocalISO(),
     monto: '',
     observaciones: ''
   })
@@ -85,7 +88,7 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
       })
       // Limpiar y ocultar form
       setNuevoPago({
-        fecha: new Date().toISOString().split('T')[0],
+        fecha: fechaLocalISO(),
         monto: '',
         observaciones: ''
       })
@@ -106,12 +109,28 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
   async function handleDeletePago(pagoId) {
     if (!window.confirm('¿Estás seguro de eliminar este pago?')) return
     try {
-      await deletePago(pagoId)
+      await deletePago(pagoId, id)
       await cargarDetalle()
       if (onPagoRegistrado) onPagoRegistrado()
     } catch (err) {
       console.error('Error al eliminar pago:', err)
       alert('Error al eliminar el pago.')
+    }
+  }
+
+  // Eliminar la factura completa (no solo un pago) sin salir del panel
+  async function handleEliminarFactura() {
+    if (!window.confirm('¿Eliminar esta factura por completo? Se borrarán también sus pagos registrados. Esta acción no se puede deshacer.')) return
+    setEliminando(true)
+    try {
+      await deleteFactura(id)
+      onClose()
+      if (onPagoRegistrado) onPagoRegistrado()
+    } catch (err) {
+      console.error('Error al eliminar la factura:', err)
+      alert('Error al eliminar la factura.')
+    } finally {
+      setEliminando(false)
     }
   }
 
@@ -149,10 +168,13 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
 
   if (!id) return null
 
-  return (
+  // Portal a <body>: evita que un ancestro con `transform` (p.ej. `.page` con
+  // su animación de entrada) se vuelva containing block y recorte el overlay.
+  return createPortal(
     <>
       {/* Overlay translúcido de fondo */}
-      <div 
+      <div
+        data-testid="drawer-backdrop"
         onClick={onClose}
         style={{
           position: 'fixed',
@@ -168,7 +190,8 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
       />
 
       {/* Panel lateral */}
-      <div 
+      <div
+        data-testid="drawer-panel"
         style={{
           position: 'fixed',
           top: 0,
@@ -193,17 +216,41 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
               {factura?.prospectos?.empresas?.nombre || 'Cargando...'}
             </p>
           </div>
-          <button 
-            onClick={onClose}
-            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#888', padding: '6px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            className="btn-hover-circle"
-          >
-            <X size={20} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {!loading && factura && (
+              <>
+                <button
+                  onClick={() => navigate(`/facturacion/${id}`)}
+                  title="Editar Factura"
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#385723', padding: '6px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  className="btn-hover-circle"
+                >
+                  <Pencil size={18} />
+                </button>
+                <button
+                  onClick={handleEliminarFactura}
+                  disabled={eliminando}
+                  title="Eliminar Factura"
+                  style={{ border: 'none', background: 'transparent', cursor: eliminando ? 'default' : 'pointer', color: '#d9534f', padding: '6px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: eliminando ? 0.5 : 1 }}
+                  className="btn-hover-circle"
+                >
+                  <Trash2 size={18} />
+                </button>
+                <div style={{ width: '1px', height: '20px', background: '#eee', margin: '0 4px' }} />
+              </>
+            )}
+            <button
+              onClick={onClose}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#888', padding: '6px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              className="btn-hover-circle"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Contenido con scroll */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px' }}>
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px', gap: '12px' }}>
               <div className="loading-spinner" style={{ width: '28px', height: '28px', border: '3px solid #ccc', borderTopColor: '#385723', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
@@ -348,6 +395,33 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
                         <code style={{ fontSize: '12px', backgroundColor: '#e8f0fe', padding: '2px 6px', borderRadius: '3px' }}>
                           {factura.cuenta_bancaria.alias}
                         </code>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Sección de Documentos Adjuntos */}
+              {((factura.comprobantes_adjuntos || []).some(Boolean) || factura.documento_general) && (
+                <div style={{ backgroundColor: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '16px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: '#444', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <FileText size={15} /> Documentos
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {(factura.comprobantes_adjuntos || []).map((url, idx) => url && (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ color: '#555' }}>Factura Fiscal {idx + 1}</span>
+                        <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#385723', fontWeight: '600', textDecoration: 'none' }}>
+                          Ver / Descargar
+                        </a>
+                      </div>
+                    ))}
+                    {factura.documento_general && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ color: '#555' }}>Documento / Anexo</span>
+                        <a href={factura.documento_general} target="_blank" rel="noopener noreferrer" style={{ color: '#385723', fontWeight: '600', textDecoration: 'none' }}>
+                          Ver / Descargar
+                        </a>
                       </div>
                     )}
                   </div>
@@ -503,34 +577,6 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
             </div>
           )}
         </div>
-
-        {/* Acciones al pie */}
-        {!loading && factura && (
-          <div style={{ padding: '16px 20px', borderTop: '1px solid #eee', backgroundColor: '#fcfcfc', display: 'flex', justifyContent: 'stretch' }}>
-            <button
-              onClick={() => navigate(`/facturacion/${id}`)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                backgroundColor: '#385723',
-                color: '#fff',
-                border: 'none',
-                padding: '12px 16px',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                boxShadow: '0 2px 4px rgba(56, 87, 35, 0.2)'
-              }}
-            >
-              Ver expediente completo
-              <ArrowUpRight size={16} />
-            </button>
-          </div>
-        )}
       </div>
 
       <style>{`
@@ -550,6 +596,7 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
           to { transform: translateX(0); }
         }
       `}</style>
-    </>
+    </>,
+    document.body
   )
 }

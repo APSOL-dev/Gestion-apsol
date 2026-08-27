@@ -16,3 +16,4 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://kursvmadozcqxo
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1cnN2bWFkb3pjcXhvYWVhY2NkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2MTY2NDgsImV4cCI6MjA5OTE5MjY0OH0.3dJfV8prVkgWqoGV1baJdBYTpPasWA1iidvMnRkBqXs'
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export { supabaseUrl }

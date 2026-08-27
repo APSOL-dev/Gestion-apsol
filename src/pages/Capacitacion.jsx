@@ -84,7 +84,7 @@ export default function Capacitacion() {
                     {c.clasificacion || 'General'}
                   </span>
                   <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
-                    {c.fecha_publicacion ? new Date(c.fecha_publicacion).toLocaleDateString('es-AR') : ''}
+                    {c.fecha_creacion ? new Date(c.fecha_creacion).toLocaleDateString('es-AR') : ''}
                   </span>
                 </div>
                 
@@ -94,15 +94,8 @@ export default function Capacitacion() {
                   {c.descripcion || 'Sin descripción...'}
                 </p>
                 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '16px', borderTop: '1px solid var(--color-border)', fontSize: '13px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--color-primary)' }}>
-                    <Video size={16} /> Ver Contenido
-                  </div>
-                  {c.destinatarios && (
-                    <span style={{ color: 'var(--color-text-muted)' }}>
-                      Para: {c.destinatarios}
-                    </span>
-                  )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingTop: '16px', borderTop: '1px solid var(--color-border)', fontSize: '13px', color: 'var(--color-primary)' }}>
+                  <Video size={16} /> Ver Contenido
                 </div>
               </div>
             </Link>
