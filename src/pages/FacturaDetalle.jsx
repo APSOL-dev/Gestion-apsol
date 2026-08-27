@@ -11,6 +11,7 @@ import { getRazonesSocialesByEmpresa, saveRazonSocial } from '../services/empres
 import { uploadFile } from '../services/storage'
 import { formatearMonto } from '../utils/formateo'
 import { fechaLocalISO, esFechaCompleta, sumarDias } from '../utils/fecha'
+import { esArchivoPDF } from '../utils/archivos'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -520,6 +521,15 @@ export default function FacturaDetalle() {
   async function handleFileUpload(e, type, index = null) {
     const file = e.target.files[0]
     if (!file) return
+
+    // Las facturas fiscales adjuntas solo admiten PDF — antes el `accept`
+    // del input dejaba pasar jpg/png (era solo una sugerencia visual del
+    // selector de archivos, no una restricción real).
+    if (type === 'comprobante' && !esArchivoPDF(file)) {
+      setError('Solo se admiten archivos PDF para las facturas fiscales adjuntas.')
+      e.target.value = ''
+      return
+    }
 
     setSaving(true)
     try {
@@ -1073,11 +1083,11 @@ export default function FacturaDetalle() {
                           </div>
                         ) : (
                           <>
-                            <input 
-                              type="file" 
+                            <input
+                              type="file"
                               onChange={(e) => handleFileUpload(e, 'comprobante', idx)}
-                              style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} 
-                              accept=".pdf,.jpg,.jpeg,.png"
+                              style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                              accept=".pdf,application/pdf"
                             />
                             <Upload size={24} style={{ marginBottom: '8px', opacity: 0.5 }} />
                             <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Subir Factura {idx + 1}</span>
