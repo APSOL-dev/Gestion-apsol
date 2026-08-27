@@ -56,9 +56,15 @@ body {
 ======================== */
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* OJO: el fotograma final NO debe declarar `transform`. Con fill-mode `both`,
+   un `transform: translateY(0)` residual computa a una matriz (no `none`) y
+   convierte a `.page` en containing block de sus hijos `position: fixed`,
+   recortando drawers/overlays al tamaño de la página en vez del viewport.
+   Al omitir transform en `to`, la animación interpola hacia el valor base
+   (none) y no deja rastro. Ver src/components/__tests/DrawerPortal.test.jsx */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; }
 }
 
 @keyframes shimmer {
