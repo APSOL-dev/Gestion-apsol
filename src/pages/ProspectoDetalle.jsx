@@ -1,26 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Save, Trash2, FolderKanban, Star, Plus, Clock, User, Building2, X, Link, Upload, DownloadCloud, ChevronDown, Calendar, DollarSign, RefreshCw, Users, CreditCard, Activity, Mail } from 'lucide-react'
+import { ArrowLeft, Save, Trash2, FolderKanban, Star, Plus, Clock, User, Building2, X, Link, Upload, DownloadCloud, ChevronDown, Calendar, DollarSign, RefreshCw, Users, CreditCard, Activity, Mail, ExternalLink } from 'lucide-react'
 import CreatableSelect from 'react-select/creatable'
 
 import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, uploadFile } from '../services/prospectos'
 import { getEmpresas, saveEmpresa } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
-
-const ESTADOS_PROSPECTO = [
-  'Nuevo',
-  '1A - Contactado',
-  '2A - Reunión Agendada',
-  '3A - Seguimiento',
-  '4A - Presupuesto Enviado',
-  '5A - Negociación',
-  '6A - En producción',
-  '1H - Caido previo reunión',
-  '2H - Caido en reunión',
-  '3H - Caido luego del presupuesto',
-  '4H - No califica',
-  '5H - Finalizados'
-]
+import { sumarMeses } from '../utils/fecha'
+import { construirEnlaceContacto } from '../utils/navegacion'
+import { ESTADOS_PROSPECTO, getEstadoProspectoStyle } from '../utils/formateo'
 
 const TIPOS_TAREA = [
   'Llamada Comercial',
@@ -72,21 +60,6 @@ function StarRating({ value, onChange, label }) {
       </div>
     </div>
   )
-}
-
-// Helper para estilos de estado
-function getEstadoStyle(estado) {
-  const e = estado?.toLowerCase() || ''
-  if (e === 'nuevo') return { bg: '#f3f4f6', text: '#374151', label: 'Nuevo' }
-  if (e.includes('1a')) return { bg: '#dbeafe', text: '#1e40af', label: 'Contactado' }
-  if (e.includes('2a')) return { bg: '#e0e7ff', text: '#3730a3', label: 'Reunión' }
-  if (e.includes('3a')) return { bg: '#cffafe', text: '#0e7490', label: 'Seguimiento' }
-  if (e.includes('4a')) return { bg: '#fef3c7', text: '#92400e', label: 'Presupuesto' }
-  if (e.includes('5a')) return { bg: '#ffedd5', text: '#9a3412', label: 'Negociación' }
-  if (e.includes('6a')) return { bg: '#dcfce7', text: '#166534', label: 'En Producción' }
-  if (e.includes('h -') || e.includes('caido') || e.includes('no califica')) return { bg: '#fee2e2', text: '#991b1b', label: 'Cerrado/Caído' }
-  if (e.includes('finalizado')) return { bg: '#f3e8ff', text: '#6b21a8', label: 'Finalizado' }
-  return { bg: '#f3f4f6', text: '#374151', label: estado }
 }
 
 export default function ProspectoDetalle() {
@@ -192,6 +165,7 @@ export default function ProspectoDetalle() {
   const [selectedCanal, setSelectedCanal] = useState(null)
 
   const adjuntosList = getAdjuntosParsed()
+  const enlaceContacto = construirEnlaceContacto(prospecto.contacto_id, todosLosContactos)
 
   useEffect(() => {
     cargarDatos()
@@ -204,6 +178,17 @@ export default function ProspectoDetalle() {
       setContactos(todosLosContactos)
     }
   }, [prospecto.empresa_id, todosLosContactos])
+
+  // La "Próxima Actualización de Tarifa" se calcula sola: última actualización
+  // + la frecuencia de actualización (en meses). No se tipea a mano.
+  useEffect(() => {
+    if (!prospecto.ultima_actualizacion_tarifa) return
+    const meses = parseInt(prospecto.frecuencia_actualizacion) || 1
+    const calculada = sumarMeses(prospecto.ultima_actualizacion_tarifa, meses)
+    if (calculada && calculada !== prospecto.proxima_actualizacion_tarifa) {
+      setProspecto(prev => ({ ...prev, proxima_actualizacion_tarifa: calculada }))
+    }
+  }, [prospecto.ultima_actualizacion_tarifa, prospecto.frecuencia_actualizacion])
 
   function getAdjuntosParsed() {
     try {
@@ -560,7 +545,7 @@ export default function ProspectoDetalle() {
     }
   }
 
-  const currentStyle = getEstadoStyle(prospecto.estado)
+  const currentStyle = getEstadoProspectoStyle(prospecto.estado)
 
   if (loading) {
     return (
@@ -813,16 +798,29 @@ export default function ProspectoDetalle() {
                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <User size={14} /> Contacto *
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!prospecto.empresa_id) alert('Selecciona una empresa primero')
-                    else setShowNuevoContacto(!showNuevoContacto)
-                  }}
-                  style={{ fontSize: '11px', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
-                >
-                  <Plus size={13} /> Crear nuevo
-                </button>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  {enlaceContacto && (
+                    <a
+                      href={enlaceContacto.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={enlaceContacto.label}
+                      style={{ fontSize: '11px', color: 'var(--color-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
+                    >
+                      <ExternalLink size={13} /> Ver ficha
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!prospecto.empresa_id) alert('Selecciona una empresa primero')
+                      else setShowNuevoContacto(!showNuevoContacto)
+                    }}
+                    style={{ fontSize: '11px', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
+                  >
+                    <Plus size={13} /> Crear nuevo
+                  </button>
+                </span>
               </label>
               <select
                 value={prospecto.contacto_id || ''}
@@ -1208,11 +1206,20 @@ export default function ProspectoDetalle() {
                   />
                 </div>
                 <div className="field">
-                  <label>Próx. Act. Tarifa</label>
-                  <input 
-                    type="date" 
-                    value={prospecto.proxima_actualizacion_tarifa || ''} 
-                    onChange={e => setProspecto({...prospecto, proxima_actualizacion_tarifa: e.target.value})}
+                  <label>Última Act. Tarifa</label>
+                  <input
+                    type="date"
+                    value={prospecto.ultima_actualizacion_tarifa || ''}
+                    onChange={e => setProspecto({...prospecto, ultima_actualizacion_tarifa: e.target.value})}
+                  />
+                </div>
+                <div className="field">
+                  <label>Próx. Act. Tarifa <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(automático)</span></label>
+                  <input
+                    type="date"
+                    disabled
+                    value={prospecto.proxima_actualizacion_tarifa || ''}
+                    title="Se calcula sola: Última Act. Tarifa + Frecuencia de Actualización"
                   />
                 </div>
               </div>

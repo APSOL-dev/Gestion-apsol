@@ -35,8 +35,8 @@ export async function getColaboradores() {
   if (error) throw error
   return (data || []).map(c => ({
     ...c,
-    nombre: c.usuarios?.nombre || '',
-    apellido: c.usuarios?.apellido || '',
+    nombre: c.usuarios?.nombre || c.nombre_manual || '',
+    apellido: c.usuarios?.apellido || c.apellido_manual || '',
     email: c.usuarios?.email || '',
     telefono: c.whatsapp || ''
   }))
@@ -58,8 +58,8 @@ export async function getColaboradorById(id) {
   if (data) {
     return {
       ...data,
-      nombre: data.usuarios?.nombre || '',
-      apellido: data.usuarios?.apellido || '',
+      nombre: data.usuarios?.nombre || data.nombre_manual || '',
+      apellido: data.usuarios?.apellido || data.apellido_manual || '',
       email: data.usuarios?.email || '',
       telefono: data.whatsapp || ''
     }
@@ -75,7 +75,8 @@ export async function saveColaborador(colaborador) {
     'prospectos_asignados', 'created_at',
     'dni', 'cuit_cuil', 'direccion', 'fecha_nacimiento',
     'nacionalidad', 'estado_civil', 'tarifa_base_hora',
-    'dedicacion_mensual_horas', 'banco', 'cbu_cvu', 'alias'
+    'dedicacion_mensual_horas', 'banco', 'cbu_cvu', 'alias',
+    'nombre_manual', 'apellido_manual'
   ]
   const finalColab = {}
   for (const key of allowedKeys) {

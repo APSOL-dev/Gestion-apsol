@@ -1,4 +1,104 @@
 import { supabase } from '../lib/supabase'
+import { redondear2 } from '../utils/formateo'
+import { sumarMeses } from '../utils/fecha'
+import { notificarFacturacion } from './notificaciones'
+
+/**
+ * Calcula monto bruto, descuento, monto neto y saldo pendiente de una factura.
+ * Si la factura tiene tarifa en UVA cargada (tarifa_base_uva y valor_uva_dia),
+ * el bruto se deriva de esos dos valores. Si no (facturas creadas antes de que
+ * existiera este esquema, o cargadas con un monto fijo), se usa directamente
+ * la columna 'monto' ya persistida para no mostrar $0 en facturas históricas.
+ */
+export function calcularMontosFactura(factura, pagos = []) {
+  const tarifa = Number(factura.tarifa_base_uva || 0)
+  const valorUva = Number(factura.valor_uva_dia || 0)
+  const tieneTarifaUVA = tarifa > 0 && valorUva > 0
+
+  const monto_bruto = tieneTarifaUVA
+    ? redondear2(tarifa * valorUva)
+    : redondear2(factura.monto)
+  const descuento = tieneTarifaUVA
+    ? redondear2(monto_bruto * (Number(factura.porcentaje_descuento || 0) / 100))
+    : 0
+  const monto_neto = redondear2(monto_bruto - descuento)
+  const totalPagos = redondear2((pagos || []).reduce((sum, p) => sum + Number(p.monto || 0), 0))
+  const saldo_pendiente = redondear2(monto_neto - totalPagos)
+
+  return {
+    monto_bruto,
+    descuento,
+    monto_neto,
+    saldo_pendiente: saldo_pendiente > 0 ? saldo_pendiente : 0
+  }
+}
+
+/**
+ * Decide qué campos precompletar al elegir un prospecto en una factura nueva:
+ * razón social, contactos de cobro, cuenta bancaria, tipo de comprobante,
+ * leyenda, período a facturar y tarifa UVA. Prioriza continuar desde la
+ * última factura ya cargada de ese prospecto (para no repetir tipeo mes a
+ * mes); si no hay última factura, arranca desde los datos base del
+ * prospecto. Es una función pura (sin I/O) para poder testear esta decisión
+ * sin mockear Supabase ni montar el componente.
+ *
+ * BUG real corregido acá: la tarifa UVA del prospecto vive en la columna
+ * 'base_indice_valor' (la que se edita como "Valor Base (Índice)" en la
+ * ficha del prospecto). El código leía 'tarifa_base', una columna vieja que
+ * ninguna pantalla completa y por eso siempre está en 0 — la tarifa nunca
+ * se precargaba para prospectos sin facturas previas.
+ */
+export function calcularPrefillFactura({ prospecto, ultimaFactura, contactosEmpresa = [], razonesSociales = [], esNueva, facturaActual = {} }) {
+  const updates = {}
+
+  // Razón social: preferir la de la última factura si sigue siendo válida
+  if (!facturaActual.razon_social_id) {
+    const razonPrevia = ultimaFactura?.razon_social_id && razonesSociales.some(r => r.id === ultimaFactura.razon_social_id)
+      ? ultimaFactura.razon_social_id
+      : razonesSociales[0]?.id
+    if (razonPrevia) updates.razon_social_id = razonPrevia
+  }
+
+  if (esNueva && contactosEmpresa.length > 0) {
+    updates.contacto_id = facturaActual.contacto_id
+      || (contactosEmpresa.some(c => c.id === ultimaFactura?.contacto_cobro_id) ? ultimaFactura.contacto_cobro_id : '')
+      || contactosEmpresa[0]?.id || ''
+    updates.contacto_cobro2_id = facturaActual.contacto_cobro2_id
+      || (contactosEmpresa.some(c => c.id === ultimaFactura?.contacto_cobro2_id) ? ultimaFactura.contacto_cobro2_id : '')
+      || ''
+  }
+
+  // Cuenta para depósito y tipo de comprobante: se repiten casi siempre
+  if (esNueva && !facturaActual.cuenta_bancaria_id && ultimaFactura?.cuenta_bancaria_id) {
+    updates.cuenta_bancaria_id = ultimaFactura.cuenta_bancaria_id
+  }
+  if (esNueva && ultimaFactura?.solo_invoice != null) {
+    updates.solo_invoice = ultimaFactura.solo_invoice
+  }
+  if (esNueva && !facturaActual.leyenda && ultimaFactura?.leyenda) {
+    updates.leyenda = ultimaFactura.leyenda
+  }
+
+  // Próximo período a facturar y tarifa. Prioriza continuar desde el
+  // último período ya facturado (ej. día 10 a día 10 de cada mes); si
+  // todavía no tiene facturas, arranca desde 'inicio_servicio'.
+  if (esNueva && (!facturaActual.periodo_desde || !facturaActual.periodo_hasta)) {
+    const inicioStr = (ultimaFactura?.periodo_hasta || prospecto.inicio_servicio || '').split('T')[0]
+
+    if (inicioStr) {
+      if (!facturaActual.periodo_desde) updates.periodo_desde = inicioStr
+      if (!facturaActual.periodo_hasta) updates.periodo_hasta = sumarMeses(inicioStr, 1)
+    }
+
+    const tarifaPrevia = ultimaFactura?.tarifa_base_uva || prospecto.base_indice_valor
+    if (tarifaPrevia) updates.tarifa_base_uva = tarifaPrevia
+    if (ultimaFactura?.porcentaje_descuento != null) {
+      updates.porcentaje_descuento = ultimaFactura.porcentaje_descuento
+    }
+  }
+
+  return updates
+}
 
 export async function getFacturas() {
   const { data: facturas, error } = await supabase
@@ -14,22 +114,11 @@ export async function getFacturas() {
 
   if (error) throw error
 
-  return (facturas || []).map(f => {
-    const m_bruto = Number(f.tarifa_base_uva || 0) * Number(f.valor_uva_dia || 0)
-    const desc = m_bruto * (Number(f.porcentaje_descuento || 0) / 100)
-    const m_neto = m_bruto - desc
-    const totalPagos = (f.pagos || []).reduce((sum, p) => sum + Number(p.monto || 0), 0)
-    const saldo = m_neto - totalPagos
-
-    return {
-      ...f,
-      monto_bruto: m_bruto,
-      descuento: desc,
-      monto_neto: m_neto,
-      saldo_pendiente: saldo > 0 ? saldo : 0,
-      contacto_id: f.contacto_cobro_id
-    }
-  })
+  return (facturas || []).map(f => ({
+    ...f,
+    ...calcularMontosFactura(f, f.pagos),
+    contacto_id: f.contacto_cobro_id
+  }))
 }
 
 export async function getFacturaById(id) {
@@ -57,18 +146,9 @@ export async function getFacturaById(id) {
 
   if (pagosError) throw pagosError
 
-  const m_bruto = Number(factura.tarifa_base_uva || 0) * Number(factura.valor_uva_dia || 0)
-  const desc = m_bruto * (Number(factura.porcentaje_descuento || 0) / 100)
-  const m_neto = m_bruto - desc
-  const totalPagos = (pagos || []).reduce((sum, p) => sum + Number(p.monto || 0), 0)
-  const saldo = m_neto - totalPagos
-
   return {
     ...factura,
-    monto_bruto: m_bruto,
-    descuento: desc,
-    monto_neto: m_neto,
-    saldo_pendiente: saldo > 0 ? saldo : 0,
+    ...calcularMontosFactura(factura, pagos),
     contacto_id: factura.contacto_cobro_id,
     pagos: pagos || []
   }
@@ -93,10 +173,8 @@ export async function saveFactura(factura) {
   delete dataToSave.descuento
   delete dataToSave.saldo_pendiente
 
-  // Eliminar campos de UI que no tienen columna física en la DB
-  delete dataToSave.fecha_vencimiento
-  delete dataToSave.leyenda
-  delete dataToSave.documento_general
+  // valor_uva_referencia es solo un valor de previsualización en el cliente
+  // (mientras se busca el UVA por fecha), no tiene columna física en la DB.
   delete dataToSave.valor_uva_referencia
 
   if (dataToSave.id) {
@@ -119,7 +197,14 @@ export async function saveFactura(factura) {
       .select()
       .single()
     if (error) throw error
-    
+
+    const facturaCompleta = await getFacturaById(data.id)
+    try {
+      await notificarFacturacion('primera_vez', facturaCompleta)
+    } catch (notifError) {
+      console.error('Error al notificar primera_vez al webhook de facturación:', notifError)
+    }
+
     return {
       ...data,
       contacto_id: data.contacto_cobro_id
@@ -143,11 +228,71 @@ export async function deleteFactura(id) {
   if (error) throw error
 }
 
+/**
+ * Recalcula el estado de una factura a partir de sus pagos reales y, si
+ * corresponde, lo persiste. Si la factura ACABA de quedar "Cobrada total"
+ * (no lo estaba antes de este recálculo), avanza en 1 mes la "Próxima
+ * Factura" del prospecto asociado, para que el ciclo de facturación
+ * continúe solo.
+ */
+async function recalcularEstadoFactura(facturacionId) {
+  const factura = await getFacturaById(facturacionId)
+  if (!factura || factura.estado === 'Anulada') return
+
+  const estadoAnterior = factura.estado
+  let nuevoEstado
+  if (factura.pagos.length === 0) {
+    nuevoEstado = 'Pendiente'
+  } else if (factura.saldo_pendiente > 0) {
+    nuevoEstado = 'Cobrada parcial'
+  } else {
+    nuevoEstado = 'Cobrada total'
+  }
+
+  if (nuevoEstado !== estadoAnterior) {
+    const { error } = await supabase
+      .from('apsol_facturacion')
+      .update({ estado: nuevoEstado })
+      .eq('id', facturacionId)
+    if (error) throw error
+  }
+
+  const recienCobradaTotal = nuevoEstado === 'Cobrada total' && estadoAnterior !== 'Cobrada total'
+  if (recienCobradaTotal) {
+    if (factura.prospecto_id) {
+      await avanzarProximaFacturaProspecto(factura.prospecto_id)
+    }
+    try {
+      await notificarFacturacion('pago_recibido', factura)
+    } catch (notifError) {
+      console.error('Error al notificar pago_recibido al webhook de facturación:', notifError)
+    }
+  }
+}
+
+async function avanzarProximaFacturaProspecto(prospectoId) {
+  const { data: prospecto, error } = await supabase
+    .from('apsol_prospectos')
+    .select('proxima_factura')
+    .eq('id', prospectoId)
+    .maybeSingle()
+  if (error || !prospecto?.proxima_factura) return
+
+  const nuevaFecha = sumarMeses(prospecto.proxima_factura, 1)
+  if (!nuevaFecha) return
+
+  await supabase
+    .from('apsol_prospectos')
+    .update({ proxima_factura: nuevaFecha })
+    .eq('id', prospectoId)
+}
+
 // Servicios para Pagos
 export async function savePago(pago) {
   // Limpiar campos de joins
   const { cuentas_bancarias, ...dataToSave } = pago
 
+  let saved
   if (dataToSave.id) {
     const { data, error } = await supabase
       .from('apsol_pagos')
@@ -156,7 +301,7 @@ export async function savePago(pago) {
       .select()
       .single()
     if (error) throw error
-    return data
+    saved = data
   } else {
     const { data, error } = await supabase
       .from('apsol_pagos')
@@ -164,16 +309,23 @@ export async function savePago(pago) {
       .select()
       .single()
     if (error) throw error
-    return data
+    saved = data
   }
+
+  await recalcularEstadoFactura(dataToSave.facturacion_id)
+  return saved
 }
 
-export async function deletePago(id) {
+export async function deletePago(id, facturacionId) {
   const { error } = await supabase
     .from('apsol_pagos')
     .delete()
     .eq('id', id)
   if (error) throw error
+
+  if (facturacionId) {
+    await recalcularEstadoFactura(facturacionId)
+  }
 }
 
 export async function getNextInvoiceNumber() {
@@ -192,4 +344,31 @@ export async function getNextInvoiceNumber() {
   
   const max = numeros.length > 0 ? Math.max(...numeros) : 299
   return max + 1
+}
+
+/**
+ * Devuelve la última factura ya cargada para un prospecto (por
+ * 'periodo_hasta' más reciente), con los datos que típicamente se repiten
+ * de un período a otro: período, tarifa, cuenta para depósito, tipo de
+ * comprobante, contactos de cobro, razón social y leyenda. Se usa al crear
+ * una factura nueva para no tener que volver a tipear todo eso cada vez —
+ * el usuario elige el prospecto primero y el resto se pre-completa solo,
+ * quedando libre para corregir cualquier campo antes de guardar.
+ */
+export async function getUltimaFacturaProspecto(prospectoId) {
+  const { data, error } = await supabase
+    .from('apsol_facturacion')
+    .select(`
+      periodo_desde, periodo_hasta, tarifa_base_uva, porcentaje_descuento,
+      cuenta_bancaria_id, solo_invoice, contacto_cobro_id, contacto_cobro2_id,
+      razon_social_id, leyenda
+    `)
+    .eq('prospecto_id', prospectoId)
+    .not('periodo_hasta', 'is', null)
+    .order('periodo_hasta', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) throw error
+  return data
 }

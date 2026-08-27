@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Outlet, Link, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { DataProvider } from './context/DataContext'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { 
   LayoutDashboard, Building2, Users, FileText, Target, Briefcase, 
   Wrench, Activity, GraduationCap, Calendar as CalendarIcon, 
@@ -57,6 +57,16 @@ function Layout() {
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const mainContentRef = useRef(null)
+
+  // '.main-content' es un contenedor con scroll propio (no la ventana), y
+  // React Router no reinicia su scrollTop al cambiar de ruta. Sin esto, al
+  // navegar desde un listado largo (ej. Facturación) a una página de detalle,
+  // el contenido nuevo se renderiza "arriba" mientras la vista sigue con el
+  // scroll heredado del listado, y aparece en blanco hasta scrollear manualmente.
+  useEffect(() => {
+    mainContentRef.current?.scrollTo(0, 0)
+  }, [location.pathname])
 
   // Estado para favoritos con persistencia y LIMPIEZA DE SEGURIDAD
   const [favorites, setFavorites] = useState(() => {
@@ -335,7 +345,7 @@ function Layout() {
           <span className="mobile-title">Gestión APSOL</span>
         </header>
 
-        <main className="main-content">
+        <main className="main-content" ref={mainContentRef}>
           <Suspense fallback={<PageLoader />}>
             <Outlet />
           </Suspense>

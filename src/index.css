@@ -651,10 +651,6 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-.cronograma-sidebar.left {
-  border-left: 4px solid var(--color-primary);
-}
-
 .cronograma-sidebar.right {
   border-right: 4px solid var(--color-secondary);
 }
@@ -664,16 +660,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.calendar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 20px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .calendar-container.giant {
@@ -1474,10 +1460,30 @@ a.link-primary:hover { text-decoration: underline; }
 ======================== */
 .cronograma-layout {
   display: grid;
-  grid-template-columns: 280px 1fr 320px;
-  height: calc(100vh - 40px);
+  grid-template-columns: 1fr var(--ancho-panel-saldo, 320px);
+  /* Antes usaba height: calc(100vh - 40px) + margin: -24px para cancelar un
+     padding de 24px que .main-content ya no tiene: dejaba ~64px de espacio
+     muerto al final (la "franja blanca" que corta calendario y listado). */
+  height: 100%;
   background: #f1f5f9; /* Fondo de base más oscuro para contraste */
-  margin: -24px;
+  position: relative;
+}
+
+/* Divisor arrastrable de TODO el panel de saldo (no solo su columna
+   "Prospecto" interna, ver .col-resize-handle): abarca todo el alto del
+   layout, pegado al borde izquierdo del panel derecho. */
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-right: -4px;
+  cursor: col-resize;
+  z-index: 6;
+}
+
+.panel-resize-handle:hover {
+  background: rgba(59, 130, 246, 0.15);
 }
 
 .cronograma-sidebar {
@@ -1566,11 +1572,6 @@ a.link-primary:hover { text-decoration: underline; }
   color: #2563eb;
 }
 
-.sidebar-section-refined {
-  padding-top: 10px; /* Separar de la parte superior */
-  padding-left: 4px;  /* Separar de la barra lateral */
-}
-
 .label-plain {
   font-size: 13px;
   font-weight: 700;
@@ -1627,6 +1628,26 @@ a.link-primary:hover { text-decoration: underline; }
   color: #1e293b;
 }
 
+.picker-option.checklist {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.picker-option.checklist svg {
+  flex-shrink: 0;
+  color: #cbd5e1;
+}
+
+.picker-option.checklist.checked {
+  color: #1e293b;
+  font-weight: 500;
+}
+
+.picker-option.checklist.checked svg {
+  color: #3b82f6;
+}
+
 .label-with-icon {
   display: flex;
   align-items: center;
@@ -1636,38 +1657,71 @@ a.link-primary:hover { text-decoration: underline; }
   font-size: 13px;
 }
 
-/* Calendar Header & Toolbar */
-.calendar-header {
+/* Barra de filtros horizontal (fecha, personal, prospectos) arriba del calendario */
+.cronograma-filtros-bar {
   background: white;
-  padding: 24px 32px 16px 32px; /* Más margen arriba */
+  padding: 20px 32px;
   border-bottom: 1px solid var(--color-border);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 32px;
 }
 
-.search-minimal {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 8px 14px;
+.filtro-fechas {
+  display: flex;
+  gap: 16px;
+}
+
+.filter-group {
+  position: relative;
+  min-width: 130px;
+}
+
+/* Filtro compacto de selección múltiple (Personal, Prospectos): un botón
+   disparador + desplegable tipo checklist, en vez de un chip por elemento
+   elegido (con muchos colaboradores/prospectos llenaba la pantalla). */
+.filtro-multiselect {
+  position: relative;
+}
+
+.filtro-trigger {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 450px;
-  transition: border-color 0.2s;
-}
-
-.search-minimal:focus-within {
-  border-color: #3b82f6;
+  gap: 6px;
+  padding: 8px 12px;
   background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.search-minimal input {
-  background: transparent;
-  border: none;
-  padding: 0;
-  font-size: 13px;
+.filtro-trigger:hover {
+  border-color: #cbd5e1;
+}
+
+.filtro-trigger.active {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+.filtro-trigger svg:last-child {
+  margin-left: 2px;
+  color: #94a3b8;
+}
+
+.filtro-multiselect .picker-dropdown {
+  min-width: 220px;
+  max-width: 280px;
+}
+
+.filter-group input[type="date"] {
+  padding: 8px 10px;
 }
 
 .calendar-toolbar {
@@ -1835,11 +1889,15 @@ a.link-primary:hover { text-decoration: underline; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  position: relative;
 }
 
+/* El ancho de la columna "Prospecto" es ajustable por el usuario (ver
+   .col-resize-handle): se define una sola vez acá vía variable CSS y tanto
+   el header como cada fila la heredan, para que se muevan en conjunto. */
 .list-header {
   display: grid;
-  grid-template-columns: 1fr 80px 60px;
+  grid-template-columns: var(--ancho-col-nombre, 110px) 48px 40px;
   padding: 8px;
   font-size: 11px;
   font-weight: 600;
@@ -1849,49 +1907,60 @@ a.link-primary:hover { text-decoration: underline; }
 
 .compliance-item {
   display: grid;
-  grid-template-columns: 1fr 85px 60px;
-  padding: 12px 8px;
+  grid-template-columns: var(--ancho-col-nombre, 110px) 48px 40px;
+  padding: 7px 8px;
   border-bottom: 1px solid #f1f5f9;
   font-size: 12px;
   align-items: center;
   transition: background 0.2s;
 }
 
+/* Divisor arrastrable entre "Prospecto" y "Saldo": abarca todo el alto de
+   la lista y sigue al ancho de columna elegido por el usuario. */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.resizing {
+  background: rgba(59, 130, 246, 0.15);
+}
+
 .compliance-item:hover {
   background: #f8fafc;
 }
 
-.p-name { 
-  color: #1e293b; 
-  font-weight: 600; 
-  cursor: pointer; 
+.p-name {
+  color: #1e293b;
+  font-weight: 500;
+  cursor: pointer;
 }
 
 .p-name:hover {
   color: #3b82f6;
 }
 
-.p-saldo { 
-  font-weight: 700; 
-  text-align: right; 
+.p-saldo {
+  font-weight: 400;
+  text-align: right;
   padding-right: 12px;
-  font-family: 'JetBrains Mono', monospace;
+  color: #475569;
 }
 
-.p-saldo.negative { 
-  color: #ef4444; 
-  background: #fef2f2;
-  padding: 2px 8px;
-  border-radius: 4px;
+.p-saldo.negative {
+  color: #ef4444;
 }
 
-.p-days { 
-  background: #f0fdf4;
-  color: #16a34a; 
-  font-weight: 700; 
+.p-days {
+  color: #64748b;
+  font-weight: 400;
   text-align: center;
-  padding: 2px 8px;
-  border-radius: 4px;
 }
 
 .details-panel {
@@ -1922,26 +1991,6 @@ a.link-primary:hover { text-decoration: underline; }
   margin-bottom: 12px;
   opacity: 0.5;
 }
-.p-saldo-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.mini-progress {
-  height: 4px;
-  background: #f1f5f9;
-  border-radius: 2px;
-  overflow: hidden;
-  width: 100%;
-}
-
-.mini-progress .bar {
-  height: 100%;
-  background: #ef4444;
-  border-radius: 2px;
-}
-
 .input-with-icon {
   position: relative;
   display: flex;

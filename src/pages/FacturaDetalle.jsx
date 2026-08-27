@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Receipt, DollarSign, Calendar, UploadCloud, Plus, Search, Copy, Check, FileText, Upload, Briefcase, Building2, Download } from 'lucide-react'
-import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber } from '../services/facturacion'
+import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto } from '../services/facturacion'
 import { getContactos } from '../services/contactos'
 import { getProspectos } from '../services/prospectos'
 import { getValoresUVA } from '../services/valoresUva'
 import { obtenerUVAParaFecha } from '../services/sincronizacionUva'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
-import { getRazonesSocialesByEmpresa } from '../services/empresas'
+import { getRazonesSocialesByEmpresa, saveRazonSocial } from '../services/empresas'
 import { uploadFile } from '../services/storage'
 import { formatearMonto } from '../utils/formateo'
+import { fechaLocalISO, esFechaCompleta, sumarDias } from '../utils/fecha'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -23,7 +24,7 @@ export default function FacturaDetalle() {
     prospecto_id: '',
     contacto_id: '',
     contacto_cobro2_id: '',
-    fecha_emision: new Date().toISOString().split('T')[0],
+    fecha_emision: fechaLocalISO(),
     fecha_vencimiento: '',
     periodo_desde: '',
     periodo_hasta: '',
@@ -52,9 +53,15 @@ export default function FacturaDetalle() {
   const [valoresUVA, setValoresUVA] = useState([])
   const [cuentas, setCuentas] = useState([])
   const [razonesSociales, setRazonesSociales] = useState([])
-  
+  const [mostrarNuevaRazon, setMostrarNuevaRazon] = useState(false)
+  const [nuevaRazon, setNuevaRazon] = useState({ razon_social: '', cuit: '' })
+  const [savingRazon, setSavingRazon] = useState(false)
+
   const [loading, setLoading] = useState(!esNueva)
   const [saving, setSaving] = useState(false)
+  // true = el monto se escribe a mano en vez de calcularse con tarifa UVA x valor UVA
+  // (para redondeos, precios especiales, etc.)
+  const [modoManualMonto, setModoManualMonto] = useState(false)
   const [loadingRazones, setLoadingRazones] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -66,7 +73,7 @@ export default function FacturaDetalle() {
 
   // Estado para modal de nuevo pago
   const [mostrandoFormPago, setMostrandoFormPago] = useState(false)
-  const [nuevoPago, setNuevoPago] = useState({ fecha: new Date().toISOString().split('T')[0], monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
+  const [nuevoPago, setNuevoPago] = useState({ fecha: fechaLocalISO(), monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
   const [mostrarContacto2, setMostrarContacto2] = useState(false)
 
   useEffect(() => {
@@ -74,22 +81,20 @@ export default function FacturaDetalle() {
     if (!esNueva) cargarFactura()
   }, [id])
 
-  // Recalcular montos al cambiar tarifa, valor UVA o porcentaje de descuento
+  // Recalcular montos al cambiar tarifa, valor UVA, descuento o pagos.
+  // Usa la misma fórmula que el backend (con fallback al 'monto' persistido
+  // para facturas históricas sin tarifa en UVA), así no se pisa con $0 el
+  // monto real de una factura recién cargada.
   useEffect(() => {
-    const bruto = (factura.tarifa_base_uva || 0) * (factura.valor_uva_dia || 0)
-    const montoDescuento = bruto * ((factura.porcentaje_descuento || 0) / 100)
-    const neto = bruto - montoDescuento
-    
-    // Cálculo de saldo
+    const montos = calcularMontosFactura(factura, pagos)
     const totalPagado = pagos.reduce((acc, p) => acc + Number(p.monto), 0)
-    const saldo = neto - totalPagado
 
     // Cálculo automático de estado según pagos y saldo
     let nuevoEstado = factura.estado
     if (nuevoEstado !== 'Anulada') {
       if (totalPagado <= 0) {
         nuevoEstado = 'Pendiente'
-      } else if (saldo > 0) {
+      } else if (montos.saldo_pendiente > 0) {
         nuevoEstado = 'Cobrada parcial'
       } else {
         nuevoEstado = 'Cobrada total'
@@ -98,20 +103,22 @@ export default function FacturaDetalle() {
 
     setFactura(prev => ({
       ...prev,
-      monto_bruto: bruto,
-      descuento: montoDescuento,
-      monto_neto: neto,
-      saldo_pendiente: saldo > 0 ? saldo : 0,
+      ...montos,
       estado: nuevoEstado
     }))
-  }, [factura.tarifa_base_uva, factura.valor_uva_dia, factura.porcentaje_descuento, pagos])
+  }, [factura.tarifa_base_uva, factura.valor_uva_dia, factura.porcentaje_descuento, factura.monto, pagos])
 
   // Filtrar contactos de la empresa del prospecto seleccionado
   const contactosFiltrados = factura.prospecto_id 
     ? contactos.filter(c => c.empresa_id === prospectos.find(p => p.id === factura.prospecto_id)?.empresa_id)
     : []
 
-  // Auto-seleccionar y calcular fechas/tarifas al elegir prospecto
+  // Auto-seleccionar y precompletar datos al elegir prospecto. Al crear una
+  // factura nueva, todo lo que normalmente NO cambia de un período a otro
+  // (cuenta para depósito, Invoice vs Factura, contacto de cobro, razón
+  // social, leyenda, período y tarifa) se trae de la última factura de ese
+  // mismo prospecto, para no tener que volver a tipearlo cada vez — el
+  // usuario elige el prospecto primero y después corrige lo que cambió.
   useEffect(() => {
     async function updateProspectoData() {
       if (factura.prospecto_id && prospectos.length > 0) {
@@ -119,45 +126,40 @@ export default function FacturaDetalle() {
         setProspectoSeleccionado(prosp)
 
         if (prosp) {
-          let updates = {}
-
           // Cargar Razones Sociales
+          let rs = []
           try {
             setLoadingRazones(true)
-            const rs = await getRazonesSocialesByEmpresa(prosp.empresa_id)
+            rs = await getRazonesSocialesByEmpresa(prosp.empresa_id)
             setRazonesSociales(rs)
-            if (rs.length > 0 && !factura.razon_social_id) {
-              updates.razon_social_id = rs[0].id
-            }
           } catch (err) {
             console.error('Error al cargar razones sociales:', err)
           } finally {
             setLoadingRazones(false)
           }
 
-          // Contactos
-          if (contactos.length > 0 && esNueva) {
-            const empresaId = prosp.empresa_id
-            const contactosEmpresa = contactos.filter(c => c.empresa_id === empresaId)
-            if (contactosEmpresa.length > 0) {
-              updates.contacto_id = factura.contacto_id || contactosEmpresa[0]?.id || ''
-              updates.contacto_cobro2_id = factura.contacto_cobro2_id || contactosEmpresa[1]?.id || ''
+          // Contactos de la empresa, como fallback si el prospecto no tiene facturas previas
+          const contactosEmpresa = contactos.filter(c => c.empresa_id === prosp.empresa_id)
+
+          let ultimaFactura = null
+          if (esNueva) {
+            try {
+              ultimaFactura = await getUltimaFacturaProspecto(prosp.id)
+            } catch (err) {
+              console.error('Error al buscar la última factura del prospecto:', err)
             }
           }
 
-          // Si es nueva, calcular periodo a mes vencido y auto-completar tarifa
-          if (esNueva && prosp.inicio_servicio) {
-            const inicio = new Date(prosp.inicio_servicio)
-            const hasta = new Date(inicio)
-            hasta.setDate(hasta.getDate() + 30)
+          const updates = calcularPrefillFactura({
+            prospecto: prosp,
+            ultimaFactura,
+            contactosEmpresa,
+            razonesSociales: rs,
+            esNueva,
+            facturaActual: factura
+          })
 
-            if (!factura.periodo_desde) updates.periodo_desde = inicio.toISOString().split('T')[0]
-            if (!factura.periodo_hasta) updates.periodo_hasta = hasta.toISOString().split('T')[0]
-            
-            if (prosp.tarifa_base) {
-              updates.tarifa_base_uva = prosp.tarifa_base
-            }
-          }
+          if (updates.contacto_cobro2_id) setMostrarContacto2(true)
 
           if (Object.keys(updates).length > 0) {
             setFactura(prev => ({ ...prev, ...updates }))
@@ -174,60 +176,29 @@ export default function FacturaDetalle() {
   // Calcular vencimiento automatico (15 dias despues de emision)
   useEffect(() => {
     if (esNueva && factura.fecha_emision) {
-      const emision = new Date(factura.fecha_emision)
-      const vencimiento = new Date(emision)
-      vencimiento.setDate(vencimiento.getDate() + 15)
-      setFactura(prev => ({ ...prev, fecha_vencimiento: vencimiento.toISOString().split('T')[0] }))
+      setFactura(prev => ({ ...prev, fecha_vencimiento: sumarDias(factura.fecha_emision, 15) }))
     }
   }, [factura.fecha_emision, esNueva])
 
-  // Efecto para buscar valor UVA por fecha 'Desde'
+  // Efecto para buscar valor UVA por fecha 'Desde' (con fallback a API externa).
+  // Solo dispara con una fecha COMPLETA y válida: algunos navegadores emiten
+  // valores parciales de <input type="date"> mientras se tipea el año
+  // (ej. '0002-08-10'), y eso antes generaba consultas y, peor, guardaba
+  // cotizaciones en el histórico bajo fechas truncadas.
   useEffect(() => {
     async function buscarUVA() {
-      if (factura.periodo_desde) {
-        try {
-          const valor = await obtenerUVAParaFecha(factura.periodo_desde)
-          if (valor) {
-            setFactura(prev => ({ ...prev, valor_uva_referencia: valor }))
-          }
-        } catch (error) {
-          console.error('Error al buscar UVA:', error)
+      if (!esFechaCompleta(factura.periodo_desde)) return
+      try {
+        const valor = await obtenerUVAParaFecha(factura.periodo_desde)
+        if (valor) {
+          setFactura(prev => ({
+            ...prev,
+            valor_uva_referencia: valor,
+            ...(esNueva ? { valor_uva_dia: valor } : {})
+          }))
         }
-      }
-    }
-    buscarUVA()
-  }, [factura.periodo_desde])
-
-  // Efecto para auto-numerar Invoice
-  useEffect(() => {
-    async function autoNumerar() {
-      if (esNueva && factura.solo_invoice && !factura.numero_factura) {
-        try {
-          const proximo = await getNextInvoiceNumber()
-          setFactura(prev => ({ ...prev, numero_factura: proximo.toString() }))
-        } catch (error) {
-          console.error('Error al auto-numerar:', error)
-        }
-      } else if (esNueva && !factura.solo_invoice && /^\d+$/.test(factura.numero_factura)) {
-         // Si pasa de solo invoice a factura y tiene un numero autogenerado, lo limpiamos para que pongan el fiscal
-         setFactura(prev => ({ ...prev, numero_factura: '' }))
-      }
-    }
-    autoNumerar()
-  }, [factura.solo_invoice, esNueva])
-
-  // Efecto para buscar valor UVA por fecha 'Desde' (con fallback a API externa)
-  useEffect(() => {
-    async function buscarUVA() {
-      if (factura.periodo_desde && esNueva) {
-        try {
-          const valor = await obtenerUVAParaFecha(factura.periodo_desde)
-          if (valor) {
-            setFactura(prev => ({ ...prev, valor_uva_dia: valor }))
-          }
-        } catch (error) {
-          console.error('Error al buscar UVA:', error)
-        }
+      } catch (error) {
+        console.error('Error al buscar UVA:', error)
       }
     }
     buscarUVA()
@@ -291,6 +262,7 @@ export default function FacturaDetalle() {
         porcentaje_descuento: data.porcentaje_descuento || 0,
         solo_invoice: data.solo_invoice ?? true
       })
+      setModoManualMonto(!(Number(data.tarifa_base_uva) > 0 && Number(data.valor_uva_dia) > 0))
       if (data.contacto_cobro2_id) setMostrarContacto2(true)
       setPagos(data.pagos || [])
       
@@ -437,11 +409,13 @@ export default function FacturaDetalle() {
       if (!dataToSave.razon_social_id) dataToSave.razon_social_id = null
       if (!dataToSave.cuenta_bancaria_id) dataToSave.cuenta_bancaria_id = null
       
-      // Auto-update status
-      if (dataToSave.saldo_pendiente <= 0 && pagos.length > 0) {
-        dataToSave.estado = 'Cobrada total'
-      } else if (pagos.length > 0) {
-        dataToSave.estado = 'Cobrada parcial'
+      // Auto-update status (nunca para facturas anuladas)
+      if (dataToSave.estado !== 'Anulada') {
+        if (dataToSave.saldo_pendiente <= 0 && pagos.length > 0) {
+          dataToSave.estado = 'Cobrada total'
+        } else if (pagos.length > 0) {
+          dataToSave.estado = 'Cobrada parcial'
+        }
       }
 
       const saved = await saveFactura(dataToSave)
@@ -457,7 +431,7 @@ export default function FacturaDetalle() {
       }
 
       if (esNueva) {
-        navigate(`/facturacion/${saved.id}`, { replace: true })
+        navigate('/facturacion')
       } else {
         setSuccess('Cambios guardados con éxito.')
         setTimeout(() => setSuccess(''), 3000)
@@ -487,27 +461,20 @@ export default function FacturaDetalle() {
   async function handleAddPago(e) {
     e.preventDefault()
     if (!nuevoPago.monto || !nuevoPago.fecha) return
-    
+
     try {
-      const dataPago = {
+      await savePago({
         ...nuevoPago,
         facturacion_id: id,
         cuenta_bancaria_id: nuevoPago.cuenta_bancaria_id || null
-      }
-      const saved = await savePago(dataPago)
-      
-      const nuevosPagos = [...pagos, saved]
-      setPagos(nuevosPagos)
-      setNuevoPago({ fecha: new Date().toISOString().split('T')[0], monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
+      })
+      setNuevoPago({ fecha: fechaLocalISO(), monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
       setMostrandoFormPago(false)
-      
-      // Auto-save factura para recalcular saldo
-      const nuevoSaldo = factura.monto_neto - nuevosPagos.reduce((acc, p) => acc + Number(p.monto), 0)
-      const nuevoEstado = nuevoSaldo <= 0 ? 'Pagado' : 'Pagado parcial'
-      
-      await saveFactura({ ...factura, saldo_pendiente: nuevoSaldo, estado: nuevoEstado })
-      setFactura(prev => ({ ...prev, saldo_pendiente: nuevoSaldo, estado: nuevoEstado }))
 
+      // savePago ya recalculó y persistió el estado/saldo reales en el
+      // servidor (y avanzó la "Próxima Factura" del prospecto si corresponde
+      // que la factura haya quedado Cobrada total). Traemos esos valores.
+      await sincronizarFacturaYPagos()
     } catch (err) {
       console.error(err)
       alert('Error al agregar pago')
@@ -517,24 +484,27 @@ export default function FacturaDetalle() {
   async function handleDeletePago(pagoId) {
     if (!window.confirm('¿Eliminar este pago? Se recalculará el saldo de la factura.')) return
     try {
-      await deletePago(pagoId)
-      const nuevosPagos = pagos.filter(p => p.id !== pagoId)
-      setPagos(nuevosPagos)
-      
-      // Recalcular saldo
-      const nuevoSaldo = factura.monto_neto - nuevosPagos.reduce((acc, p) => acc + Number(p.monto), 0)
-      let nuevoEstado = factura.estado
-      if (nuevoSaldo >= factura.monto_neto) nuevoEstado = 'Enviada' // O Pendiente
-      else if (nuevoSaldo > 0) nuevoEstado = 'Pagado parcial'
-      else nuevoEstado = 'Pagado'
-
-      await saveFactura({ ...factura, saldo_pendiente: nuevoSaldo, estado: nuevoEstado })
-      setFactura(prev => ({ ...prev, saldo_pendiente: nuevoSaldo, estado: nuevoEstado }))
-      
+      await deletePago(pagoId, id)
+      await sincronizarFacturaYPagos()
     } catch (err) {
       console.error(err)
       alert('Error al eliminar pago')
     }
+  }
+
+  // Trae de nuevo el estado/saldo/pagos reales desde el servidor tras
+  // registrar o borrar un pago, en vez de recalcularlos a mano en el cliente.
+  async function sincronizarFacturaYPagos() {
+    const actualizada = await getFacturaById(id)
+    setFactura(prev => ({
+      ...prev,
+      monto_bruto: actualizada.monto_bruto,
+      descuento: actualizada.descuento,
+      monto_neto: actualizada.monto_neto,
+      saldo_pendiente: actualizada.saldo_pendiente,
+      estado: actualizada.estado
+    }))
+    setPagos(actualizada.pagos || [])
   }
 
   async function handleFileUpload(e, type, index = null) {
@@ -560,10 +530,40 @@ export default function FacturaDetalle() {
     }
   }
 
+  function toggleModoManualMonto() {
+    setModoManualMonto(prev => {
+      const nuevoModo = !prev
+      if (nuevoModo) {
+        // Al pasar a manual, se anula la tarifa UVA para que calcularMontosFactura
+        // use directamente 'monto' en vez de tarifa_base_uva * valor_uva_dia.
+        setFactura(f => ({ ...f, tarifa_base_uva: 0, valor_uva_dia: 0 }))
+      }
+      return nuevoModo
+    })
+  }
+
   function handleCopyCuit(cuit, rsId) {
     navigator.clipboard.writeText(cuit)
     setCopiando(rsId)
     setTimeout(() => setCopiando(null), 2000)
+  }
+
+  async function agregarRazonSocial(e) {
+    e.preventDefault()
+    if (!nuevaRazon.razon_social.trim() || !prospectoSeleccionado?.empresa_id) return
+    setSavingRazon(true)
+    try {
+      const guardada = await saveRazonSocial({ ...nuevaRazon, empresa_id: prospectoSeleccionado.empresa_id })
+      setRazonesSociales(prev => [...prev, guardada])
+      setFactura(prev => ({ ...prev, razon_social_id: guardada.id }))
+      setNuevaRazon({ razon_social: '', cuit: '' })
+      setMostrarNuevaRazon(false)
+    } catch (err) {
+      console.error(err)
+      alert('Error al guardar la razón social: ' + (err.message || 'Error desconocido'))
+    } finally {
+      setSavingRazon(false)
+    }
   }
 
   if (loading) {
@@ -655,45 +655,11 @@ export default function FacturaDetalle() {
 
       <form id="facturaForm" onSubmit={handleSave} style={{ display: 'grid', gap: '24px' }}>
         
-        {/* SECCIÓN 1: TIPO DE COMPROBANTE (PASO 1) */}
-        <div className="card" style={{ border: '2px solid var(--color-primary)', background: 'var(--color-surface2)' }}>
-          <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Receipt size={20} className="text-primary" />
-            1. Selección de Comprobante
-          </h3>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button 
-              type="button"
-              className={`btn ${factura.solo_invoice ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1, padding: '16px', height: 'auto', flexDirection: 'column', gap: '8px' }}
-              onClick={() => setFactura({...factura, solo_invoice: true})}
-            >
-              <FileText size={24} />
-              <div style={{ textAlign: 'center' }}>
-                <strong>Solo Invoice</strong>
-                <p style={{ fontSize: '11px', opacity: 0.8 }}>Documento interno APSOL</p>
-              </div>
-            </button>
-            <button 
-              type="button"
-              className={`btn ${!factura.solo_invoice ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1, padding: '16px', height: 'auto', flexDirection: 'column', gap: '8px' }}
-              onClick={() => setFactura({...factura, solo_invoice: false})}
-            >
-              <Receipt size={24} />
-              <div style={{ textAlign: 'center' }}>
-                <strong>Invoice + Factura</strong>
-                <p style={{ fontSize: '11px', opacity: 0.8 }}>Requiere adjuntar factura fiscal</p>
-              </div>
-            </button>
-          </div>
-        </div>
-
-        {/* SECCIÓN 2: PROSPECTO CON BÚSQUEDA */}
+        {/* SECCIÓN 1: PROSPECTO CON BÚSQUEDA (primero, porque de acá se precompleta el resto) */}
         <div className="card">
           <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Search size={20} className="text-primary" />
-            2. Oportunidad / Prospecto
+            1. Oportunidad / Prospecto
           </h3>
           <div className="field" style={{ position: 'relative' }}>
             <div style={{ position: 'relative' }}>
@@ -763,13 +729,61 @@ export default function FacturaDetalle() {
           </div>
         </div>
 
+        {/* SECCIÓN 2: TIPO DE COMPROBANTE */}
+        {prospectoSeleccionado && (
+          <div className="card" style={{ border: '2px solid var(--color-primary)', background: 'var(--color-surface2)' }}>
+            <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Receipt size={20} className="text-primary" />
+              2. Selección de Comprobante
+            </h3>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                className={`btn ${factura.solo_invoice ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1, padding: '16px', height: 'auto', flexDirection: 'column', gap: '8px' }}
+                onClick={() => setFactura({...factura, solo_invoice: true})}
+              >
+                <FileText size={24} />
+                <div style={{ textAlign: 'center' }}>
+                  <strong>Solo Invoice</strong>
+                  <p style={{ fontSize: '11px', opacity: 0.8 }}>Documento interno APSOL</p>
+                </div>
+              </button>
+              <button
+                type="button"
+                className={`btn ${!factura.solo_invoice ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1, padding: '16px', height: 'auto', flexDirection: 'column', gap: '8px' }}
+                onClick={() => setFactura({...factura, solo_invoice: false})}
+              >
+                <Receipt size={24} />
+                <div style={{ textAlign: 'center' }}>
+                  <strong>Invoice + Factura</strong>
+                  <p style={{ fontSize: '11px', opacity: 0.8 }}>Requiere adjuntar factura fiscal</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* SECCIÓN 3: RAZONES SOCIALES (SELECCIONABLES Y COPIABLES) */}
         {prospectoSeleccionado && (
           <div className="card">
-            <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Building2 size={20} className="text-primary" />
-              3. Razón Social y CUIT
-            </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 0 }}>
+                <Building2 size={20} className="text-primary" />
+                3. Razón Social y CUIT
+              </h3>
+              {!loadingRazones && !mostrarNuevaRazon && (
+                <button
+                  type="button"
+                  onClick={() => setMostrarNuevaRazon(true)}
+                  className="btn btn-secondary"
+                  style={{ padding: '4px 10px', fontSize: '11px', height: 'auto' }}
+                >
+                  <Plus size={12} /> Nueva Razón Social
+                </button>
+              )}
+            </div>
             {loadingRazones ? (
               <div style={{ color: 'var(--color-text-secondary)', fontSize: '14px' }}>Cargando razones sociales...</div>
             ) : razonesSociales.length === 0 ? (
@@ -814,6 +828,43 @@ export default function FacturaDetalle() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {!loadingRazones && mostrarNuevaRazon && (
+              // Nota: es un <div>, no un <form>, a propósito. Esta sección ya vive
+              // dentro del <form id="facturaForm"> de la factura completa, y un
+              // <form> anidado hace que el evento "submit" burbujee hasta ese form
+              // externo y dispare handleSave (guardando/creando la factura y
+              // navegando a otra pantalla) además de agregarRazonSocial.
+              <div
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarRazonSocial(e) } }}
+                style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginTop: '16px', padding: '16px', background: 'var(--color-surface2)', borderRadius: '8px' }}
+              >
+                <div className="field" style={{ marginBottom: 0, flex: 1 }}>
+                  <label>Razón Social</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Mi Empresa S.A."
+                    value={nuevaRazon.razon_social}
+                    onChange={e => setNuevaRazon({...nuevaRazon, razon_social: e.target.value})}
+                  />
+                </div>
+                <div className="field" style={{ marginBottom: 0, flex: 1 }}>
+                  <label>CUIT</label>
+                  <input
+                    type="text"
+                    placeholder="20-XXXXXXXX-X"
+                    value={nuevaRazon.cuit}
+                    onChange={e => setNuevaRazon({...nuevaRazon, cuit: e.target.value})}
+                  />
+                </div>
+                <button type="button" className="btn btn-primary" onClick={agregarRazonSocial} disabled={savingRazon || !nuevaRazon.razon_social.trim()}>
+                  {savingRazon ? 'Guardando...' : 'Guardar'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setMostrarNuevaRazon(false)}>
+                  Cancelar
+                </button>
               </div>
             )}
           </div>
@@ -919,22 +970,41 @@ export default function FacturaDetalle() {
         {/* SECCIÓN 5: MONTOS Y CALCULADORA */}
         {prospectoSeleccionado && (
           <div className="card" style={{ background: 'var(--color-surface2)' }}>
-            <h3 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <DollarSign size={20} className="text-primary" />
-              5. Montos y Cálculos
-            </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 0 }}>
+                <DollarSign size={20} className="text-primary" />
+                5. Montos y Cálculos
+              </h3>
+              <button
+                type="button"
+                onClick={toggleModoManualMonto}
+                className="btn btn-secondary"
+                style={{ padding: '4px 10px', fontSize: '11px', height: 'auto' }}
+              >
+                {modoManualMonto ? 'Calcular con tarifa UVA' : 'Ingresar monto manual'}
+              </button>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
-              <div className="field">
-                <label>Tarifa Base (en UVA)</label>
-                <input type="number" step="0.1" value={factura.tarifa_base_uva} onChange={e => setFactura({...factura, tarifa_base_uva: e.target.value})} />
-              </div>
-              <div className="field">
-                <label>Valor UVA del día ($)</label>
-                <input type="number" step="0.01" value={factura.valor_uva_dia} onChange={e => setFactura({...factura, valor_uva_dia: e.target.value})} />
-              </div>
+              {modoManualMonto ? (
+                <div className="field">
+                  <label>Monto</label>
+                  <input type="number" step="0.01" value={factura.monto || ''} onChange={e => setFactura({...factura, monto: e.target.value})} />
+                </div>
+              ) : (
+                <>
+                  <div className="field">
+                    <label>Tarifa Base (en UVA)</label>
+                    <input type="number" step="0.1" value={factura.tarifa_base_uva} onChange={e => setFactura({...factura, tarifa_base_uva: e.target.value})} />
+                  </div>
+                  <div className="field">
+                    <label>Valor UVA del día ($)</label>
+                    <input type="number" step="0.01" value={factura.valor_uva_dia} onChange={e => setFactura({...factura, valor_uva_dia: e.target.value})} />
+                  </div>
+                </>
+              )}
               <div className="field">
                 <label>Descuento (%)</label>
-                <input type="number" min="0" max="100" value={factura.porcentaje_descuento} onChange={e => setFactura({...factura, porcentaje_descuento: e.target.value})} />
+                <input type="number" min="0" max="100" value={factura.porcentaje_descuento} onChange={e => setFactura({...factura, porcentaje_descuento: e.target.value})} disabled={modoManualMonto} title={modoManualMonto ? 'No aplica con monto manual' : ''} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -1125,8 +1195,15 @@ export default function FacturaDetalle() {
           </div>
         )}
 
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            <Save size={18} />
+            {saving ? 'Guardando...' : 'Guardar Factura'}
+          </button>
+        </div>
+
       </form>
-      
+
       {/* ESPACIADO FINAL */}
       <div style={{ height: '100px' }}></div>
     </div>

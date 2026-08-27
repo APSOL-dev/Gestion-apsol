@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Plus, Search, Users, Building2, Phone, Mail } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import ContactoDrawer from '../components/ContactoDrawer'
 
 export default function Contactos() {
-  const navigate = useNavigate()
   const { contactos, loadingContactos, refreshContactos } = useData()
   const [search, setSearch] = useState('')
   const [mostrarInactivos, setMostrarInactivos] = useState(false)
+  const [contactoSeleccionadoId, setContactoSeleccionadoId] = useState(null)
 
   useEffect(() => {
     const esSilencioso = contactos.length > 0
@@ -83,9 +84,9 @@ export default function Contactos() {
             </thead>
             <tbody>
               {contactosFiltrados.map((contacto) => (
-                <tr 
-                  key={contacto.id} 
-                  onClick={() => navigate(`/contactos/${contacto.id}`)}
+                <tr
+                  key={contacto.id}
+                  onClick={() => setContactoSeleccionadoId(contacto.id)}
                   style={{ cursor: 'pointer' }}
                 >
                   <td>
@@ -138,6 +139,14 @@ export default function Contactos() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {contactoSeleccionadoId && (
+        <ContactoDrawer
+          id={contactoSeleccionadoId}
+          onClose={() => setContactoSeleccionadoId(null)}
+          onChanged={() => refreshContactos()}
+        />
       )}
     </div>
   )
