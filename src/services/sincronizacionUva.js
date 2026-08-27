@@ -1,4 +1,5 @@
 ﻿import { supabase } from '../lib/supabase'
+import { fechaLocalISO } from '../utils/fecha'
 
 const API_URL = 'https://api.argentinadatos.com/v1/finanzas/indices/uva'
 
@@ -89,14 +90,35 @@ export async function obtenerUVAParaFecha(fecha) {
 }
 
 /**
- * Sincroniza el histórico completo de cotizaciones UVA desde la API pública
- * de Argentina Datos hacia la base de datos local, insertando únicamente las
- * fechas que todavía no existen (evita duplicar días ya cargados). Pensada
- * para llamarse una vez al abrir la app, en segundo plano.
+ * Sincroniza el histórico de cotizaciones UVA desde la API pública de
+ * Argentina Datos hacia la base de datos local, insertando únicamente las
+ * fechas nuevas hasta hoy. Pensada para llamarse una vez al abrir la app,
+ * en segundo plano.
+ *
+ * Antes traía las 3800+ filas de la tabla local (select sin filtro) para
+ * diffearlas en el cliente contra el historial completo de la API, en CADA
+ * login — carísimo y casi siempre inútil, porque la mayoría de los días ya
+ * está sincronizado. Ahora solo mira la fecha más reciente ya guardada (una
+ * fila): si ya está al día con hoy, ni siquiera llama a la API externa.
  *
  * @returns {Promise<{insertados: number}>}
  */
 export async function sincronizarHistoricoUVA() {
+  const hoy = fechaLocalISO()
+
+  const { data: ultima, error: errorUltima } = await supabase
+    .from('apsol_valores_uva')
+    .select('fecha')
+    .order('fecha', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (errorUltima) throw errorUltima
+
+  if (ultima?.fecha >= hoy) {
+    return { insertados: 0 }
+  }
+
   const respuesta = await fetch(API_URL)
 
   if (!respuesta.ok) {
@@ -108,16 +130,11 @@ export async function sincronizarHistoricoUVA() {
     return { insertados: 0 }
   }
 
-  const { data: existentes, error } = await supabase
-    .from('apsol_valores_uva')
-    .select('fecha')
-
-  if (error) throw error
-
-  const fechasExistentes = new Set((existentes || []).map(r => r.fecha))
-
+  // Solo lo posterior a lo que ya teníamos guardado, y nunca más allá de
+  // hoy (la API a veces trae el día siguiente con un valor provisorio).
   const nuevos = cotizaciones
-    .filter(c => c.fecha && c.valor != null && !fechasExistentes.has(c.fecha))
+    .filter(c => c.fecha && c.valor != null)
+    .filter(c => (!ultima?.fecha || c.fecha > ultima.fecha) && c.fecha <= hoy)
     .map(c => ({ fecha: c.fecha, valor: c.valor }))
 
   if (nuevos.length === 0) return { insertados: 0 }

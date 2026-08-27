@@ -11,8 +11,9 @@ import {
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import {
-  saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesdeUltimaReunion,
-  resolverProspectoParaGuardar, extraerProspectoParaMostrar
+  saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde,
+  resolverProspectoParaGuardar, resolverActividades,
+  getActividadesEnRango, getActividadesDelMes, getUltimasReunionesPorProspecto
 } from '../services/cronograma'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
 
@@ -81,7 +82,6 @@ const FORM_VACÍO = {
 
 export default function Cronograma() {
   const {
-    actividades, setActividades, loadingActividades, refreshActividades,
     prospectos, loadingProspectos, refreshProspectos,
     colaboradores, loadingColaboradores, refreshColaboradores
   } = useData()
@@ -91,6 +91,17 @@ export default function Cronograma() {
   // FIX Bug #1: Estados para los filtros de fecha
   const [fechaDesde, setFechaDesde] = useState(moment().startOf('month').format('YYYY-MM-DD'))
   const [fechaHasta, setFechaHasta] = useState(moment().endOf('month').format('YYYY-MM-DD'))
+
+  // El Cronograma maneja su propio estado de actividades (no el global de
+  // DataContext): antes se precargaban TODAS las filas de la tabla (4400+
+  // y creciendo) en cada login. Ahora se piden 3 recortes chicos y
+  // puntuales, acotados a lo que la pantalla realmente necesita:
+  //   - actividadesRango: lo que se ve en el calendario (el filtro Desde/Hasta)
+  //   - actividadesMes: el mes actual, para el saldo de horas
+  //   - reunionesPorProspecto: la última reunión de cada cliente (Map id -> fecha)
+  const [actividadesRango, setActividadesRango] = useState([])
+  const [actividadesMes, setActividadesMes] = useState([])
+  const [reunionesPorProspecto, setReunionesPorProspecto] = useState(new Map())
 
   const [selectedColab, setSelectedColab] = useState([])
   const [selectedProspectos, setSelectedProspectos] = useState([])
@@ -158,13 +169,36 @@ export default function Cronograma() {
   }
 
   useEffect(() => {
-    const esSilencioso = actividades.length > 0 && prospectos.length > 0 && colaboradores.length > 0
-    Promise.all([
-      refreshActividades(esSilencioso),
-      refreshProspectos(esSilencioso),
-      refreshColaboradores(esSilencioso)
-    ])
+    const esSilencioso = prospectos.length > 0 && colaboradores.length > 0
+    refreshProspectos(esSilencioso)
+    refreshColaboradores(esSilencioso)
   }, [])
+
+  // Recarga las 3 consultas acotadas. `silencioso` no cambia nada visible
+  // hoy (no hay spinner propio del calendario), pero se mantiene el patrón
+  // para no bloquear la UI durante la reconciliación en segundo plano tras
+  // guardar/borrar/mover una actividad.
+  async function cargarCronograma() {
+    try {
+      const desde = moment(fechaDesde).startOf('day').toISOString()
+      const hasta = moment(fechaHasta).endOf('day').toISOString()
+      const [rango, mes, reuniones] = await Promise.all([
+        getActividadesEnRango(desde, hasta),
+        getActividadesDelMes(),
+        getUltimasReunionesPorProspecto()
+      ])
+      setActividadesRango(rango)
+      setActividadesMes(mes)
+      setReunionesPorProspecto(reuniones)
+    } catch (err) {
+      console.error('Error al cargar el cronograma:', err)
+    }
+  }
+
+  useEffect(() => {
+    cargarCronograma()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fechaDesde, fechaHasta])
 
   function mostrarToast(mensaje, tipo = 'error') {
     setToast({ mensaje, tipo })
@@ -178,15 +212,15 @@ export default function Cronograma() {
   // `prospecto_nombre` de solo lectura para el resto del componente (título
   // de eventos, filtros, saldo de horas). Las filas sin prospecto real
   // (categorías internas como "Consultora") traen la categoría codificada
-  // como prefijo "[Categoría] " en la descripción — ver
-  // extraerProspectoParaMostrar.
-  const actividadesResueltas = useMemo(() => (
-    actividades.map(act => {
-      const prospecto = prospectos.find(p => p.id === act.prospecto_id)
-      const { prospecto_nombre, descripcion } = extraerProspectoParaMostrar(prospecto?.nombre, act.descripcion)
-      return { ...act, prospecto_nombre, descripcion }
-    })
-  ), [actividades, prospectos])
+  // como prefijo "[Categoría] " en la descripción — ver resolverActividades.
+  const actividadesRangoResueltas = useMemo(
+    () => resolverActividades(actividadesRango, prospectos),
+    [actividadesRango, prospectos]
+  )
+  const actividadesMesResueltas = useMemo(
+    () => resolverActividades(actividadesMes, prospectos),
+    [actividadesMes, prospectos]
+  )
 
   const getColor = (name) => {
     const colors = {
@@ -202,20 +236,16 @@ export default function Cronograma() {
     return colors[name] || '#6366f1'
   }
 
-  // FIX Bug #1 + #2 + #3: Los tres filtros conectados a los eventos del calendario
-  const events = actividadesResueltas
+  // FIX Bug #2 + #3: Los filtros de personal/prospecto conectados a los
+  // eventos del calendario. El rango de fechas ya lo acota el servidor
+  // (actividadesRango), no hace falta re-filtrarlo acá.
+  const events = actividadesRangoResueltas
     .filter(act => {
-      // Filtro por rango de fechas
-      if (fechaDesde && moment(act.inicio).isBefore(moment(fechaDesde).startOf('day'))) return false
-      if (fechaHasta && moment(act.fin).isAfter(moment(fechaHasta).endOf('day'))) return false
-
-      // Filtro por colaborador seleccionado
       if (selectedColab.length > 0) {
         if (!act.responsable_id) return false
         if (!selectedColab.includes(act.responsable_id)) return false
       }
 
-      // FIX Bug #2: Filtro por prospecto seleccionado (antes no se usaba)
       if (selectedProspectos.length > 0) {
         const prospecto = prospectos.find(p => p.nombre === act.prospecto_nombre)
         if (!prospecto || !selectedProspectos.includes(prospecto.id)) return false
@@ -284,11 +314,51 @@ export default function Cronograma() {
     setShowModal(true)
   }
 
-  // Todas las escrituras de acá para abajo son OPTIMISTAS: el estado local
-  // (`actividades` del contexto) se actualiza al toque, antes de que el
-  // servidor responda, para que la UI nunca quede esperando un round-trip.
-  // El guardado real corre en segundo plano; si falla, se revierte el
-  // cambio local y se avisa con un toast.
+  // Todas las escrituras de acá para abajo son OPTIMISTAS: los 3 recortes
+  // locales se actualizan al toque, antes de que el servidor responda, para
+  // que la UI nunca quede esperando un round-trip. Guardó bien o falló, al
+  // final siempre se resincroniza en segundo plano contra el servidor
+  // (cargarCronograma) — como las 3 consultas ahora son chicas y puntuales
+  // (no toda la tabla), hacerlo después de cada cambio sale gratis y evita
+  // tener que llevar a mano la lógica de "revertir" ante un error.
+
+  function perteneceARango(act) {
+    return moment(act.inicio).isBetween(moment(fechaDesde).startOf('day'), moment(fechaHasta).endOf('day'), null, '[]')
+  }
+  function perteneceAlMesActual(act) {
+    return moment(act.inicio).isBetween(moment().startOf('month'), moment().endOf('month'), null, '[]')
+  }
+
+  function patchLista(setLista, act, id, pertenece) {
+    setLista(prev => {
+      const yaEstaba = prev.some(a => a.id === id)
+      if (pertenece(act)) {
+        return yaEstaba ? prev.map(a => a.id === id ? act : a) : [act, ...prev]
+      }
+      return yaEstaba ? prev.filter(a => a.id !== id) : prev
+    })
+  }
+
+  function aplicarOptimista(act, id) {
+    patchLista(setActividadesRango, act, id, perteneceARango)
+    patchLista(setActividadesMes, act, id, perteneceAlMesActual)
+    if (act.reunion_cliente && act.prospecto_id) {
+      setReunionesPorProspecto(prev => {
+        const actual = prev.get(act.prospecto_id)
+        if (!actual || act.inicio > actual) {
+          const copia = new Map(prev)
+          copia.set(act.prospecto_id, act.inicio)
+          return copia
+        }
+        return prev
+      })
+    }
+  }
+
+  function quitarOptimista(id) {
+    setActividadesRango(prev => prev.filter(a => a.id !== id))
+    setActividadesMes(prev => prev.filter(a => a.id !== id))
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -300,28 +370,18 @@ export default function Cronograma() {
     const { prospecto_nombre, descripcion, ...resto } = formData
     const resuelto = resolverProspectoParaGuardar(prospecto_nombre, descripcion, prospectos)
     const payload = { ...resto, ...resuelto }
-    const esNuevo = !payload.id
-    const idOptimista = esNuevo ? `optimista-${Date.now()}` : payload.id
-    const anterior = esNuevo ? null : actividades.find(a => a.id === payload.id)
+    const idOptimista = payload.id || `optimista-${Date.now()}`
 
     setShowModal(false)
-    setActividades(prev => (
-      esNuevo
-        ? [{ ...payload, id: idOptimista }, ...prev]
-        : prev.map(a => a.id === payload.id ? { ...a, ...payload } : a)
-    ))
+    aplicarOptimista({ ...payload, id: idOptimista }, idOptimista)
 
     try {
-      const guardada = await saveActividad(payload)
-      setActividades(prev => prev.map(a => a.id === idOptimista ? guardada : a))
+      await saveActividad(payload)
     } catch (err) {
-      setActividades(prev => (
-        esNuevo
-          ? prev.filter(a => a.id !== idOptimista)
-          : prev.map(a => a.id === payload.id ? anterior : a)
-      ))
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo guardar la actividad. Intentá de nuevo.')
+    } finally {
+      cargarCronograma()
     }
   }
 
@@ -329,16 +389,16 @@ export default function Cronograma() {
   async function handleDelete() {
     if (!confirm('¿Seguro que querés eliminar esta actividad?')) return
     const idBorrado = formData.id
-    const anterior = actividades.find(a => a.id === idBorrado)
 
     setShowModal(false)
-    setActividades(prev => prev.filter(a => a.id !== idBorrado))
+    quitarOptimista(idBorrado)
 
     try {
       await deleteActividad(idBorrado)
     } catch (err) {
-      if (anterior) setActividades(prev => [anterior, ...prev])
       mostrarToast('No se pudo eliminar la actividad. Intentá de nuevo.')
+    } finally {
+      cargarCronograma()
     }
   }
 
@@ -352,14 +412,15 @@ export default function Cronograma() {
       fin: moment(end).toISOString()
     }
 
-    setActividades(prev => prev.map(a => a.id === anterior.id ? updatedAct : a))
+    aplicarOptimista(updatedAct, anterior.id)
 
     try {
       await saveActividad(updatedAct)
     } catch (err) {
-      setActividades(prev => prev.map(a => a.id === anterior.id ? anterior : a))
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo mover la actividad. Intentá de nuevo.')
+    } finally {
+      cargarCronograma()
     }
   }
 
@@ -373,14 +434,15 @@ export default function Cronograma() {
       fin: moment(end).toISOString()
     }
 
-    setActividades(prev => prev.map(a => a.id === anterior.id ? updatedAct : a))
+    aplicarOptimista(updatedAct, anterior.id)
 
     try {
       await saveActividad(updatedAct)
     } catch (err) {
-      setActividades(prev => prev.map(a => a.id === anterior.id ? anterior : a))
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo redimensionar la actividad. Intentá de nuevo.')
+    } finally {
+      cargarCronograma()
     }
   }
 
@@ -548,8 +610,8 @@ export default function Cronograma() {
               <div className="picker-empty">No hay prospectos en producción</div>
             )}
             {prospectosProduccion.map(p => {
-              const saldo = calcularSaldoHoras(p, actividadesResueltas)
-              const dias = calcularDiasDesdeUltimaReunion(actividadesResueltas, p.nombre)
+              const saldo = calcularSaldoHoras(p, actividadesMesResueltas)
+              const dias = calcularDiasDesde(reunionesPorProspecto.get(p.id))
               return (
                 <div key={p.id} className="compliance-item">
                   <span className="p-name">{p.nombre}</span>

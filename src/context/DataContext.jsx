@@ -8,7 +8,6 @@ import { getProyectos } from '../services/proyectos'
 import { getTickets, getPreventivos } from '../services/operaciones'
 import { getCapacitaciones } from '../services/capacitacion'
 import { getPlanes } from '../services/planificacion'
-import { getActividades } from '../services/cronograma'
 import { getCredenciales } from '../services/credenciales'
 import { getValoresUVA } from '../services/valoresUva'
 import { sincronizarHistoricoUVA } from '../services/sincronizacionUva'
@@ -31,7 +30,6 @@ export function DataProvider({ children }) {
   const [preventivos, setPreventivos] = useState([])
   const [capacitaciones, setCapacitaciones] = useState([])
   const [planes, setPlanes] = useState([])
-  const [actividades, setActividades] = useState([])
   const [credenciales, setCredenciales] = useState([])
   const [valoresUVA, setValoresUVA] = useState([])
   const [cuentasBancarias, setCuentasBancarias] = useState([])
@@ -47,7 +45,6 @@ export function DataProvider({ children }) {
   const [loadingPreventivos, setLoadingPreventivos] = useState(false)
   const [loadingCapacitaciones, setLoadingCapacitaciones] = useState(false)
   const [loadingPlanes, setLoadingPlanes] = useState(false)
-  const [loadingActividades, setLoadingActividades] = useState(false)
   const [loadingCredenciales, setLoadingCredenciales] = useState(false)
   const [loadingValoresUVA, setLoadingValoresUVA] = useState(false)
   const [loadingCuentasBancarias, setLoadingCuentasBancarias] = useState(false)
@@ -173,18 +170,6 @@ export function DataProvider({ children }) {
     }
   }
 
-  async function refreshActividades(silencioso = false) {
-    if (!silencioso) setLoadingActividades(true)
-    try {
-      const data = await getActividades()
-      setActividades(data || [])
-    } catch (err) {
-      console.error('Error al precargar actividades:', err)
-    } finally {
-      setLoadingActividades(false)
-    }
-  }
-
   async function refreshCredenciales(silencioso = false) {
     if (!silencioso) setLoadingCredenciales(true)
     try {
@@ -238,7 +223,13 @@ export function DataProvider({ children }) {
   // Precarga global de todo al iniciar sesión
   useEffect(() => {
     if (user) {
-      // Disparar precargas silenciosas en paralelo al iniciar sesión
+      // Disparar precargas silenciosas en paralelo al iniciar sesión.
+      // `cronograma` y `valores_uva` quedaron afuera a propósito: son las
+      // dos tablas grandes (4400+ y 3800+ filas, creciendo) y la mayoría de
+      // los logins no visita esas pantallas. Cronograma ahora pide sus
+      // propios recortes acotados (ver pages/Cronograma.jsx) y ValoresUVA
+      // se autocarga al entrar a esa pantalla — precargarlas siempre acá
+      // era puro desperdicio.
       refreshFacturas(true)
       refreshProspectos(true)
       refreshColaboradores(true)
@@ -249,9 +240,7 @@ export function DataProvider({ children }) {
       refreshPreventivos(true)
       refreshCapacitaciones(true)
       refreshPlanes(true)
-      refreshActividades(true)
       refreshCredenciales(true)
-      refreshValoresUVA(true)
       refreshCuentasBancarias(true)
       sincronizarValoresUVA()
     } else {
@@ -266,7 +255,6 @@ export function DataProvider({ children }) {
       setPreventivos([])
       setCapacitaciones([])
       setPlanes([])
-      setActividades([])
       setCredenciales([])
       setValoresUVA([])
       setCuentasBancarias([])
@@ -314,11 +302,6 @@ export function DataProvider({ children }) {
       planes,
       loadingPlanes,
       refreshPlanes,
-
-      actividades,
-      setActividades,
-      loadingActividades,
-      refreshActividades,
 
       credenciales,
       loadingCredenciales,

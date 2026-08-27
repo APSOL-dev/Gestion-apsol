@@ -1,4 +1,9 @@
-import { describe, test, expect, beforeEach } from 'vitest'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
+import moment from 'moment'
+
+vi.mock('../../lib/supabase', () => ({
+  supabase: { from: vi.fn() }
+}))
 
 // ──────────────────────────────────────────────────────────────
 // Tests de saldo de horas y días desde la última reunión
@@ -54,52 +59,147 @@ describe('calcularSaldoHoras', () => {
   })
 })
 
-describe('calcularDiasDesdeUltimaReunion', () => {
-  let calcularDiasDesdeUltimaReunion
+// `calcularDiasDesdeUltimaReunion(actividades, nombre, fecha)` (que filtraba
+// un array completo de actividades en el cliente) se reemplazó por
+// `calcularDiasDesde(fechaUltimaReunion, fecha)`: encontrar la última
+// reunión de cada prospecto ahora lo hace el servidor (ver
+// getUltimasReunionesPorProspecto más abajo), así que la función pura solo
+// necesita calcular la diferencia de días entre dos fechas.
+describe('calcularDiasDesde', () => {
+  let calcularDiasDesde
 
   beforeEach(async () => {
     const mod = await import('../cronograma.js')
-    calcularDiasDesdeUltimaReunion = mod.calcularDiasDesdeUltimaReunion
+    calcularDiasDesde = mod.calcularDiasDesde
   })
 
-  test('devuelve los días transcurridos desde la reunión con cliente más reciente', () => {
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-16T09:00:00', reunion_cliente: true }
-    ]
-    expect(calcularDiasDesdeUltimaReunion(actividades, 'Escobar', FECHA_REF)).toBe(10)
+  test('calcula los días transcurridos desde la fecha dada', () => {
+    expect(calcularDiasDesde('2026-08-16T09:00:00', FECHA_REF)).toBe(10)
   })
 
-  test('ignora actividades que no son reunión con cliente', () => {
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-25T09:00:00', reunion_cliente: false }
-    ]
-    expect(calcularDiasDesdeUltimaReunion(actividades, 'Escobar', FECHA_REF)).toBeNull()
+  test('devuelve null si no hay fecha (nunca hubo reunión)', () => {
+    expect(calcularDiasDesde(null, FECHA_REF)).toBeNull()
+    expect(calcularDiasDesde(undefined, FECHA_REF)).toBeNull()
   })
 
-  test('ignora reuniones de otros prospectos', () => {
-    const actividades = [
-      { prospecto_nombre: 'Consultora', inicio: '2026-08-25T09:00:00', reunion_cliente: true }
-    ]
-    expect(calcularDiasDesdeUltimaReunion(actividades, 'Escobar', FECHA_REF)).toBeNull()
+  test('devuelve null si la fecha es posterior a la referencia (reunión agendada a futuro)', () => {
+    expect(calcularDiasDesde('2026-09-01T09:00:00', FECHA_REF)).toBeNull()
   })
 
-  test('devuelve null si nunca hubo una reunión con el cliente', () => {
-    expect(calcularDiasDesdeUltimaReunion([], 'Escobar', FECHA_REF)).toBeNull()
+  test('cuenta por día calendario, no por horas exactas', () => {
+    // FECHA_REF es 2026-08-26T12:00; una reunión esa misma mañana da 0 días, no negativo
+    expect(calcularDiasDesde('2026-08-26T08:00:00', FECHA_REF)).toBe(0)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Tests de las consultas acotadas del Cronograma: en vez de traer toda la
+// tabla (4400+ filas y creciendo) para filtrar/calcular en el cliente,
+// estas piden al servidor solo lo que hace falta en cada caso.
+// ──────────────────────────────────────────────────────────────
+
+describe('getActividadesEnRango', () => {
+  let getActividadesEnRango
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../cronograma.js')
+    getActividadesEnRango = mod.getActividadesEnRango
   })
 
-  test('ignora reuniones futuras posteriores a la fecha de referencia', () => {
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-09-01T09:00:00', reunion_cliente: true }
-    ]
-    expect(calcularDiasDesdeUltimaReunion(actividades, 'Escobar', FECHA_REF)).toBeNull()
+  test('filtra por rango de fechas en el servidor (gte/lte sobre inicio)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const gte = vi.fn().mockReturnThis()
+    const lte = vi.fn().mockReturnThis()
+    const order = vi.fn().mockResolvedValueOnce({ data: [{ id: '1' }], error: null })
+    supabase.from.mockReturnValueOnce({ select: vi.fn().mockReturnThis(), gte, lte, order })
+
+    const resultado = await getActividadesEnRango('2026-08-01T00:00:00.000Z', '2026-08-31T23:59:59.999Z')
+
+    expect(gte).toHaveBeenCalledWith('inicio', '2026-08-01T00:00:00.000Z')
+    expect(lte).toHaveBeenCalledWith('inicio', '2026-08-31T23:59:59.999Z')
+    expect(resultado).toEqual([{ id: '1' }])
+  })
+})
+
+describe('getActividadesDelMes', () => {
+  let getActividadesDelMes
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../cronograma.js')
+    getActividadesDelMes = mod.getActividadesDelMes
   })
 
-  test('toma la reunión más reciente cuando hay varias', () => {
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-01T09:00:00', reunion_cliente: true },
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-20T09:00:00', reunion_cliente: true }
-    ]
-    expect(calcularDiasDesdeUltimaReunion(actividades, 'Escobar', FECHA_REF)).toBe(6)
+  test('acota la consulta al mes completo de la fecha de referencia', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const gte = vi.fn().mockReturnThis()
+    const lte = vi.fn().mockReturnThis()
+    const order = vi.fn().mockResolvedValueOnce({ data: [], error: null })
+    supabase.from.mockReturnValueOnce({ select: vi.fn().mockReturnThis(), gte, lte, order })
+
+    const fechaReferencia = new Date('2026-08-15T12:00:00')
+    await getActividadesDelMes(fechaReferencia)
+
+    // Comparado en UTC contra el mismo cálculo (no contra un string fijo):
+    // en husos horarios negativos, el fin de mes en hora local cae del
+    // lado de septiembre al convertir a UTC — eso es correcto, no un bug.
+    expect(gte.mock.calls[0][1]).toBe(moment(fechaReferencia).startOf('month').toISOString())
+    expect(lte.mock.calls[0][1]).toBe(moment(fechaReferencia).endOf('month').toISOString())
+  })
+})
+
+describe('getUltimasReunionesPorProspecto', () => {
+  let getUltimasReunionesPorProspecto
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../cronograma.js')
+    getUltimasReunionesPorProspecto = mod.getUltimasReunionesPorProspecto
+  })
+
+  test('devuelve un Map con la fecha de la reunión más reciente por prospecto', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const eqMock = vi.fn().mockReturnThis()
+    supabase.from.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      eq: eqMock,
+      lte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValueOnce({
+        data: [
+          { prospecto_id: 'p-1', inicio: '2026-08-20T10:00:00' },
+          { prospecto_id: 'p-2', inicio: '2026-08-18T10:00:00' },
+          { prospecto_id: 'p-1', inicio: '2026-08-05T10:00:00' } // más vieja: ya viene ordenado desc, se ignora
+        ],
+        error: null
+      })
+    })
+
+    const resultado = await getUltimasReunionesPorProspecto(new Date('2026-08-26T12:00:00'))
+
+    expect(eqMock).toHaveBeenCalledWith('reunion_cliente', true)
+    expect(resultado.get('p-1')).toBe('2026-08-20T10:00:00')
+    expect(resultado.get('p-2')).toBe('2026-08-18T10:00:00')
+    expect(resultado.size).toBe(2)
+  })
+
+  test('ignora filas sin prospecto_id (categorías internas sin cliente real)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.from.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      lte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValueOnce({
+        data: [{ prospecto_id: null, inicio: '2026-08-20T10:00:00' }],
+        error: null
+      })
+    })
+
+    const resultado = await getUltimasReunionesPorProspecto()
+    expect(resultado.size).toBe(0)
   })
 })
 
@@ -179,5 +279,24 @@ describe('extraerProspectoParaMostrar', () => {
     const guardado = resolverProspectoParaGuardar('Consultora', 'Varios', PROSPECTOS)
     const mostrado = extraerProspectoParaMostrar(null, guardado.descripcion)
     expect(mostrado).toEqual({ prospecto_nombre: 'Consultora', descripcion: 'Varios' })
+  })
+})
+
+describe('resolverActividades', () => {
+  let resolverActividades
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    resolverActividades = mod.resolverActividades
+  })
+
+  test('resuelve prospecto_id a prospecto_nombre para cada actividad de la lista', () => {
+    const actividades = [
+      { id: '1', prospecto_id: 'p-1', descripcion: 'Reunión mensual' },
+      { id: '2', prospecto_id: null, descripcion: '[Consultora] Varios' }
+    ]
+    const resultado = resolverActividades(actividades, PROSPECTOS)
+    expect(resultado[0]).toMatchObject({ prospecto_nombre: 'Escobar', descripcion: 'Reunión mensual' })
+    expect(resultado[1]).toMatchObject({ prospecto_nombre: 'Consultora', descripcion: 'Varios' })
   })
 })
