@@ -65,6 +65,7 @@ export default function FacturaDetalle() {
   const [loadingRazones, setLoadingRazones] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [advertencia, setAdvertencia] = useState('')
 
   // Búsqueda de prospectos
   const [searchTerm, setSearchTerm] = useState('')
@@ -431,7 +432,16 @@ export default function FacturaDetalle() {
       }
 
       if (esNueva) {
-        navigate('/facturacion')
+        // BUG real: si el webhook de n8n fallaba (caído, red, etc.) al
+        // avisar por WhatsApp/mail, se navegaba igual sin decir nada — la
+        // factura quedaba guardada pero nadie se enteraba de avisarle al
+        // cliente. Ahora se frena un momento para mostrarlo antes de salir.
+        if (saved.notificacionEnviada === false) {
+          setAdvertencia('Factura guardada, pero no se pudo avisar por WhatsApp/mail (el webhook no respondió). Avisá al cliente manualmente.')
+          setTimeout(() => navigate('/facturacion'), 3000)
+        } else {
+          navigate('/facturacion')
+        }
       } else {
         setSuccess('Cambios guardados con éxito.')
         setTimeout(() => setSuccess(''), 3000)
@@ -651,6 +661,7 @@ export default function FacturaDetalle() {
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: '20px' }}>{error}</div>}
+      {advertencia && <div className="alert alert-warning" style={{ marginBottom: '20px' }}>{advertencia}</div>}
       {success && <div className="alert alert-success" style={{ marginBottom: '20px' }}>{success}</div>}
 
       <form id="facturaForm" onSubmit={handleSave} style={{ display: 'grid', gap: '24px' }}>

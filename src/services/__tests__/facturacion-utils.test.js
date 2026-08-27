@@ -554,6 +554,49 @@ describe('savePago', () => {
 })
 
 // ──────────────────────────────────────────────────────────────
+// BUG real: el webhook de n8n manda WhatsApp al contacto de cobro, pero
+// getFacturaById nunca traía su teléfono (el select de los joins de
+// contactos solo pedía nombre/apellido/email) — por eso llegaba el aviso
+// sin número de destinatario.
+// ──────────────────────────────────────────────────────────────
+describe('getFacturaById', () => {
+  let getFacturaById
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../facturacion.js')
+    getFacturaById = mod.getFacturaById
+  })
+
+  test('pide el teléfono de ambos contactos de cobro (lo necesita el webhook de WhatsApp)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const selectFactura = vi.fn().mockReturnThis()
+
+    supabase.from
+      .mockReturnValueOnce({
+        select: selectFactura,
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: { id: 'factura-1', monto: 100, tarifa_base_uva: null, valor_uva_dia: null, porcentaje_descuento: 0 },
+          error: null
+        })
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
+      })
+
+    await getFacturaById('factura-1')
+
+    const selectArg = selectFactura.mock.calls[0][0]
+    expect(selectArg).toMatch(/contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey\([^)]*telefono/)
+    expect(selectArg).toMatch(/contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey\([^)]*telefono/)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
 // Tests de saveFactura: notificación "primera_vez" al webhook único
 // de facturación solo cuando se CREA una factura (insert), nunca al
 // editar una ya existente (update).
@@ -601,12 +644,53 @@ describe('saveFactura', () => {
         order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
       })
 
-    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+    const resultado = await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 
     expect(notificarFacturacion).toHaveBeenCalledWith(
       'primera_vez',
       expect.objectContaining({ id: 'factura-1', numero_factura: '303' })
     )
+    expect(resultado.notificacionEnviada).toBe(true)
+  })
+
+  test('si el webhook de notificación falla, la factura igual se guarda (no revienta el guardado) y lo informa en el resultado', async () => {
+    // BUG real: antes esto se tragaba el error silenciosamente (solo un
+    // console.error) y la pantalla no tenía forma de avisarle al usuario
+    // que la factura se guardó pero nadie recibió el aviso por WhatsApp/mail.
+    const { supabase } = await import('../../lib/supabase')
+    const { notificarFacturacion } = await import('../notificaciones.js')
+    notificarFacturacion.mockRejectedValueOnce(new Error('Webhook caído'))
+
+    supabase.from
+      .mockReturnValueOnce({
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: { id: 'factura-1', numero_factura: '303', contacto_cobro_id: 'contacto-1' },
+          error: null
+        })
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: {
+            id: 'factura-1', numero_factura: '303', contacto_cobro_id: 'contacto-1',
+            prospecto_id: 'prospecto-1', monto: 0, tarifa_base_uva: null, valor_uva_dia: null, porcentaje_descuento: 0
+          },
+          error: null
+        })
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
+      })
+
+    const resultado = await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    expect(resultado.id).toBe('factura-1')
+    expect(resultado.notificacionEnviada).toBe(false)
   })
 
   test('al editar una factura existente, NO notifica "primera_vez"', async () => {

@@ -128,8 +128,8 @@ export async function getFacturaById(id) {
     .select(`
       *,
       prospectos:apsol_prospectos(id, nombre, empresa_id, empresas:apsol_empresas(nombre)),
-      contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey(id, nombre, apellido, email),
-      contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(id, nombre, apellido, email),
+      contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey(id, nombre, apellido, email, telefono),
+      contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(id, nombre, apellido, email, telefono),
       cuenta_bancaria:apsol_cuentas_bancarias(id, nombre_interno, banco, titular, cbu, alias)
     `)
     .eq('id', id)
@@ -199,15 +199,23 @@ export async function saveFactura(factura) {
     if (error) throw error
 
     const facturaCompleta = await getFacturaById(data.id)
+    // Un fallo del webhook (n8n caído, red, etc.) nunca debe tirar abajo el
+    // guardado de la factura, que ya está hecho — pero antes se tragaba el
+    // error en silencio (solo console.error) y la pantalla no tenía forma
+    // de avisarle al usuario que nadie recibió el aviso. Se informa acá con
+    // `notificacionEnviada` para que la UI pueda mostrar un aviso.
+    let notificacionEnviada = true
     try {
       await notificarFacturacion('primera_vez', facturaCompleta)
     } catch (notifError) {
       console.error('Error al notificar primera_vez al webhook de facturación:', notifError)
+      notificacionEnviada = false
     }
 
     return {
       ...data,
-      contacto_id: data.contacto_cobro_id
+      contacto_id: data.contacto_cobro_id,
+      notificacionEnviada
     }
   }
 }
