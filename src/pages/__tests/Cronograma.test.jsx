@@ -1,6 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { vi, describe, test, expect, beforeEach } from 'vitest'
-import { useState } from 'react'
 import moment from 'moment'
 import Cronograma from '../Cronograma'
 import { useData } from '../../context/DataContext'
@@ -42,20 +41,27 @@ vi.mock('../../context/DataContext', () => ({
   useData: vi.fn()
 }))
 
+// El Cronograma ya no trae toda la tabla vía DataContext: pide 3 recortes
+// puntuales directo al servicio (ver services/cronograma.js). Se mockean
+// esas 3 funciones además de saveActividad/deleteActividad; el resto
+// (resolverProspectoParaGuardar, extraerProspectoParaMostrar, etc.) se deja
+// real vía importActual.
 vi.mock('../../services/cronograma', async () => {
   const real = await vi.importActual('../../services/cronograma')
   return {
     ...real,
     saveActividad: vi.fn(),
-    deleteActividad: vi.fn()
+    deleteActividad: vi.fn(),
+    getActividadesEnRango: vi.fn(),
+    getActividadesDelMes: vi.fn(),
+    getUltimasReunionesPorProspecto: vi.fn()
   }
 })
 
 // --- Datos de prueba ---
 // `cronograma.prospecto_id` es la columna real (FK a prospectos); el
-// componente deriva `prospecto_nombre` de acá (ver extraerProspectoParaMostrar
-// en services/cronograma.js). Los mocks reflejan eso: `prospecto_id` en vez
-// de un `prospecto_nombre` de texto libre.
+// componente deriva `prospecto_nombre` de acá (ver resolverActividades en
+// services/cronograma.js).
 const ACTIVIDADES_MOCK = [
   {
     id: '1',
@@ -96,27 +102,35 @@ const COLABORADORES_MOCK = [
   { id: 'col-2', usuarios: { nombre: 'Carlos', apellido: 'Gómez' } }
 ]
 
-// `useData` se mockea con un hook de verdad (usa useState internamente) en
-// vez de un valor estático, para poder probar las actualizaciones optimistas:
-// el componente llama a `setActividades` del contexto y esperamos que el
-// cambio se refleje ya, sin esperar a que el servidor responda.
 function mockUseData(overrides = {}) {
-  const { actividades: actividadesIniciales, prospectos: prospectosOverride, colaboradores: colaboradoresOverride, ...resto } = overrides
-  useData.mockImplementation(() => {
-    const [actividadesState, setActividadesState] = useState(actividadesIniciales ?? ACTIVIDADES_MOCK)
-    return {
-      actividades: actividadesState,
-      setActividades: setActividadesState,
-      loadingActividades: false,
-      refreshActividades: vi.fn().mockResolvedValue(),
-      prospectos: prospectosOverride ?? PROSPECTOS_MOCK,
-      loadingProspectos: false,
-      refreshProspectos: vi.fn().mockResolvedValue(),
-      colaboradores: colaboradoresOverride ?? COLABORADORES_MOCK,
-      loadingColaboradores: false,
-      refreshColaboradores: vi.fn().mockResolvedValue(),
-      ...resto
-    }
+  const { prospectos: prospectosOverride, colaboradores: colaboradoresOverride, ...resto } = overrides
+  useData.mockReturnValue({
+    prospectos: prospectosOverride ?? PROSPECTOS_MOCK,
+    loadingProspectos: false,
+    refreshProspectos: vi.fn().mockResolvedValue(),
+    colaboradores: colaboradoresOverride ?? COLABORADORES_MOCK,
+    loadingColaboradores: false,
+    refreshColaboradores: vi.fn().mockResolvedValue(),
+    ...resto
+  })
+}
+
+// Mockea los 3 servicios acotados del cronograma. Por defecto simula un
+// filtrado real por fecha (como haría el servidor), para poder probar que
+// cambiar "Desde"/"Hasta" realmente dispara una consulta nueva con otro
+// rango — no un filtro client-side como antes.
+function mockServiciosCronograma({ actividades = ACTIVIDADES_MOCK, reuniones = new Map() } = {}) {
+  cronogramaService.getActividadesEnRango.mockImplementation((desde, hasta) => (
+    Promise.resolve(actividades.filter(a => moment(a.inicio).isBetween(moment(desde), moment(hasta), null, '[]')))
+  ))
+  cronogramaService.getActividadesDelMes.mockResolvedValue(actividades)
+  cronogramaService.getUltimasReunionesPorProspecto.mockResolvedValue(reuniones)
+}
+
+async function esperarCargaInicial() {
+  await waitFor(() => {
+    expect(screen.getByTestId('event-1')).toBeInTheDocument()
+    expect(screen.getByTestId('event-2')).toBeInTheDocument()
   })
 }
 
@@ -124,36 +138,42 @@ describe('Cronograma', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseData()
+    mockServiciosCronograma()
   })
 
   // ─── Tests de filtros ───────────────────────────────────────────────────────
 
-  test('sin filtros activos, muestra todos los eventos', () => {
+  test('sin filtros activos, muestra todos los eventos', async () => {
     render(<Cronograma />)
-    expect(screen.getByTestId('event-1')).toBeInTheDocument()
-    expect(screen.getByTestId('event-2')).toBeInTheDocument()
+    await esperarCargaInicial()
   })
 
-  test('filtro de fecha "Hasta" oculta eventos que caen después de la fecha indicada', () => {
+  test('filtro de fecha "Hasta" oculta eventos que caen después de la fecha indicada', async () => {
     render(<Cronograma />)
+    await esperarCargaInicial()
 
     const inputHasta = screen.getByLabelText('Hasta')
     // Ponemos la fecha hasta el 20 de agosto → el evento del 21 debe desaparecer
     fireEvent.change(inputHasta, { target: { value: '2026-08-20' } })
 
-    expect(screen.getByTestId('event-1')).toBeInTheDocument()
-    expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('event-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
+    })
   })
 
-  test('filtro de fecha "Desde" oculta eventos anteriores a la fecha indicada', () => {
+  test('filtro de fecha "Desde" oculta eventos anteriores a la fecha indicada', async () => {
     render(<Cronograma />)
+    await esperarCargaInicial()
 
     const inputDesde = screen.getByLabelText('Desde')
     // Ponemos la fecha desde el 21 de agosto → el evento del 20 debe desaparecer
     fireEvent.change(inputDesde, { target: { value: '2026-08-21' } })
 
-    expect(screen.queryByTestId('event-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('event-2')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByTestId('event-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('event-2')).toBeInTheDocument()
+    })
   })
 
   test('ya no muestra el buscador de texto libre (eliminado por confuso/redundante)', () => {
@@ -174,6 +194,7 @@ describe('Cronograma', () => {
 
   test('el modal se rellena con los datos del evento al hacer clic en uno existente', async () => {
     render(<Cronograma />)
+    await esperarCargaInicial()
 
     fireEvent.click(screen.getByTestId('event-1'))
 
@@ -185,6 +206,7 @@ describe('Cronograma', () => {
 
   test('abrir modal de edición y luego abrir nuevo no mezcla los datos', async () => {
     render(<Cronograma />)
+    await esperarCargaInicial()
 
     // Abrir un evento existente
     fireEvent.click(screen.getByTestId('event-1'))
@@ -224,6 +246,7 @@ describe('Cronograma', () => {
 
   test('el botón "Eliminar" SÍ aparece en el modal de edición de actividad existente', async () => {
     render(<Cronograma />)
+    await esperarCargaInicial()
 
     fireEvent.click(screen.getByTestId('event-1'))
 
@@ -237,6 +260,7 @@ describe('Cronograma', () => {
     window.confirm = vi.fn().mockReturnValue(true)
 
     render(<Cronograma />)
+    await esperarCargaInicial()
     fireEvent.click(screen.getByTestId('event-1'))
     await waitFor(() => expect(screen.getByText('Eliminar')).toBeInTheDocument())
 
@@ -251,6 +275,7 @@ describe('Cronograma', () => {
     window.confirm = vi.fn().mockReturnValue(false)
 
     render(<Cronograma />)
+    await esperarCargaInicial()
     fireEvent.click(screen.getByTestId('event-1'))
     await waitFor(() => expect(screen.getByText('Eliminar')).toBeInTheDocument())
 
@@ -288,6 +313,7 @@ describe('Cronograma', () => {
     const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
 
     render(<Cronograma />)
+    await esperarCargaInicial()
     fireEvent.click(screen.getByTestId('event-1'))
     await waitFor(() => expect(screen.getByText('Eliminar')).toBeInTheDocument())
     fireEvent.click(screen.getByText('Eliminar'))
@@ -364,29 +390,35 @@ describe('Cronograma', () => {
 
   // ─── Tests del panel de saldo de horas (ex "cumplimiento") ─────────────────
 
-  test('el panel de saldo de horas muestra valores estables entre renders consecutivos', () => {
+  test('el panel de saldo de horas muestra valores estables entre renders consecutivos', async () => {
     const { unmount, container: c1 } = render(<Cronograma />)
+    await waitFor(() => expect(c1.querySelector('.compliance-item')).toBeInTheDocument())
     const texto1 = c1.querySelector('.compliance-list')?.textContent ?? ''
     unmount()
 
     const { container: c2 } = render(<Cronograma />)
+    await waitFor(() => expect(c2.querySelector('.compliance-item')).toBeInTheDocument())
     const texto2 = c2.querySelector('.compliance-list')?.textContent ?? ''
 
     expect(texto1).toBe(texto2)
   })
 
-  test('muestra "—" de saldo cuando el prospecto no tiene horas mensuales contratadas', () => {
+  test('muestra "—" de saldo cuando el prospecto no tiene horas mensuales contratadas', async () => {
     render(<Cronograma />)
     // PROSPECTOS_MOCK no define hs_mensuales para ningún prospecto
-    const item = screen.getByText('Escobar').closest('.compliance-item')
-    expect(item).toHaveTextContent('—')
+    await waitFor(() => {
+      const item = screen.getByText('Escobar').closest('.compliance-item')
+      expect(item).toHaveTextContent('—')
+    })
   })
 
-  test('calcula el saldo de horas restando lo agendado en el mes de las horas contratadas', () => {
+  test('calcula el saldo de horas restando lo agendado en el mes de las horas contratadas', async () => {
     const inicio = moment().startOf('month').add(2, 'days').hour(9).minute(0)
     const fin = inicio.clone().add(3, 'hours')
     mockUseData({
-      prospectos: [{ id: 'pros-4', nombre: 'Open Pack', estado: '6A - En producción', hs_mensuales: 10 }],
+      prospectos: [{ id: 'pros-4', nombre: 'Open Pack', estado: '6A - En producción', hs_mensuales: 10 }]
+    })
+    mockServiciosCronograma({
       actividades: [{
         id: '9', prospecto_id: 'pros-4', descripcion: 'Trabajo',
         inicio: inicio.format(), fin: fin.format(),
@@ -395,32 +427,37 @@ describe('Cronograma', () => {
     })
 
     const { container } = render(<Cronograma />)
-    const item = container.querySelector('.compliance-item')
-    // 10h contratadas - 3h agendadas = 7h de saldo
-    expect(item).toHaveTextContent('7h')
+    await waitFor(() => {
+      const item = container.querySelector('.compliance-item')
+      // 10h contratadas - 3h agendadas = 7h de saldo
+      expect(item).toHaveTextContent('7h')
+    })
   })
 
-  test('muestra "—" en días desde la última reunión cuando el prospecto nunca tuvo una reunión con cliente', () => {
+  test('muestra "—" en días desde la última reunión cuando el prospecto nunca tuvo una reunión con cliente', async () => {
     render(<Cronograma />)
-    // Escobar solo tiene una actividad con reunion_cliente: false
-    const item = screen.getByText('Escobar').closest('.compliance-item')
-    expect(item.querySelector('.p-days')).toHaveTextContent('—')
+    // getUltimasReunionesPorProspecto por defecto no trae ninguna reunión
+    await waitFor(() => {
+      const item = screen.getByText('Escobar').closest('.compliance-item')
+      expect(item.querySelector('.p-days')).toHaveTextContent('—')
+    })
   })
 
-  test('muestra los días transcurridos desde la última reunión con cliente', () => {
+  test('muestra los días transcurridos desde la última reunión con cliente', async () => {
     const fechaReunion = moment().subtract(5, 'days').hour(10).minute(0)
     mockUseData({
-      prospectos: [{ id: 'pros-5', nombre: 'DG 2026', estado: '6A - En producción' }],
-      actividades: [{
-        id: '10', prospecto_id: 'pros-5', descripcion: 'Reunión',
-        inicio: fechaReunion.format(), fin: fechaReunion.clone().add(1, 'hour').format(),
-        responsable_id: 'col-1', reunion_cliente: true
-      }]
+      prospectos: [{ id: 'pros-5', nombre: 'DG 2026', estado: '6A - En producción' }]
+    })
+    mockServiciosCronograma({
+      actividades: [],
+      reuniones: new Map([['pros-5', fechaReunion.format()]])
     })
 
     const { container } = render(<Cronograma />)
-    const item = container.querySelector('.compliance-item')
-    expect(item.querySelector('.p-days')).toHaveTextContent('5d')
+    await waitFor(() => {
+      const item = container.querySelector('.compliance-item')
+      expect(item.querySelector('.p-days')).toHaveTextContent('5d')
+    })
   })
 
   // ─── Tests de la barra de filtros (ahora arriba, no en un panel lateral) ───
@@ -572,10 +609,16 @@ describe('Cronograma', () => {
 
   describe('Actualizaciones optimistas', () => {
     test('crear una actividad la muestra en el calendario antes de que el servidor confirme el guardado', async () => {
+      let listaActual = [...ACTIVIDADES_MOCK]
+      cronogramaService.getActividadesEnRango.mockImplementation(() => Promise.resolve(listaActual))
+      cronogramaService.getActividadesDelMes.mockImplementation(() => Promise.resolve(listaActual))
+
       let resolverGuardado
       cronogramaService.saveActividad.mockImplementation(() => new Promise(resolve => { resolverGuardado = resolve }))
 
       render(<Cronograma />)
+      await esperarCargaInicial()
+
       fireEvent.click(screen.getByTitle('Nueva Actividad'))
       fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
       fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
@@ -586,13 +629,20 @@ describe('Cronograma', () => {
       await waitFor(() => {
         expect(screen.queryByText('Nueva Actividad')).not.toBeInTheDocument()
       })
-      expect(screen.getByTestId('event-1')).toBeInTheDocument()
-      expect(screen.getByTestId('event-2')).toBeInTheDocument()
-      const eventosAntes = screen.getAllByTestId(/^event-/)
-      expect(eventosAntes).toHaveLength(3)
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^event-/)).toHaveLength(3)
+      })
 
-      // Ahora se resuelve el guardado real: no debe duplicarse el evento.
-      resolverGuardado({ id: 'real-id-3', prospecto_id: 'pros-1', descripcion: '', inicio: moment().format(), fin: moment().add(1, 'hour').format(), responsable_id: 'col-1' })
+      // Se resuelve el guardado real: la reconciliación en segundo plano
+      // (cargarCronograma) vuelve a pedir los datos, que ahora incluyen la
+      // fila real guardada. No debe duplicarse el evento.
+      const nuevaReal = {
+        id: 'real-id-3', prospecto_id: 'pros-1', descripcion: '',
+        inicio: moment().format(), fin: moment().add(1, 'hour').format(), responsable_id: 'col-1'
+      }
+      listaActual = [...ACTIVIDADES_MOCK, nuevaReal]
+      resolverGuardado(nuevaReal)
+
       await waitFor(() => {
         expect(screen.getAllByTestId(/^event-/)).toHaveLength(3)
       })
@@ -603,6 +653,8 @@ describe('Cronograma', () => {
       cronogramaService.saveActividad.mockImplementation(() => new Promise((resolve, reject) => { rechazarGuardado = reject }))
 
       render(<Cronograma />)
+      await esperarCargaInicial()
+
       fireEvent.click(screen.getByTitle('Nueva Actividad'))
       fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
       fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
@@ -626,6 +678,7 @@ describe('Cronograma', () => {
       cronogramaService.deleteActividad.mockImplementation(() => new Promise(resolve => { resolverBorrado = resolve }))
 
       render(<Cronograma />)
+      await esperarCargaInicial()
       fireEvent.click(screen.getByTestId('event-1'))
       await waitFor(() => expect(screen.getByText('Eliminar')).toBeInTheDocument())
       fireEvent.click(screen.getByText('Eliminar'))
@@ -648,6 +701,7 @@ describe('Cronograma', () => {
       cronogramaService.deleteActividad.mockImplementation(() => new Promise((resolve, reject) => { rechazarBorrado = reject }))
 
       render(<Cronograma />)
+      await esperarCargaInicial()
       fireEvent.click(screen.getByTestId('event-1'))
       await waitFor(() => expect(screen.getByText('Eliminar')).toBeInTheDocument())
       fireEvent.click(screen.getByText('Eliminar'))

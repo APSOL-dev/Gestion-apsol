@@ -23,6 +23,10 @@ function horasUsadasEnElMes(actividades, prospectoNombre, fechaReferencia = new 
  * (`hs_mensuales`) menos las horas ya agendadas en el mes de `fechaReferencia`.
  * Devuelve `null` cuando el prospecto no tiene un abono de horas configurado,
  * para no mostrar un saldo negativo engañoso en clientes sin bolsa de horas.
+ *
+ * `actividades` se espera ya acotado al mes en cuestión (ver
+ * `getActividadesDelMes`) — el filtro de mes de acá adentro es una
+ * salvaguarda, no hace falta traer el historial completo.
  * @param {{nombre: string, hs_mensuales: number|null|undefined}} prospecto
  * @param {Array} actividades
  * @param {Date} [fechaReferencia]
@@ -36,24 +40,18 @@ export function calcularSaldoHoras(prospecto, actividades, fechaReferencia = new
 }
 
 /**
- * Calcula cuántos días pasaron desde la última actividad marcada como
- * "reunión con cliente" (`reunion_cliente = true`) de un prospecto, tomando
- * como referencia `fechaReferencia`. Ignora reuniones futuras. Devuelve
- * `null` si nunca hubo una reunión registrada.
- * @param {Array} actividades
- * @param {string} prospectoNombre
+ * Calcula cuántos días pasaron desde `fechaUltimaReunion` hasta
+ * `fechaReferencia`. Devuelve `null` si no hay fecha (nunca hubo reunión
+ * registrada) o si la fecha es posterior a la referencia (una reunión
+ * agendada a futuro no cuenta como "última reunión" todavía).
+ * @param {string|null|undefined} fechaUltimaReunion
  * @param {Date} [fechaReferencia]
  * @returns {number|null}
  */
-export function calcularDiasDesdeUltimaReunion(actividades, prospectoNombre, fechaReferencia = new Date()) {
-  const fechasReunion = actividades
-    .filter(act => act.prospecto_nombre === prospectoNombre && act.reunion_cliente)
-    .map(act => moment(act.inicio))
-    .filter(fecha => fecha.isSameOrBefore(fechaReferencia))
-
-  if (fechasReunion.length === 0) return null
-
-  const ultima = moment.max(fechasReunion)
+export function calcularDiasDesde(fechaUltimaReunion, fechaReferencia = new Date()) {
+  if (!fechaUltimaReunion) return null
+  const ultima = moment(fechaUltimaReunion)
+  if (ultima.isAfter(fechaReferencia)) return null
   return moment(fechaReferencia).startOf('day').diff(ultima.startOf('day'), 'days')
 }
 
@@ -100,14 +98,77 @@ export function extraerProspectoParaMostrar(prospectoNombreReal, descripcion) {
   return { prospecto_nombre: '', descripcion: desc }
 }
 
-export async function getActividades() {
+/**
+ * Trae las actividades cuyo inicio cae dentro de [desde, hasta] (inclusive).
+ * Reemplaza traer TODA la tabla (4400+ filas y creciendo) para filtrar en
+ * el cliente: el calendario nunca necesita más que lo que se ve en pantalla.
+ * @param {string} desde  ISO 8601
+ * @param {string} hasta  ISO 8601
+ */
+export async function getActividadesEnRango(desde, hasta) {
   const { data, error } = await supabase
     .from('apsol_cronograma')
     .select('*')
+    .gte('inicio', desde)
+    .lte('inicio', hasta)
     .order('inicio', { ascending: false })
 
   if (error) throw error
   return data
+}
+
+/**
+ * Trae las actividades del mes de `fechaReferencia` (por defecto, hoy).
+ * Usada para el saldo de horas del panel derecho, que siempre es "el mes
+ * actual" sin importar qué rango esté mirando el calendario.
+ * @param {Date} [fechaReferencia]
+ */
+export async function getActividadesDelMes(fechaReferencia = new Date()) {
+  const desde = moment(fechaReferencia).startOf('month').toISOString()
+  const hasta = moment(fechaReferencia).endOf('month').toISOString()
+  return getActividadesEnRango(desde, hasta)
+}
+
+/**
+ * Trae, por prospecto, la fecha de su actividad más reciente marcada como
+ * "reunión con cliente" hasta `fechaReferencia`. Solo baja las filas con
+ * `reunion_cliente = true` (un subconjunto chico que crece lento con el
+ * tiempo — unas pocas por cliente al mes), no la tabla entera.
+ * @param {Date} [fechaReferencia]
+ * @returns {Promise<Map<string, string>>}  prospecto_id -> fecha ISO de la última reunión
+ */
+export async function getUltimasReunionesPorProspecto(fechaReferencia = new Date()) {
+  const { data, error } = await supabase
+    .from('apsol_cronograma')
+    .select('prospecto_id, inicio')
+    .eq('reunion_cliente', true)
+    .lte('inicio', moment(fechaReferencia).toISOString())
+    .order('inicio', { ascending: false })
+
+  if (error) throw error
+
+  const ultimaPorProspecto = new Map()
+  for (const fila of data) {
+    if (fila.prospecto_id && !ultimaPorProspecto.has(fila.prospecto_id)) {
+      ultimaPorProspecto.set(fila.prospecto_id, fila.inicio)
+    }
+  }
+  return ultimaPorProspecto
+}
+
+/**
+ * Resuelve `prospecto_id` -> `prospecto_nombre` de solo lectura sobre una
+ * lista de actividades, para mostrar (título de eventos, filtros, saldo).
+ * Ver {@link extraerProspectoParaMostrar}.
+ * @param {Array} actividades
+ * @param {Array<{id: string, nombre: string}>} prospectos
+ */
+export function resolverActividades(actividades, prospectos) {
+  return actividades.map(act => {
+    const prospecto = prospectos.find(p => p.id === act.prospecto_id)
+    const { prospecto_nombre, descripcion } = extraerProspectoParaMostrar(prospecto?.nombre, act.descripcion)
+    return { ...act, prospecto_nombre, descripcion }
+  })
 }
 
 export async function getActividadById(id) {

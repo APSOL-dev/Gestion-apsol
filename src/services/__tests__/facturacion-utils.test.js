@@ -1,4 +1,4 @@
-﻿import { describe, test, expect, vi, beforeEach } from 'vitest'
+﻿import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ──────────────────────────────────────────────────────────────
 // Tests de cálculo de montos de factura (bruto/descuento/neto/saldo)
@@ -381,7 +381,12 @@ describe('obtenerUVAParaFecha', () => {
 })
 
 // ──────────────────────────────────────────────────────────────
-// Tests de sincronización masiva del histórico UVA
+// Tests de sincronización del histórico UVA
+//
+// Rediseñado para no traer la tabla completa (3804+ filas y creciendo) para
+// diffear en el cliente ni pegarle a la API externa en cada login: primero
+// se mira SOLO la fecha más reciente ya guardada (una fila), y si ya está
+// al día con hoy, ni siquiera se llama a la API.
 // ──────────────────────────────────────────────────────────────
 describe('sincronizarHistoricoUVA', () => {
   let sincronizarHistoricoUVA
@@ -389,56 +394,115 @@ describe('sincronizarHistoricoUVA', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     vi.resetModules()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-25T12:00:00'))
     const mod = await import('../../services/sincronizacionUva.js')
     sincronizarHistoricoUVA = mod.sincronizarHistoricoUVA
   })
 
-  test('inserta solo las fechas que todavía no existen en la base (sin duplicar días)', async () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('si la última fecha local ya es hoy, no llama a la API externa', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.from.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValueOnce({ data: { fecha: '2026-08-25' }, error: null })
+    })
+
+    const resultado = await sincronizarHistoricoUVA()
+
+    expect(resultado).toEqual({ insertados: 0 })
+    expect(mockFetch).not.toHaveBeenCalled()
+    // Una sola consulta (la de la última fecha), nunca trae la tabla entera.
+    expect(supabase.from).toHaveBeenCalledTimes(1)
+  })
+
+  test('si la base está desactualizada, llama a la API y guarda solo lo posterior a la última fecha local', async () => {
     const { supabase } = await import('../../lib/supabase')
     const upsertMock = vi.fn().mockResolvedValueOnce({ error: null })
     supabase.from
       .mockReturnValueOnce({
-        select: vi.fn().mockResolvedValueOnce({
-          data: [{ fecha: '2026-08-24' }],
-          error: null
-        })
+        select: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValueOnce({ data: { fecha: '2026-08-23' }, error: null })
       })
       .mockReturnValueOnce({ upsert: upsertMock })
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => [
-        { fecha: '2026-08-24', valor: 1650.50 },
-        { fecha: '2026-08-25', valor: 1655.75 },
+        { fecha: '2026-08-22', valor: 1640 }, // anterior a la última local: se ignora
+        { fecha: '2026-08-23', valor: 1645 }, // la última local: ya la tenemos, se ignora
+        { fecha: '2026-08-24', valor: 1650.50 }, // nueva
+        { fecha: '2026-08-25', valor: 1655.75 }, // nueva (=hoy)
       ]
     })
 
     const resultado = await sincronizarHistoricoUVA()
-    expect(resultado).toEqual({ insertados: 1 })
+
+    expect(resultado).toEqual({ insertados: 2 })
+    expect(upsertMock).toHaveBeenCalledWith(
+      [{ fecha: '2026-08-24', valor: 1650.50 }, { fecha: '2026-08-25', valor: 1655.75 }],
+      { onConflict: 'fecha', ignoreDuplicates: true }
+    )
+  })
+
+  test('nunca guarda fechas posteriores a hoy, aunque la API las devuelva', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const upsertMock = vi.fn().mockResolvedValueOnce({ error: null })
+    supabase.from
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValueOnce({ data: { fecha: '2026-08-24' }, error: null })
+      })
+      .mockReturnValueOnce({ upsert: upsertMock })
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { fecha: '2026-08-25', valor: 1655.75 }, // hoy: válida
+        { fecha: '2026-08-26', valor: 1660 },    // mañana: no debería guardarse
+      ]
+    })
+
+    await sincronizarHistoricoUVA()
+
     expect(upsertMock).toHaveBeenCalledWith(
       [{ fecha: '2026-08-25', valor: 1655.75 }],
       { onConflict: 'fecha', ignoreDuplicates: true }
     )
   })
 
-  test('no llama a upsert si ya están todas las fechas cargadas', async () => {
+  test('si la base está vacía, guarda todo lo que venga de la API hasta hoy', async () => {
     const { supabase } = await import('../../lib/supabase')
-    supabase.from.mockReturnValueOnce({
-      select: vi.fn().mockResolvedValueOnce({
-        data: [{ fecha: '2026-08-24' }, { fecha: '2026-08-25' }],
-        error: null
+    const upsertMock = vi.fn().mockResolvedValueOnce({ error: null })
+    supabase.from
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValueOnce({ data: null, error: null })
       })
-    })
+      .mockReturnValueOnce({ upsert: upsertMock })
+
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => [
-        { fecha: '2026-08-24', valor: 1650.50 },
+        { fecha: '2016-03-31', valor: 14.05 },
         { fecha: '2026-08-25', valor: 1655.75 },
       ]
     })
+
     const resultado = await sincronizarHistoricoUVA()
-    expect(resultado).toEqual({ insertados: 0 })
-    expect(supabase.from).toHaveBeenCalledTimes(1)
+
+    expect(resultado).toEqual({ insertados: 2 })
   })
 })
 
