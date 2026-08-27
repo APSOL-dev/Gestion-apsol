@@ -300,6 +300,7 @@ export function DataProvider({ children }) {
       refreshPlanes,
 
       actividades,
+      setActividades,
       loadingActividades,
       refreshActividades,
 

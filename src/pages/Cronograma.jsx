@@ -1,16 +1,20 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Calendar, momentLocalizer, Views } from 'react-big-calendar'
 import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import moment from 'moment'
 import 'moment/dist/locale/es'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
-import { 
-  Plus, Search, ChevronLeft, ChevronRight, 
+import {
+  Plus, ChevronLeft, ChevronRight,
   Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
-import { saveActividad, deleteActividad } from '../services/cronograma'
+import {
+  saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesdeUltimaReunion,
+  resolverProspectoParaGuardar, extraerProspectoParaMostrar
+} from '../services/cronograma'
+import FiltroMultiSelect from '../components/FiltroMultiSelect'
 
 moment.locale('es')
 const localizer = momentLocalizer(moment)
@@ -32,6 +36,37 @@ const messages = {
   showMore: total => `+ Ver más (${total})`
 }
 
+// Ancho ajustable del panel de saldo de horas (el panel completo) y de su
+// columna "Prospecto" (la distribución interna). Ambos se persisten para
+// que cada usuario configure una vez cómo prefiere verlo.
+const ANCHO_PANEL_SALDO_MIN = 280
+const ANCHO_PANEL_SALDO_MAX = 560
+const ANCHO_PANEL_SALDO_DEFAULT = 320
+const CLAVE_ANCHO_PANEL_SALDO = 'apsol_cronograma_saldo_panel_width'
+
+function leerAnchoPanelSaldoGuardado() {
+  const guardado = Number(localStorage.getItem(CLAVE_ANCHO_PANEL_SALDO))
+  if (guardado >= ANCHO_PANEL_SALDO_MIN && guardado <= ANCHO_PANEL_SALDO_MAX) return guardado
+  return ANCHO_PANEL_SALDO_DEFAULT
+}
+
+// Ancho de todo lo que NO es la columna "Prospecto" dentro de una fila:
+// padding del panel (24px x2) + padding de la fila (8px x2) + columna
+// Saldo (48px) + columna Días (40px). Se usa para que el máximo de la
+// columna "Prospecto" escale con el ancho del panel en vez de quedar fijo.
+const ANCHO_NO_NOMBRE_FIJO = 152
+
+const ANCHO_COL_NOMBRE_MIN = 70
+const ANCHO_COL_NOMBRE_ABS_MAX = 400 // techo de sanidad ante un valor corrupto en localStorage
+const ANCHO_COL_NOMBRE_DEFAULT = 110
+const CLAVE_ANCHO_COL_NOMBRE = 'apsol_cronograma_saldo_col_nombre_width'
+
+function leerAnchoColNombreGuardado() {
+  const guardado = Number(localStorage.getItem(CLAVE_ANCHO_COL_NOMBRE))
+  if (guardado >= ANCHO_COL_NOMBRE_MIN && guardado <= ANCHO_COL_NOMBRE_ABS_MAX) return guardado
+  return ANCHO_COL_NOMBRE_DEFAULT
+}
+
 // FIX Bug #6: Formulario vacío extraído como constante para reusar
 const FORM_VACÍO = {
   prospecto_nombre: '',
@@ -45,10 +80,10 @@ const FORM_VACÍO = {
 }
 
 export default function Cronograma() {
-  const { 
-    actividades, loadingActividades, refreshActividades, 
-    prospectos, loadingProspectos, refreshProspectos, 
-    colaboradores, loadingColaboradores, refreshColaboradores 
+  const {
+    actividades, setActividades, loadingActividades, refreshActividades,
+    prospectos, loadingProspectos, refreshProspectos,
+    colaboradores, loadingColaboradores, refreshColaboradores
   } = useData()
   const [view, setView] = useState(Views.WEEK)
   const [date, setDate] = useState(new Date())
@@ -57,14 +92,8 @@ export default function Cronograma() {
   const [fechaDesde, setFechaDesde] = useState(moment().startOf('month').format('YYYY-MM-DD'))
   const [fechaHasta, setFechaHasta] = useState(moment().endOf('month').format('YYYY-MM-DD'))
 
-  // FIX Bug #3: Estado para el buscador
-  const [textoBusqueda, setTextoBusqueda] = useState('')
-
   const [selectedColab, setSelectedColab] = useState([])
   const [selectedProspectos, setSelectedProspectos] = useState([])
-
-  const [showColabPicker, setShowColabPicker] = useState(false)
-  const [showProsPicker, setShowProsPicker] = useState(false)
 
   const [showModal, setShowModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
@@ -72,6 +101,61 @@ export default function Cronograma() {
 
   // FIX Bug #10: Sistema de notificaciones (reemplaza alert)
   const [toast, setToast] = useState(null)
+
+  const [anchoPanelSaldo, setAnchoPanelSaldo] = useState(leerAnchoPanelSaldoGuardado)
+  const anchoPanelSaldoRef = useRef(anchoPanelSaldo)
+
+  const [anchoColNombre, setAnchoColNombre] = useState(leerAnchoColNombreGuardado)
+  const anchoColNombreRef = useRef(anchoColNombre)
+
+  // El máximo de la columna "Prospecto" escala con el ancho del panel: si
+  // el usuario agranda todo el panel, también gana margen para agrandar
+  // esta columna (antes quedaba fija en 180px sin importar el panel).
+  const anchoColNombreMax = Math.max(ANCHO_COL_NOMBRE_MIN, anchoPanelSaldo - ANCHO_NO_NOMBRE_FIJO)
+  const anchoColNombreAplicado = Math.min(anchoColNombre, anchoColNombreMax)
+
+  function iniciarResizePanelSaldo(e) {
+    e.preventDefault()
+    const anchoInicial = anchoPanelSaldo
+    const xInicial = e.clientX
+
+    function onMouseMove(ev) {
+      // El panel está pegado al borde derecho: arrastrar hacia la
+      // izquierda (clientX menor) debe agrandarlo.
+      const delta = xInicial - ev.clientX
+      const nuevoAncho = Math.min(ANCHO_PANEL_SALDO_MAX, Math.max(ANCHO_PANEL_SALDO_MIN, anchoInicial + delta))
+      anchoPanelSaldoRef.current = nuevoAncho
+      setAnchoPanelSaldo(nuevoAncho)
+    }
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      localStorage.setItem(CLAVE_ANCHO_PANEL_SALDO, String(anchoPanelSaldoRef.current))
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }
+
+  function iniciarResizeColNombre(e) {
+    e.preventDefault()
+    const anchoInicial = anchoColNombreAplicado
+    const xInicial = e.clientX
+    const maximoActual = anchoColNombreMax
+
+    function onMouseMove(ev) {
+      const delta = ev.clientX - xInicial
+      const nuevoAncho = Math.min(maximoActual, Math.max(ANCHO_COL_NOMBRE_MIN, anchoInicial + delta))
+      anchoColNombreRef.current = nuevoAncho
+      setAnchoColNombre(nuevoAncho)
+    }
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      localStorage.setItem(CLAVE_ANCHO_COL_NOMBRE, String(anchoColNombreRef.current))
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }
 
   useEffect(() => {
     const esSilencioso = actividades.length > 0 && prospectos.length > 0 && colaboradores.length > 0
@@ -82,18 +166,6 @@ export default function Cronograma() {
     ])
   }, [])
 
-  async function loadData() {
-    try {
-      await Promise.all([
-        refreshActividades(true),
-        refreshProspectos(true),
-        refreshColaboradores(true)
-      ])
-    } catch (err) {
-      console.error('Error cargando datos:', err)
-    }
-  }
-
   function mostrarToast(mensaje, tipo = 'error') {
     setToast({ mensaje, tipo })
     setTimeout(() => setToast(null), 3500)
@@ -102,20 +174,19 @@ export default function Cronograma() {
   // Filtrar prospectos en producción
   const prospectosProduccion = prospectos.filter(p => p.estado === '6A - En producción')
 
-  // FIX Bug #4: Calcular horas reales por prospecto en el mes actual (reemplaza Math.random)
-  const horasPorProspecto = useMemo(() => {
-    const desde = moment().startOf('month')
-    const hasta = moment().endOf('month')
-    const map = {}
-    actividades.forEach(act => {
-      const inicio = moment(act.inicio)
-      if (inicio.isBetween(desde, hasta, null, '[]')) {
-        const horas = parseFloat(moment(act.fin).diff(moment(act.inicio), 'hours', true).toFixed(1))
-        map[act.prospecto_nombre] = (map[act.prospecto_nombre] || 0) + horas
-      }
+  // `cronograma.prospecto_id` es la columna real (FK); acá se resuelve a un
+  // `prospecto_nombre` de solo lectura para el resto del componente (título
+  // de eventos, filtros, saldo de horas). Las filas sin prospecto real
+  // (categorías internas como "Consultora") traen la categoría codificada
+  // como prefijo "[Categoría] " en la descripción — ver
+  // extraerProspectoParaMostrar.
+  const actividadesResueltas = useMemo(() => (
+    actividades.map(act => {
+      const prospecto = prospectos.find(p => p.id === act.prospecto_id)
+      const { prospecto_nombre, descripcion } = extraerProspectoParaMostrar(prospecto?.nombre, act.descripcion)
+      return { ...act, prospecto_nombre, descripcion }
     })
-    return map
-  }, [actividades])
+  ), [actividades, prospectos])
 
   const getColor = (name) => {
     const colors = {
@@ -132,7 +203,7 @@ export default function Cronograma() {
   }
 
   // FIX Bug #1 + #2 + #3: Los tres filtros conectados a los eventos del calendario
-  const events = actividades
+  const events = actividadesResueltas
     .filter(act => {
       // Filtro por rango de fechas
       if (fechaDesde && moment(act.inicio).isBefore(moment(fechaDesde).startOf('day'))) return false
@@ -148,15 +219,6 @@ export default function Cronograma() {
       if (selectedProspectos.length > 0) {
         const prospecto = prospectos.find(p => p.nombre === act.prospecto_nombre)
         if (!prospecto || !selectedProspectos.includes(prospecto.id)) return false
-      }
-
-      // FIX Bug #3: Filtro por texto de búsqueda (antes no existía)
-      if (textoBusqueda) {
-        const texto = textoBusqueda.toLowerCase()
-        const coincide =
-          act.prospecto_nombre?.toLowerCase().includes(texto) ||
-          act.descripcion?.toLowerCase().includes(texto)
-        if (!coincide) return false
       }
 
       return true
@@ -222,17 +284,42 @@ export default function Cronograma() {
     setShowModal(true)
   }
 
+  // Todas las escrituras de acá para abajo son OPTIMISTAS: el estado local
+  // (`actividades` del contexto) se actualiza al toque, antes de que el
+  // servidor responda, para que la UI nunca quede esperando un round-trip.
+  // El guardado real corre en segundo plano; si falla, se revierte el
+  // cambio local y se avisa con un toast.
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (moment(formData.fin).isBefore(moment(formData.inicio))) {
       mostrarToast('La fecha y hora de fin no puede ser anterior a la de inicio.')
       return
     }
+
+    const { prospecto_nombre, descripcion, ...resto } = formData
+    const resuelto = resolverProspectoParaGuardar(prospecto_nombre, descripcion, prospectos)
+    const payload = { ...resto, ...resuelto }
+    const esNuevo = !payload.id
+    const idOptimista = esNuevo ? `optimista-${Date.now()}` : payload.id
+    const anterior = esNuevo ? null : actividades.find(a => a.id === payload.id)
+
+    setShowModal(false)
+    setActividades(prev => (
+      esNuevo
+        ? [{ ...payload, id: idOptimista }, ...prev]
+        : prev.map(a => a.id === payload.id ? { ...a, ...payload } : a)
+    ))
+
     try {
-      await saveActividad(formData)
-      setShowModal(false)
-      loadData()
+      const guardada = await saveActividad(payload)
+      setActividades(prev => prev.map(a => a.id === idOptimista ? guardada : a))
     } catch (err) {
+      setActividades(prev => (
+        esNuevo
+          ? prev.filter(a => a.id !== idOptimista)
+          : prev.map(a => a.id === payload.id ? anterior : a)
+      ))
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo guardar la actividad. Intentá de nuevo.')
     }
@@ -241,47 +328,74 @@ export default function Cronograma() {
   // FIX Bug #7: Nueva función para eliminar la actividad
   async function handleDelete() {
     if (!confirm('¿Seguro que querés eliminar esta actividad?')) return
+    const idBorrado = formData.id
+    const anterior = actividades.find(a => a.id === idBorrado)
+
+    setShowModal(false)
+    setActividades(prev => prev.filter(a => a.id !== idBorrado))
+
     try {
-      await deleteActividad(formData.id)
-      setShowModal(false)
-      loadData()
+      await deleteActividad(idBorrado)
     } catch (err) {
+      if (anterior) setActividades(prev => [anterior, ...prev])
       mostrarToast('No se pudo eliminar la actividad. Intentá de nuevo.')
     }
   }
 
   const moveEvent = async ({ event, start, end }) => {
+    const anterior = event.resource
+    const resuelto = resolverProspectoParaGuardar(anterior.prospecto_nombre, anterior.descripcion, prospectos)
+    const updatedAct = {
+      ...anterior,
+      ...resuelto,
+      inicio: moment(start).toISOString(),
+      fin: moment(end).toISOString()
+    }
+
+    setActividades(prev => prev.map(a => a.id === anterior.id ? updatedAct : a))
+
     try {
-      const updatedAct = {
-        ...event.resource,
-        inicio: moment(start).toISOString(),
-        fin: moment(end).toISOString()
-      }
       await saveActividad(updatedAct)
-      loadData()
     } catch (err) {
+      setActividades(prev => prev.map(a => a.id === anterior.id ? anterior : a))
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo mover la actividad. Intentá de nuevo.')
     }
   }
 
   const resizeEvent = async ({ event, start, end }) => {
+    const anterior = event.resource
+    const resuelto = resolverProspectoParaGuardar(anterior.prospecto_nombre, anterior.descripcion, prospectos)
+    const updatedAct = {
+      ...anterior,
+      ...resuelto,
+      inicio: moment(start).toISOString(),
+      fin: moment(end).toISOString()
+    }
+
+    setActividades(prev => prev.map(a => a.id === anterior.id ? updatedAct : a))
+
     try {
-      const updatedAct = {
-        ...event.resource,
-        inicio: moment(start).toISOString(),
-        fin: moment(end).toISOString()
-      }
       await saveActividad(updatedAct)
-      loadData()
     } catch (err) {
+      setActividades(prev => prev.map(a => a.id === anterior.id ? anterior : a))
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo redimensionar la actividad. Intentá de nuevo.')
     }
   }
 
   return (
-    <div className="cronograma-layout">
+    <div className="cronograma-layout" style={{ '--ancho-panel-saldo': `${anchoPanelSaldo}px` }}>
+      {/* Divisor arrastrable del panel de saldo completo (no solo sus
+          columnas internas): abarca todo el alto del layout, pegado al
+          borde izquierdo del panel derecho. */}
+      <div
+        className="panel-resize-handle"
+        style={{ right: `${anchoPanelSaldo}px` }}
+        onMouseDown={iniciarResizePanelSaldo}
+        title="Arrastrá para ajustar el ancho del panel de saldo"
+      />
+
       {/* FIX Bug #10: Sistema de notificaciones */}
       {toast && (
         <div
@@ -298,112 +412,51 @@ export default function Cronograma() {
         </div>
       )}
 
-      {/* PANEL IZQUIERDO: FILTROS */}
-      <aside className="cronograma-sidebar left">
-        <div className="sidebar-section-refined">
-          {/* FIX Bug #1: Filtros de fecha conectados a estado */}
-          <div className="filter-group">
-            <label className="label-plain" htmlFor="filtro-desde">Desde</label>
-            <input
-              id="filtro-desde"
-              type="date"
-              value={fechaDesde}
-              onChange={e => setFechaDesde(e.target.value)}
-            />
-          </div>
-          <div className="filter-group" style={{ marginTop: '16px' }}>
-            <label className="label-plain" htmlFor="filtro-hasta">Hasta</label>
-            <input
-              id="filtro-hasta"
-              type="date"
-              value={fechaHasta}
-              onChange={e => setFechaHasta(e.target.value)}
-            />
-          </div>
-
-          <div className="filter-group" style={{ marginTop: '32px' }}>
-            <div className="section-header">
-              <label className="label-with-icon"><Users size={14} /> Personal</label>
-              <button className="btn-add-tag" onClick={() => setShowColabPicker(!showColabPicker)}>
-                <Plus size={14} />
-              </button>
-            </div>
-            <div className="tags-container">
-              {colaboradores.filter(c => selectedColab.includes(c.id)).map(c => (
-                <div key={c.id} className="tag active" onClick={() => setSelectedColab(prev => prev.filter(id => id !== c.id))}>
-                  {c.usuarios?.nombre} <X size={12} />
-                </div>
-              ))}
-            </div>
-            {showColabPicker && (
-              <div className="picker-dropdown">
-                {colaboradores.length === 0 ? (
-                  <div className="picker-empty">No hay colaboradores para asignar</div>
-                ) : (
-                  colaboradores.map(c => (
-                    <div key={c.id} className="picker-option" onClick={() => {
-                      if (!selectedColab.includes(c.id)) setSelectedColab([...selectedColab, c.id])
-                      setShowColabPicker(false)
-                    }}>
-                      {c.usuarios?.nombre} {c.usuarios?.apellido}
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* FIX Bug #2: El picker de prospectos existía pero no conectaba al filtro — ahora sí */}
-          <div className="filter-group" style={{ marginTop: '24px' }}>
-            <div className="section-header">
-              <label className="label-with-icon"><Target size={14} /> Prospectos</label>
-              <button className="btn-add-tag" onClick={() => setShowProsPicker(!showProsPicker)}>
-                <Plus size={14} />
-              </button>
-            </div>
-            <div className="tags-container">
-              {prospectos.filter(p => selectedProspectos.includes(p.id)).map(p => (
-                <div key={p.id} className="tag active" onClick={() => setSelectedProspectos(prev => prev.filter(id => id !== p.id))}>
-                  {p.nombre} <X size={12} />
-                </div>
-              ))}
-            </div>
-            {showProsPicker && (
-              <div className="picker-dropdown">
-                {prospectosProduccion.length === 0 ? (
-                  <div className="picker-empty">No hay prospectos en producción</div>
-                ) : (
-                  prospectosProduccion.map(p => (
-                    <div key={p.id} className="picker-option" onClick={() => {
-                      if (!selectedProspectos.includes(p.id)) setSelectedProspectos([...selectedProspectos, p.id])
-                      setShowProsPicker(false)
-                    }}>
-                      {p.nombre}
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </aside>
-
       {/* CENTRO: CALENDARIO */}
       <main className="cronograma-main">
-        <header className="calendar-header">
-          {/* FIX Bug #3: Buscador conectado a estado */}
-          <div className="search-minimal">
-            <Search size={16} />
-            <input
-              type="text"
-              placeholder="Buscar Cronograma..."
-              value={textoBusqueda}
-              onChange={e => setTextoBusqueda(e.target.value)}
-            />
+        {/* BARRA DE FILTROS (fecha, personal, prospectos) */}
+        <header className="cronograma-filtros-bar">
+          <div className="filtro-fechas">
+            {/* FIX Bug #1: Filtros de fecha conectados a estado */}
+            <div className="filter-group">
+              <label className="label-plain" htmlFor="filtro-desde">Desde</label>
+              <input
+                id="filtro-desde"
+                type="date"
+                value={fechaDesde}
+                onChange={e => setFechaDesde(e.target.value)}
+              />
+            </div>
+            <div className="filter-group">
+              <label className="label-plain" htmlFor="filtro-hasta">Hasta</label>
+              <input
+                id="filtro-hasta"
+                type="date"
+                value={fechaHasta}
+                onChange={e => setFechaHasta(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="header-actions">
-            {/* FIX Bug #9: Eliminado el "Productividad: 92%" hardcodeado */}
-          </div>
+
+          <FiltroMultiSelect
+            icon={<Users size={14} />}
+            label="Personal"
+            options={colaboradores}
+            selectedIds={selectedColab}
+            onChange={setSelectedColab}
+            getLabel={c => `${c.nombre} ${c.apellido || ''}`.trim()}
+            emptyMessage="No hay colaboradores para asignar"
+          />
+
+          {/* FIX Bug #2: El picker de prospectos existía pero no conectaba al filtro — ahora sí */}
+          <FiltroMultiSelect
+            icon={<Target size={14} />}
+            label="Prospectos"
+            options={prospectosProduccion}
+            selectedIds={selectedProspectos}
+            onChange={setSelectedProspectos}
+            emptyMessage="No hay prospectos en producción"
+          />
         </header>
 
         <div className="calendar-container giant">
@@ -472,33 +525,40 @@ export default function Cronograma() {
         </div>
       </main>
 
-      {/* PANEL DERECHO: CUMPLIMIENTO */}
+      {/* PANEL DERECHO: SALDO DE HORAS POR CLIENTE */}
       <aside className="cronograma-sidebar right">
         <div className="sidebar-section">
           <div className="section-header">
-            {/* FIX Bug #4: Título honesto — horas reales del mes, no "cumplimiento" inventado */}
-            <h3>Hs. Agendadas — Mes Actual</h3>
+            <h3>Saldo de Horas — Mes Actual</h3>
           </div>
 
-          <div className="compliance-list">
+          <div className="compliance-list" style={{ '--ancho-col-nombre': `${anchoColNombreAplicado}px` }}>
+            <div
+              className="col-resize-handle"
+              style={{ left: `${anchoColNombreAplicado}px` }}
+              onMouseDown={iniciarResizeColNombre}
+              title="Arrastrá para ajustar el ancho de la columna Prospecto"
+            />
             <div className="list-header">
               <span>Prospecto</span>
-              <span>Horas</span>
+              <span>Saldo</span>
+              <span>Días</span>
             </div>
-            {/* FIX Bug #4: Reemplaza Math.random() con horas reales calculadas */}
-            {prospectos.slice(0, 8).map(p => {
-              const horas = horasPorProspecto[p.nombre] || 0
+            {prospectosProduccion.length === 0 && (
+              <div className="picker-empty">No hay prospectos en producción</div>
+            )}
+            {prospectosProduccion.map(p => {
+              const saldo = calcularSaldoHoras(p, actividadesResueltas)
+              const dias = calcularDiasDesdeUltimaReunion(actividadesResueltas, p.nombre)
               return (
                 <div key={p.id} className="compliance-item">
                   <span className="p-name">{p.nombre}</span>
-                  <div className="p-saldo-wrapper">
-                    <span className={`p-saldo ${horas === 0 ? 'negative' : ''}`}>
-                      {horas > 0 ? `${horas}h` : '0h'}
-                    </span>
-                    <div className="mini-progress">
-                      <div className="bar" style={{ width: `${Math.min((horas / 40) * 100, 100)}%` }}></div>
-                    </div>
-                  </div>
+                  <span className={`p-saldo ${saldo != null && saldo < 0 ? 'negative' : ''}`}>
+                    {saldo != null ? `${saldo}h` : '—'}
+                  </span>
+                  <span className="p-days" title={dias == null ? 'Sin reuniones registradas' : `Hace ${dias} día(s)`}>
+                    {dias != null ? `${dias}d` : '—'}
+                  </span>
                 </div>
               )
             })}
@@ -567,7 +627,7 @@ export default function Cronograma() {
                   <select value={formData.responsable_id} onChange={e => setFormData({ ...formData, responsable_id: e.target.value })} required>
                     <option value="">Seleccionar responsable...</option>
                     {colaboradores.map(c => (
-                      <option key={c.id} value={c.id}>{c.usuarios?.nombre} {c.usuarios?.apellido}</option>
+                      <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
                     ))}
                   </select>
                 </div>
