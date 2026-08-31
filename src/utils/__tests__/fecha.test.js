@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sumarDiasHabiles, sumarDias, sumarMeses } from '../fecha'
+import { sumarDiasHabiles, sumarDias, sumarMeses, diasDesde } from '../fecha'
 
 // sumarDiasHabiles: suma N días hábiles salteando SOLO sábados y domingos.
 // Debe quedar sincronizada con la función SQL apsol_sumar_dias_habiles.
@@ -70,6 +70,39 @@ describe('sumarDiasHabiles', () => {
   it('no corre el día en zona horaria negativa (mismo criterio local que sumarDias)', () => {
     // Regresión del bug de toISOString(): armar la fecha por componentes locales.
     expect(sumarDiasHabiles('2026-03-01', 0)).toBe('2026-03-01')
+  })
+})
+
+// diasDesde: días corridos entre una fecha 'YYYY-MM-DD' y HOY (o una fecha
+// de referencia), parseando SIEMPRE en hora local. Bug real: con
+// `new Date('2026-08-31')` (UTC) en Argentina (UTC-3), una factura emitida
+// hoy mostraba "Retraso: 1 Días" el mismo día que se emitía.
+describe('diasDesde', () => {
+  it('el mismo día devuelve 0 (aunque la referencia tenga hora)', () => {
+    expect(diasDesde('2026-08-31', new Date(2026, 7, 31, 9, 30))).toBe(0)
+    expect(diasDesde('2026-08-31', new Date(2026, 7, 31, 23, 59))).toBe(0)
+  })
+
+  it('un día después devuelve 1', () => {
+    expect(diasDesde('2026-08-31', new Date(2026, 8, 1, 0, 1))).toBe(1)
+  })
+
+  it('una fecha futura devuelve negativo', () => {
+    expect(diasDesde('2026-09-10', new Date(2026, 7, 31))).toBe(-10)
+  })
+
+  it('cuenta bien cruzando fin de mes', () => {
+    expect(diasDesde('2026-08-28', new Date(2026, 8, 3))).toBe(6)
+  })
+
+  it('tolera un string ISO con hora (recorta la parte de fecha)', () => {
+    expect(diasDesde('2026-08-31T00:00:00', new Date(2026, 7, 31))).toBe(0)
+  })
+
+  it('devuelve null si la fecha no es válida', () => {
+    expect(diasDesde('', new Date())).toBeNull()
+    expect(diasDesde(null, new Date())).toBeNull()
+    expect(diasDesde('31/08/2026', new Date())).toBeNull()
   })
 })
 

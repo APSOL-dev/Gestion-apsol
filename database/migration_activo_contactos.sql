@@ -11,6 +11,13 @@ ALTER TABLE apsol_private.contactos
 -- agregarla ahí también para que el cliente (PostgREST) la vea. Va al
 -- final del SELECT a propósito: CREATE OR REPLACE VIEW no permite
 -- reordenar/insertar columnas en el medio, solo agregar al final.
-CREATE OR REPLACE VIEW public.apsol_contactos AS
+--
+-- IMPORTANTE: hay que re-declarar WITH (security_invoker = true). Sin eso,
+-- CREATE OR REPLACE VIEW deja reloptions en NULL y la vista pasa a correr
+-- con los privilegios del dueño (postgres), salteando la RLS de
+-- apsol_private.contactos y exponiendo todo al rol anon. Ver
+-- migration_fix_contactos_security_invoker.sql.
+CREATE OR REPLACE VIEW public.apsol_contactos
+WITH (security_invoker = true) AS
 SELECT id, empresa_id, nombre, apellido, telefono, email, cargo, area, created_at, activo
 FROM apsol_private.contactos;

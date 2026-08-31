@@ -70,6 +70,25 @@ export function sumarDias(fechaStr, dias) {
 }
 
 /**
+ * Días corridos entre `fechaStr` ('YYYY-MM-DD', tolera sufijo 'T...') y
+ * `hoy` (por defecto ahora). Positivo si `fechaStr` es pasada, negativo si
+ * es futura, 0 el mismo día. Parsea SIEMPRE en hora local: con
+ * `new Date('2026-08-31')` (UTC) en husos negativos como Argentina, una
+ * factura emitida hoy figuraba como "Retraso: 1 Días" el mismo día.
+ * @param {string} fechaStr
+ * @param {Date} [hoy]
+ * @returns {number|null}  null si `fechaStr` no es una fecha válida
+ */
+export function diasDesde(fechaStr, hoy = new Date()) {
+  const soloFecha = String(fechaStr || '').split('T')[0]
+  if (!esFechaCompleta(soloFecha)) return null
+  const [anio, mes, dia] = soloFecha.split('-').map(Number)
+  const desde = new Date(anio, mes - 1, dia)
+  const ref = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
+  return Math.round((ref - desde) / 86_400_000)
+}
+
+/**
  * Suma `n` días HÁBILES a una fecha 'YYYY-MM-DD', salteando únicamente
  * sábados y domingos (no contempla feriados). Se usa para agendar la
  * "próxima notificación" de cobro de una factura: emisión + los días de

@@ -19,6 +19,16 @@ const DataContext = createContext({})
 
 // Cuánto vale una precarga antes de re-consultar la red. Ir y volver entre
 // pantallas dentro de esta ventana NO dispara más requests: usa lo cacheado.
+// Módulos que se precargan al iniciar sesión, para que moverse entre
+// pantallas se sienta instantáneo. Se precargan TODOS: mandar las consultas
+// en paralelo dejó de ser peligroso al restaurar el lock de auth
+// (ver src/lib/supabase.js) — el cuelgue nunca fue por volumen.
+export const MODULOS_PRECARGA_LOGIN = [
+  "facturas", "prospectos", "colaboradores", "empresas", "contactos",
+  "proyectos", "tickets", "preventivos", "capacitaciones", "planes",
+  "credenciales", "cuentasBancarias"
+]
+
 const TTL_MS = 90_000
 // Corte para que una request colgada (cliente de Supabase trabado en un
 // refresh de token) no deje una pantalla en "Cargando..." para siempre.
@@ -99,6 +109,22 @@ export function DataProvider({ children }) {
   const refreshValoresUVA = nuevoRefrescador('valoresUVA', getValoresUVA, setValoresUVA, setLoadingValoresUVA, setErrorValoresUVA)
   const refreshCuentasBancarias = nuevoRefrescador('cuentasBancarias', getCuentasBancarias, setCuentasBancarias, setLoadingCuentasBancarias, setErrorCuentasBancarias)
 
+  // Indexados por la misma clave que usa MODULOS_PRECARGA_LOGIN
+  const refrescadores = {
+    facturas: refreshFacturas,
+    prospectos: refreshProspectos,
+    colaboradores: refreshColaboradores,
+    empresas: refreshEmpresas,
+    contactos: refreshContactos,
+    proyectos: refreshProyectos,
+    tickets: refreshTickets,
+    preventivos: refreshPreventivos,
+    capacitaciones: refreshCapacitaciones,
+    planes: refreshPlanes,
+    credenciales: refreshCredenciales,
+    cuentasBancarias: refreshCuentasBancarias
+  }
+
   // Sincroniza en segundo plano las cotizaciones UVA faltantes desde la API
   // pública (Argentina Datos) al abrir la app. Solo inserta fechas que
   // todavía no existen en la base, así nunca duplica un día ya cargado.
@@ -113,17 +139,14 @@ export function DataProvider({ children }) {
     }
   }
 
-  // Precarga al iniciar sesión: SOLO los módulos que se usan siempre. El
-  // resto (proyectos, tickets, preventivos, capacitación, planes,
-  // credenciales, cuentas bancarias) se trae al entrar a su pantalla por
-  // primera vez, y con el TTL ya no se re-consulta en cada navegación.
+  // Precarga al iniciar sesión: TODOS los módulos, en paralelo. Cada uno
+  // pasa por crearRefrescador (TTL + single-flight + timeout), así que
+  // navegar después no vuelve a consultar la red dentro del TTL.
   useEffect(() => {
     if (user) {
-      refreshFacturas({ silencioso: true, forzar: true })
-      refreshProspectos({ silencioso: true, forzar: true })
-      refreshColaboradores({ silencioso: true, forzar: true })
-      refreshEmpresas({ silencioso: true, forzar: true })
-      refreshContactos({ silencioso: true, forzar: true })
+      for (const clave of MODULOS_PRECARGA_LOGIN) {
+        refrescadores[clave]?.({ silencioso: true, forzar: true })
+      }
       sincronizarValoresUVA()
     } else {
       // Limpiar datos y metadata de caché al cerrar sesión

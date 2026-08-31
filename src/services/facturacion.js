@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { redondear2 } from '../utils/formateo'
-import { sumarMeses, sumarDiasHabiles } from '../utils/fecha'
+import { sumarMeses, sumarDiasHabiles, fechaLocalISO, esFechaCompleta } from '../utils/fecha'
 import { notificarFacturacion } from './notificaciones'
 
 /**
@@ -52,6 +52,42 @@ export function calcularMontosFactura(factura, pagos = []) {
     monto_neto,
     saldo_pendiente: saldo_pendiente > 0 ? saldo_pendiente : 0
   }
+}
+
+/**
+ * Valida los campos obligatorios al CREAR una factura. Devuelve un array de
+ * mensajes (vacío = todo ok). Pura, se testea sin montar el componente.
+ *
+ *  - Nº de factura fiscal: obligatorio salvo "solo invoice" (ahí el nº se
+ *    autogenera).
+ *  - Período Desde y Hasta: ambos obligatorios.
+ *  - Contacto de cobro principal: obligatorio (el secundario no).
+ *  - Cuenta para depósito: obligatoria.
+ *  - Leyenda de la factura: obligatoria.
+ */
+export function validarFacturaParaGuardar(factura = {}) {
+  const errores = []
+  const txt = (v) => String(v ?? '').trim()
+
+  if (!factura.solo_invoice && !txt(factura.numero_factura)) {
+    errores.push('Falta el número de factura fiscal.')
+  }
+  if (!esFechaCompleta(txt(factura.periodo_desde).split('T')[0])) {
+    errores.push('Falta el período (Desde).')
+  }
+  if (!esFechaCompleta(txt(factura.periodo_hasta).split('T')[0])) {
+    errores.push('Falta el período (Hasta).')
+  }
+  if (!txt(factura.contacto_id)) {
+    errores.push('Falta el contacto de cobro principal.')
+  }
+  if (!txt(factura.cuenta_bancaria_id)) {
+    errores.push('Falta la cuenta para depósito.')
+  }
+  if (!txt(factura.leyenda)) {
+    errores.push('Falta la leyenda de la factura.')
+  }
+  return errores
 }
 
 /** 'YYYY-MM-DD' (o ISO con hora) -> 'DD/MM/YYYY'. Vacío si no matchea. */
@@ -369,29 +405,36 @@ export async function saveFactura(factura) {
       notificacionEnviada = false
     }
 
-    // Agendar el primer recordatorio de cobro: fecha de emisión + los días
-    // hábiles de espera de la empresa (sumarDiasHabiles: solo salta sáb/dom).
-    // Las siguientes fechas las recalcula el flujo de n8n tras cada envío,
-    // con la función SQL gemela apsol_sumar_dias_habiles. Un fallo acá nunca
-    // debe tirar abajo el alta, que ya está hecha.
+    // Post-alta, en una sola escritura:
+    //  - ultima_notificacion: el aviso "primera_vez" que se acaba de mandar
+    //    ES una notificación al cliente -> se registra su fecha (antes quedaba
+    //    en blanco aunque el aviso hubiera salido).
+    //  - proxima_notificacion: primer recordatorio de cobro = fecha de emisión
+    //    + los días hábiles de espera de la empresa (sumarDiasHabiles salta
+    //    sáb/dom). Las siguientes las recalcula n8n tras cada envío.
+    // Un fallo acá nunca debe tirar abajo el alta, que ya está hecha.
     const fechaEmision = (facturaCompleta?.fecha_emision || '').split('T')[0]
     const fechaProxima = sumarDiasHabiles(
       fechaEmision,
       resolverDiasEspera(facturaCompleta?.prospectos?.empresas)
     )
-    if (fechaProxima) {
+    const updatePostAlta = {}
+    if (notificacionEnviada) updatePostAlta.ultima_notificacion = fechaEmision || fechaLocalISO()
+    if (fechaProxima) updatePostAlta.proxima_notificacion = fechaProxima
+    if (Object.keys(updatePostAlta).length > 0) {
       try {
         await supabase
           .from('apsol_facturacion')
-          .update({ proxima_notificacion: fechaProxima })
+          .update(updatePostAlta)
           .eq('id', data.id)
       } catch (notifError) {
-        console.error('No se pudo agendar la próxima notificación de cobro:', notifError)
+        console.error('No se pudo agendar próxima/última notificación de cobro:', notifError)
       }
     }
 
     return {
       ...data,
+      ...updatePostAlta, // refleja ultima_notificacion / proxima_notificacion recién seteadas
       contacto_id: data.contacto_cobro_id,
       notificacionEnviada
     }

@@ -9,12 +9,22 @@ export async function getTickets() {
     .select(`
       *,
       proyectos:apsol_proyectos(nombre, prospectos:apsol_prospectos(empresas:apsol_empresas(nombre))),
-      colaboradores:apsol_colaboradores(nombre, apellido)
+      colaboradores:apsol_colaboradores(nombre_manual, apellido_manual, usuarios:apsol_usuarios(nombre, apellido))
     `)
     .order('fecha_creacion', { ascending: false })
 
   if (error) throw error
-  return data
+  // apsol_colaboradores no tiene nombre/apellido propios: el nombre real vive
+  // en apsol_usuarios y, para los colaboradores sin usuario, en *_manual. Se
+  // normaliza acá para que las pantallas sigan leyendo colaboradores.nombre.
+  return (data || []).map(t => t.colaboradores ? {
+    ...t,
+    colaboradores: {
+      ...t.colaboradores,
+      nombre: t.colaboradores.usuarios?.nombre || t.colaboradores.nombre_manual || '',
+      apellido: t.colaboradores.usuarios?.apellido || t.colaboradores.apellido_manual || ''
+    }
+  } : t)
 }
 
 export async function getTicketById(id) {

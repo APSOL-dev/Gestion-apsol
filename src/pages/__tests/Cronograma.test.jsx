@@ -59,7 +59,7 @@ vi.mock('../../services/cronograma', async () => {
     saveActividad: vi.fn(),
     deleteActividad: vi.fn(),
     getActividadesEnRango: vi.fn(),
-    getActividadesDelMes: vi.fn(),
+    getHorasDedicadasPorProspecto: vi.fn(),
     getUltimasReunionesPorProspecto: vi.fn()
   }
 })
@@ -131,12 +131,15 @@ function mockUseData(overrides = {}) {
 // Mockea los 3 servicios acotados del cronograma. Por defecto simula un
 // filtrado real por fecha (como haría el servidor), para poder probar que
 // cambiar "Desde"/"Hasta" realmente dispara una consulta nueva con otro
-// rango — no un filtro client-side como antes.
-function mockServiciosCronograma({ actividades = ACTIVIDADES_MOCK, reuniones = new Map() } = {}) {
+// rango — no un filtro client-side como antes. `horasDedicadas` es el Map
+// prospecto_id -> horas (lo que agrega server-side getHorasDedicadasPorProspecto,
+// ver services/cronograma.js) - el saldo es acumulado desde el inicio del
+// servicio, ya no "lo agendado este mes", así que no sale de `actividades`.
+function mockServiciosCronograma({ actividades = ACTIVIDADES_MOCK, reuniones = new Map(), horasDedicadas = new Map() } = {}) {
   cronogramaService.getActividadesEnRango.mockImplementation((desde, hasta) => (
     Promise.resolve(actividades.filter(a => moment(a.inicio).isBetween(moment(desde), moment(hasta), null, '[]')))
   ))
-  cronogramaService.getActividadesDelMes.mockResolvedValue(actividades)
+  cronogramaService.getHorasDedicadasPorProspecto.mockResolvedValue(horasDedicadas)
   cronogramaService.getUltimasReunionesPorProspecto.mockResolvedValue(reuniones)
 }
 
@@ -496,25 +499,35 @@ describe('Cronograma', () => {
     })
   })
 
-  test('calcula el saldo de horas restando lo agendado en el mes de las horas contratadas', async () => {
-    const inicio = moment().startOf('month').add(2, 'days').hour(9).minute(0)
-    const fin = inicio.clone().add(3, 'hours')
+  test('muestra "—" de saldo cuando el prospecto no tiene fecha de inicio de servicio', async () => {
     mockUseData({
       prospectos: [{ id: 'pros-4', nombre: 'Open Pack', estado: '6A - En producción', hs_mensuales: 10 }]
     })
-    mockServiciosCronograma({
-      actividades: [{
-        id: '9', prospecto_id: 'pros-4', descripcion: 'Trabajo',
-        inicio: inicio.format(), fin: fin.format(),
-        responsable_id: 'col-1', reunion_cliente: false
-      }]
-    })
+    mockServiciosCronograma({ horasDedicadas: new Map([['pros-4', 5]]) })
 
     const { container } = render(<Cronograma />)
     await waitFor(() => {
       const item = container.querySelector('.compliance-item')
-      // 10h contratadas - 3h agendadas = 7h de saldo
-      expect(item).toHaveTextContent('7h')
+      expect(item).toHaveTextContent('—')
+    })
+  })
+
+  test('calcula el saldo acumulado desde el inicio del servicio, no lo agendado este mes', async () => {
+    // Mismo cálculo que hace la función real (calcularSaldoHoras) - acá
+    // solo se arma el escenario y se verifica que el panel muestre
+    // exactamente lo que esa función (ya probada aparte, con casos reales
+    // verificados contra el histórico) calcularía para estos datos.
+    const inicioServicio = moment().subtract(4, 'weeks').format('YYYY-MM-DD')
+    const prospecto = { id: 'pros-4', nombre: 'Open Pack', estado: '6A - En producción', hs_mensuales: 16, inicio_servicio: inicioServicio }
+    mockUseData({ prospectos: [prospecto] })
+    mockServiciosCronograma({ horasDedicadas: new Map([['pros-4', 20]]) })
+
+    const esperado = cronogramaService.calcularSaldoHoras(prospecto, 20)
+
+    const { container } = render(<Cronograma />)
+    await waitFor(() => {
+      const item = container.querySelector('.compliance-item')
+      expect(item).toHaveTextContent(`${esperado}h`)
     })
   })
 
@@ -528,45 +541,59 @@ describe('Cronograma', () => {
   })
 
   test('muestra los días transcurridos desde la última reunión con cliente', async () => {
-    const fechaReunion = moment().subtract(5, 'days').hour(10).minute(0)
-    mockUseData({
-      prospectos: [{ id: 'pros-5', nombre: 'DG 2026', estado: '6A - En producción' }]
-    })
+    // Fecha fija en UTC (no relativa a "ahora" ni al huso horario de quien
+    // corre el test) - calcularDiasDesde ya está probado a fondo aparte;
+    // acá solo se verifica que el panel muestre lo que esa función calcula.
+    const fechaReunion = '2026-08-25T10:00:00Z'
+    const prospecto = { id: 'pros-5', nombre: 'DG 2026', estado: '6A - En producción' }
+    mockUseData({ prospectos: [prospecto] })
     mockServiciosCronograma({
       actividades: [],
-      reuniones: new Map([['pros-5', fechaReunion.format()]])
+      reuniones: new Map([['pros-5', fechaReunion]])
     })
+
+    const esperado = cronogramaService.calcularDiasDesde(fechaReunion, prospecto.inicio_servicio)
 
     const { container } = render(<Cronograma />)
     await waitFor(() => {
       const item = container.querySelector('.compliance-item')
-      expect(item.querySelector('.p-days')).toHaveTextContent('5d')
+      expect(item.querySelector('.p-days')).toHaveTextContent(`${esperado}d`)
+    })
+  })
+
+  test('sin ninguna reunión registrada, muestra los días desde el inicio de servicio (fallback de la fórmula real)', async () => {
+    const inicioServicio = moment.utc().subtract(10, 'days').format('YYYY-MM-DD')
+    const prospecto = { id: 'pros-6', nombre: 'Sin Reuniones', estado: '6A - En producción', inicio_servicio: inicioServicio }
+    mockUseData({ prospectos: [prospecto] })
+    mockServiciosCronograma({ actividades: [] }) // reuniones: Map vacío por defecto
+
+    const esperado = cronogramaService.calcularDiasDesde(undefined, inicioServicio)
+
+    const { container } = render(<Cronograma />)
+    await waitFor(() => {
+      const item = container.querySelector('.compliance-item')
+      expect(item.querySelector('.p-days')).toHaveTextContent(`${esperado}d`)
     })
   })
 
   test('por defecto ordena el panel de saldo de horas de más negativo a más positivo', async () => {
-    const inicioMes = moment().startOf('month').add(1, 'day').hour(9).minute(0)
+    // Mismo hs_mensuales/inicio_servicio (misma base "horas teóricas") en
+    // los tres, así el orden del saldo es exactamente el orden de las
+    // horas dedicadas que se le asigna a cada uno.
+    const inicioServicio = moment().subtract(4, 'weeks').format('YYYY-MM-DD')
     mockUseData({
       prospectos: [
-        { id: 'p-alto', nombre: 'Saldo Alto', estado: '6A - En producción', hs_mensuales: 10 },
-        { id: 'p-medio', nombre: 'Saldo Medio Negativo', estado: '6A - En producción', hs_mensuales: 5 },
-        { id: 'p-bajo', nombre: 'Saldo Muy Negativo', estado: '6A - En producción', hs_mensuales: 5 }
+        { id: 'p-alto', nombre: 'Saldo Alto', estado: '6A - En producción', hs_mensuales: 10, inicio_servicio: inicioServicio },
+        { id: 'p-medio', nombre: 'Saldo Medio Negativo', estado: '6A - En producción', hs_mensuales: 10, inicio_servicio: inicioServicio },
+        { id: 'p-bajo', nombre: 'Saldo Muy Negativo', estado: '6A - En producción', hs_mensuales: 10, inicio_servicio: inicioServicio }
       ]
     })
     mockServiciosCronograma({
-      actividades: [
-        // Saldo Alto: sin actividades -> 10h
-        {
-          id: 'a-medio', prospecto_id: 'p-medio', descripcion: 'Trabajo',
-          inicio: inicioMes.format(), fin: inicioMes.clone().add(8, 'hours').format(),
-          responsable_id: 'col-1', reunion_cliente: false
-        }, // 5 - 8 = -3h
-        {
-          id: 'a-bajo', prospecto_id: 'p-bajo', descripcion: 'Trabajo',
-          inicio: inicioMes.format(), fin: inicioMes.clone().add(20, 'hours').format(),
-          responsable_id: 'col-1', reunion_cliente: false
-        } // 5 - 20 = -15h
-      ]
+      horasDedicadas: new Map([
+        ['p-alto', 100],
+        ['p-medio', 5],
+        ['p-bajo', 0]
+      ])
     })
 
     const { container } = render(<Cronograma />)
@@ -577,13 +604,19 @@ describe('Cronograma', () => {
   })
 
   test('un clic en el encabezado "Saldo" invierte el orden del panel', async () => {
+    const inicioServicio = moment().subtract(4, 'weeks').format('YYYY-MM-DD')
     mockUseData({
       prospectos: [
-        { id: 'p-alto', nombre: 'Saldo Alto', estado: '6A - En producción', hs_mensuales: 10 },
-        { id: 'p-bajo', nombre: 'Saldo Bajo', estado: '6A - En producción', hs_mensuales: -5 }
+        { id: 'p-alto', nombre: 'Saldo Alto', estado: '6A - En producción', hs_mensuales: 10, inicio_servicio: inicioServicio },
+        { id: 'p-bajo', nombre: 'Saldo Bajo', estado: '6A - En producción', hs_mensuales: 10, inicio_servicio: inicioServicio }
       ]
     })
-    mockServiciosCronograma({ actividades: [] })
+    mockServiciosCronograma({
+      horasDedicadas: new Map([
+        ['p-alto', 100],
+        ['p-bajo', 0]
+      ])
+    })
 
     const { container } = render(<Cronograma />)
     await waitFor(() => {
@@ -789,7 +822,6 @@ describe('Cronograma', () => {
     test('crear una actividad la muestra en el calendario antes de que el servidor confirme el guardado', async () => {
       let listaActual = [...ACTIVIDADES_MOCK]
       cronogramaService.getActividadesEnRango.mockImplementation(() => Promise.resolve(listaActual))
-      cronogramaService.getActividadesDelMes.mockImplementation(() => Promise.resolve(listaActual))
 
       let resolverGuardado
       cronogramaService.saveActividad.mockImplementation(() => new Promise(resolve => { resolverGuardado = resolve }))

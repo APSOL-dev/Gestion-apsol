@@ -2,57 +2,101 @@ import moment from 'moment'
 import { supabase } from '../lib/supabase'
 
 /**
- * Suma las horas de las actividades agendadas para un prospecto dentro del
- * mes de `fechaReferencia`.
- * @param {Array} actividades
- * @param {string} prospectoNombre
+ * Número de semana de `momento` con el mismo criterio que WEEKNUM() de
+ * Google Sheets/AppSheet en su modo por defecto (tipo 1): las semanas
+ * arrancan en domingo, y la semana 1 es la que contiene el 1° de enero
+ * (aunque empiece antes, en diciembre del año anterior).
+ * @param {moment.Moment} momento  ya en UTC (ver calcularHorasTeoricas)
+ * @returns {number}
+ */
+function weekNumEstiloAppSheet(momento) {
+  const enero1 = momento.clone().startOf('year')
+  const inicioSemana1 = enero1.clone().subtract(enero1.day(), 'days') // domingo on/antes del 1° de enero
+  const dias = momento.clone().startOf('day').diff(inicioSemana1.startOf('day'), 'days')
+  return Math.floor(dias / 7) + 1
+}
+
+/**
+ * Horas que el prospecto "debería" haber consumido desde que arrancó el
+ * servicio, a razón de `hsMensuales` por mes — la misma fórmula que usaba
+ * AppSheet (columna virtual "Hs Teoricas"), reconstruida y verificada a
+ * mano contra el histórico real:
+ *
+ *   semanas = (WEEKNUM(HOY()) + (año(HOY()) - año(inicio)) * 52) - WEEKNUM(inicio)
+ *   Hs Teoricas = semanas * (hsMensuales / 4.33)
+ *
+ * (4.33 ≈ 52 semanas / 12 meses: es la conversión de una tarifa mensual a
+ * una tarifa semanal que usaba la fórmula original.) HOY() de AppSheet se
+ * evalúa en UTC, no en la zona horaria local del navegador — mismo detalle
+ * que calcularDiasDesde, por eso acá también todo es moment.utc().
+ * @param {number|string} hsMensuales
+ * @param {string|Date} inicioServicio
  * @param {Date} [fechaReferencia]
  * @returns {number}
  */
-function horasUsadasEnElMes(actividades, prospectoNombre, fechaReferencia = new Date()) {
-  const desde = moment(fechaReferencia).startOf('month')
-  const hasta = moment(fechaReferencia).endOf('month')
-  return actividades
-    .filter(act => act.prospecto_nombre === prospectoNombre)
-    .filter(act => moment(act.inicio).isBetween(desde, hasta, null, '[]'))
-    .reduce((total, act) => total + moment(act.fin).diff(moment(act.inicio), 'hours', true), 0)
+export function calcularHorasTeoricas(hsMensuales, inicioServicio, fechaReferencia = new Date()) {
+  const hoy = moment.utc(fechaReferencia)
+  const inicio = moment.utc(inicioServicio)
+  const semanas = (weekNumEstiloAppSheet(hoy) + (hoy.year() - inicio.year()) * 52) - weekNumEstiloAppSheet(inicio)
+  return semanas * (Number(hsMensuales) / 4.33)
 }
 
 /**
- * Calcula el saldo de horas de un prospecto: horas mensuales contratadas
- * (`hs_mensuales`) menos las horas ya agendadas en el mes de `fechaReferencia`.
- * Devuelve `null` cuando el prospecto no tiene un abono de horas configurado,
- * para no mostrar un saldo negativo engañoso en clientes sin bolsa de horas.
+ * Calcula el saldo de horas de un prospecto: horas efectivamente dedicadas
+ * en TODO el historial (`horasDedicadas`, ver `getHorasDedicadasPorProspecto`)
+ * menos las horas teóricas que le correspondían desde el inicio del
+ * servicio (ver `calcularHorasTeoricas`). Es un saldo acumulado, no se
+ * resetea cada mes — igual que en AppSheet, un mes flojo se puede
+ * compensar (o arrastrar en contra) en los siguientes.
  *
- * `actividades` se espera ya acotado al mes en cuestión (ver
- * `getActividadesDelMes`) — el filtro de mes de acá adentro es una
- * salvaguarda, no hace falta traer el historial completo.
- * @param {{nombre: string, hs_mensuales: number|null|undefined}} prospecto
- * @param {Array} actividades
+ * Devuelve `null` cuando el prospecto no tiene un abono de horas
+ * configurado, o no tiene fecha de inicio de servicio (no hay desde cuándo
+ * contar), para no mostrar un saldo engañoso.
+ * @param {{hs_mensuales: number|null|undefined, inicio_servicio: string|null|undefined}} prospecto
+ * @param {number|null|undefined} horasDedicadas  del Map que devuelve getHorasDedicadasPorProspecto
  * @param {Date} [fechaReferencia]
  * @returns {number|null}
  */
-export function calcularSaldoHoras(prospecto, actividades, fechaReferencia = new Date()) {
+export function calcularSaldoHoras(prospecto, horasDedicadas, fechaReferencia = new Date()) {
   if (prospecto.hs_mensuales == null) return null
-  const contratadas = Number(prospecto.hs_mensuales)
-  const usadas = horasUsadasEnElMes(actividades, prospecto.nombre, fechaReferencia)
-  return Math.round((contratadas - usadas) * 10) / 10
+  if (!prospecto.inicio_servicio) return null
+  const hsTeoricas = calcularHorasTeoricas(prospecto.hs_mensuales, prospecto.inicio_servicio, fechaReferencia)
+  const dedicadas = Number(horasDedicadas) || 0
+  return Math.round((dedicadas - hsTeoricas) * 10) / 10
 }
 
 /**
- * Calcula cuántos días pasaron desde `fechaUltimaReunion` hasta
- * `fechaReferencia`. Devuelve `null` si no hay fecha (nunca hubo reunión
- * registrada) o si la fecha es posterior a la referencia (una reunión
- * agendada a futuro no cuenta como "última reunión" todavía).
+ * Calcula "días desde la última reunión", reproduciendo la fórmula real de
+ * AppSheet (columna virtual de Prospectos):
+ *   IF(no hay ninguna reunión con cliente,
+ *      [Días desde el inicio de servicio],
+ *      HOUR(HOY() - MAX(fecha de la última reunión)) / 24)
+ *
+ * Dos detalles no obvios, verificados a mano contra el histórico real:
+ *  - HOY() se evalúa en UTC, no en la zona horaria local del navegador.
+ *  - Conserva la hora exacta de la reunión (no trunca a medianoche) - una
+ *    reunión de la tarde puede dar un día menos que un diff de calendario
+ *    puro. Por eso acá todo usa moment.utc(), nunca moment() a secas.
+ *  - Una reunión agendada a futuro da un número NEGATIVO (así lo muestra
+ *    AppSheet), no se nulea.
+ *  - Sin ninguna reunión registrada nunca, cae al fallback: días desde
+ *    `fechaInicioServicio` (una fecha pura, sin hora, así que ahí sí es un
+ *    diff de calendario simple).
  * @param {string|null|undefined} fechaUltimaReunion
+ * @param {string|null|undefined} fechaInicioServicio
  * @param {Date} [fechaReferencia]
  * @returns {number|null}
  */
-export function calcularDiasDesde(fechaUltimaReunion, fechaReferencia = new Date()) {
-  if (!fechaUltimaReunion) return null
-  const ultima = moment(fechaUltimaReunion)
-  if (ultima.isAfter(fechaReferencia)) return null
-  return moment(fechaReferencia).startOf('day').diff(ultima.startOf('day'), 'days')
+export function calcularDiasDesde(fechaUltimaReunion, fechaInicioServicio, fechaReferencia = new Date()) {
+  const hoyMedianocheUTC = moment.utc(fechaReferencia).startOf('day')
+
+  if (!fechaUltimaReunion) {
+    if (!fechaInicioServicio) return null
+    return hoyMedianocheUTC.diff(moment.utc(fechaInicioServicio).startOf('day'), 'days')
+  }
+
+  const horas = hoyMedianocheUTC.diff(moment.utc(fechaUltimaReunion), 'hours', true)
+  return Math.round(horas / 24)
 }
 
 /**
@@ -120,15 +164,22 @@ export async function getActividadesEnRango(desde, hasta) {
 }
 
 /**
- * Trae las actividades del mes de `fechaReferencia` (por defecto, hoy).
- * Usada para el saldo de horas del panel derecho, que siempre es "el mes
- * actual" sin importar qué rango esté mirando el calendario.
- * @param {Date} [fechaReferencia]
+ * Trae, por prospecto, el total de horas dedicadas en TODO el historial
+ * (`duracion_horas * multiplicador`, sumado server-side vía RPC — no tiene
+ * sentido bajar al cliente miles de filas de actividades solo para
+ * sumarlas). Es el insumo de `calcularSaldoHoras`, que es un saldo
+ * acumulado desde el inicio del servicio, no mensual.
+ * @returns {Promise<Map<string, number>>}  prospecto_id -> horas dedicadas
  */
-export async function getActividadesDelMes(fechaReferencia = new Date()) {
-  const desde = moment(fechaReferencia).startOf('month').toISOString()
-  const hasta = moment(fechaReferencia).endOf('month').toISOString()
-  return getActividadesEnRango(desde, hasta)
+export async function getHorasDedicadasPorProspecto() {
+  const { data, error } = await supabase.rpc('get_horas_dedicadas_por_prospecto')
+  if (error) throw error
+
+  const horasPorProspecto = new Map()
+  for (const fila of data || []) {
+    horasPorProspecto.set(fila.prospecto_id, Number(fila.horas_dedicadas) || 0)
+  }
+  return horasPorProspecto
 }
 
 /**
@@ -140,19 +191,21 @@ export async function getActividadesDelMes(fechaReferencia = new Date()) {
  * @returns {Promise<Map<string, string>>}  prospecto_id -> fecha ISO de la última reunión
  */
 export async function getUltimasReunionesPorProspecto(fechaReferencia = new Date()) {
-  const { data, error } = await supabase
-    .from('apsol_cronograma')
-    .select('prospecto_id, inicio')
-    .eq('reunion_cliente', true)
-    .lte('inicio', moment(fechaReferencia).toISOString())
-    .order('inicio', { ascending: false })
+  // Vía RPC (SECURITY DEFINER, ver database/migration_saldo_horas_acumulado.sql)
+  // y no una consulta directa a apsol_cronograma: esa vista queda sujeta a
+  // la RLS que protege la privacidad de la agenda de Adrian, y "días desde
+  // la última reunión" tiene que ser el mismo número para cualquiera que
+  // mire el panel, no depender de quién cargó esa reunión puntual.
+  const { data, error } = await supabase.rpc('get_ultima_reunion_por_prospecto', {
+    p_hasta: moment(fechaReferencia).toISOString()
+  })
 
   if (error) throw error
 
   const ultimaPorProspecto = new Map()
-  for (const fila of data) {
-    if (fila.prospecto_id && !ultimaPorProspecto.has(fila.prospecto_id)) {
-      ultimaPorProspecto.set(fila.prospecto_id, fila.inicio)
+  for (const fila of data || []) {
+    if (fila.prospecto_id) {
+      ultimaPorProspecto.set(fila.prospecto_id, fila.ultima_reunion)
     }
   }
   return ultimaPorProspecto
@@ -206,6 +259,14 @@ function limpiarPayloadCronograma(actividad) {
 
 export async function saveActividad(actividad) {
   const payload = limpiarPayloadCronograma(actividad)
+  // No hay ningún trigger en la base que calcule esto solo (se verificó) -
+  // si no se manda acá, la columna queda NULL y el saldo de horas la
+  // ignora en silencio (la cuenta como 0h). Se recalcula siempre a partir
+  // de inicio/fin, tanto al crear como al editar (por si cambió el
+  // horario vía drag/resize del calendario).
+  if (payload.inicio && payload.fin) {
+    payload.duracion_horas = moment(payload.fin).diff(moment(payload.inicio), 'hours', true)
+  }
   if (actividad.id) {
     // Edición (UPDATE)
     const { data, error } = await supabase

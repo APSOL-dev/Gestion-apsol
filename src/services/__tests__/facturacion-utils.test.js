@@ -398,6 +398,77 @@ describe('fechaReferenciaUva', () => {
 })
 
 // ──────────────────────────────────────────────────────────────
+// validarFacturaParaGuardar: campos obligatorios al CREAR una factura.
+// ──────────────────────────────────────────────────────────────
+describe('validarFacturaParaGuardar', () => {
+  let validarFacturaParaGuardar
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    validarFacturaParaGuardar = mod.validarFacturaParaGuardar
+  })
+
+  const completa = {
+    solo_invoice: true,
+    periodo_desde: '2026-08-01',
+    periodo_hasta: '2026-09-01',
+    contacto_id: 'c1',
+    cuenta_bancaria_id: 'cb1',
+    leyenda: 'Mantenimiento mensual',
+  }
+
+  test('una factura con todos los obligatorios no da errores', () => {
+    expect(validarFacturaParaGuardar(completa)).toEqual([])
+  })
+
+  test('nº de factura fiscal: obligatorio si NO es "solo invoice"', () => {
+    expect(validarFacturaParaGuardar({ ...completa, solo_invoice: false, numero_factura: '' }))
+      .toContain('Falta el número de factura fiscal.')
+    expect(validarFacturaParaGuardar({ ...completa, solo_invoice: false, numero_factura: 'A-0001-00012345' }))
+      .toEqual([])
+  })
+
+  test('nº de factura NO se exige cuando es "solo invoice" (se autogenera)', () => {
+    expect(validarFacturaParaGuardar({ ...completa, solo_invoice: true, numero_factura: '' }))
+      .toEqual([])
+  })
+
+  test('período Desde y Hasta son ambos obligatorios', () => {
+    expect(validarFacturaParaGuardar({ ...completa, periodo_desde: '' })).toContain('Falta el período (Desde).')
+    expect(validarFacturaParaGuardar({ ...completa, periodo_hasta: '' })).toContain('Falta el período (Hasta).')
+  })
+
+  test('contacto de cobro principal obligatorio; el secundario no', () => {
+    expect(validarFacturaParaGuardar({ ...completa, contacto_id: '' }))
+      .toContain('Falta el contacto de cobro principal.')
+    // sin contacto secundario -> sigue siendo válida
+    expect(validarFacturaParaGuardar({ ...completa, contacto_cobro2_id: '' })).toEqual([])
+  })
+
+  test('cuenta para depósito obligatoria', () => {
+    expect(validarFacturaParaGuardar({ ...completa, cuenta_bancaria_id: '' }))
+      .toContain('Falta la cuenta para depósito.')
+  })
+
+  test('leyenda obligatoria (y no vale solo espacios)', () => {
+    expect(validarFacturaParaGuardar({ ...completa, leyenda: '' })).toContain('Falta la leyenda de la factura.')
+    expect(validarFacturaParaGuardar({ ...completa, leyenda: '   ' })).toContain('Falta la leyenda de la factura.')
+  })
+
+  test('acumula todos los errores de una factura vacía', () => {
+    const errores = validarFacturaParaGuardar({ solo_invoice: false })
+    expect(errores).toEqual(expect.arrayContaining([
+      'Falta el número de factura fiscal.',
+      'Falta el período (Desde).',
+      'Falta el período (Hasta).',
+      'Falta el contacto de cobro principal.',
+      'Falta la cuenta para depósito.',
+      'Falta la leyenda de la factura.',
+    ]))
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
 // Tests de fecha local (evitar el corrimiento de día por UTC)
 // ──────────────────────────────────────────────────────────────
 describe('fechaLocalISO', () => {
@@ -1146,8 +1217,13 @@ describe('saveFactura', () => {
 
     await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 
-    // viernes 2026-08-28 + 4 días hábiles = jueves 2026-09-03
-    expect(updateProxNotif).toHaveBeenCalledWith({ proxima_notificacion: '2026-09-03' })
+    // viernes 2026-08-28 + 4 días hábiles = jueves 2026-09-03. Además, el
+    // aviso "primera_vez" que se acaba de mandar queda registrado en
+    // ultima_notificacion (misma escritura).
+    expect(updateProxNotif).toHaveBeenCalledWith(expect.objectContaining({
+      proxima_notificacion: '2026-09-03',
+      ultima_notificacion: '2026-08-28'
+    }))
     expect(updateProxNotifEq).toHaveBeenCalledWith('id', 'factura-1')
     expect(supabase.rpc).not.toHaveBeenCalled()
   })
@@ -1161,18 +1237,50 @@ describe('saveFactura', () => {
 
     await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 
-    expect(updateProxNotif).toHaveBeenCalledWith({ proxima_notificacion: '2026-09-03' })
+    expect(updateProxNotif).toHaveBeenCalledWith(expect.objectContaining({ proxima_notificacion: '2026-09-03' }))
   })
 
-  test('sin fecha de emisión no intenta agendar recordatorio (no hay 4ª consulta)', async () => {
+  test('registra ultima_notificacion con el aviso "primera_vez" recién enviado', async () => {
     const { supabase } = await import('../../lib/supabase')
+    const update = vi.fn().mockReturnThis()
 
-    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: null })
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-08-28' })
+    supabase.from.mockReturnValueOnce({ update, eq: vi.fn().mockResolvedValueOnce({ error: null }) })
 
     await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 
-    // insert + 2 de getFacturaById = 3 llamadas. Nunca la 4ª (el UPDATE).
-    expect(supabase.from).toHaveBeenCalledTimes(3)
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ ultima_notificacion: '2026-08-28' }))
+  })
+
+  test('si el webhook "primera_vez" falla, NO registra ultima_notificacion (nadie fue avisado)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const { notificarFacturacion } = await import('../notificaciones.js')
+    notificarFacturacion.mockRejectedValueOnce(new Error('Webhook caído'))
+
+    const update = vi.fn().mockReturnThis()
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-08-28' })
+    supabase.from.mockReturnValueOnce({ update, eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    // se agenda el recordatorio, pero sin ultima_notificacion
+    expect(update).toHaveBeenCalledWith({ proxima_notificacion: '2026-09-03' })
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ ultima_notificacion: expect.anything() }))
+  })
+
+  test('sin fecha de emisión no agenda proxima_notificacion, pero igual registra ultima_notificacion (el aviso salió hoy)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const update = vi.fn().mockReturnThis()
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: null })
+    supabase.from.mockReturnValueOnce({ update, eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    const arg = update.mock.calls[0]?.[0] || {}
+    expect(arg).not.toHaveProperty('proxima_notificacion')
+    expect(typeof arg.ultima_notificacion).toBe('string')
+    expect(arg.ultima_notificacion).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 
   test('si el UPDATE de proxima_notificacion falla, la factura igual queda guardada', async () => {
@@ -1221,6 +1329,8 @@ describe('saveFactura', () => {
         eq: vi.fn().mockReturnThis(),
         order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
       })
+      // 4. UPDATE post-alta (ultima_notificacion, ya que el aviso salió ok)
+      .mockReturnValueOnce({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValueOnce({ error: null }) })
 
     const resultado = await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 

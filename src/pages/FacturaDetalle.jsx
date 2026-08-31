@@ -1,18 +1,20 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Receipt, DollarSign, Calendar, UploadCloud, Plus, Search, Copy, Check, FileText, Upload, Briefcase, Building2, Download } from 'lucide-react'
-import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto, prepararFacturaParaGuardar, componerLeyendaFactura, fechaReferenciaUva } from '../services/facturacion'
+import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto, prepararFacturaParaGuardar, componerLeyendaFactura, fechaReferenciaUva, validarFacturaParaGuardar } from '../services/facturacion'
 import BotonCopiar from '../components/BotonCopiar'
+import { useData } from '../context/DataContext'
 import { getContactos } from '../services/contactos'
 import { getProspectos } from '../services/prospectos'
 import { getValoresUVA } from '../services/valoresUva'
 import { obtenerUVAParaFecha } from '../services/sincronizacionUva'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
 import { getRazonesSocialesByEmpresa, saveRazonSocial } from '../services/empresas'
-import { uploadFile } from '../services/storage'
+import { subirAdjuntoFactura } from '../services/storage'
 import { formatearMonto } from '../utils/formateo'
 import { fechaLocalISO, esFechaCompleta, sumarDias } from '../utils/fecha'
 import { esArchivoPDF } from '../utils/archivos'
+import { guardarBorrador, leerBorrador, limpiarBorrador } from '../utils/borradorFactura'
 import { reintentar, conTimeout } from '../utils/reintentar'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -21,6 +23,7 @@ export default function FacturaDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
   const esNueva = id === 'nueva'
+  const { refreshFacturas } = useData()
 
   const [factura, setFactura] = useState({
     numero_factura: '',
@@ -65,6 +68,10 @@ export default function FacturaDetalle() {
 
   const [loading, setLoading] = useState(!esNueva)
   const [saving, setSaving] = useState(false)
+  // Estado propio para la subida de adjuntos: NO reusar `saving`, si no el
+  // botón "Guardar" queda pegado en "Guardando..." mientras sube (y para
+  // siempre si la subida se cuelga).
+  const [subiendoArchivo, setSubiendoArchivo] = useState(false)
   // Carga de datos base del formulario (prospectos, contactos, UVA, cuentas).
   // Antes: un Promise.all que si fallaba una request dejaba la lista de
   // prospectos vacía sin aviso ni reintento -> había que recargar la página.
@@ -88,6 +95,15 @@ export default function FacturaDetalle() {
   const [nuevoPago, setNuevoPago] = useState({ fecha: fechaLocalISO(), monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
   const [mostrarContacto2, setMostrarContacto2] = useState(false)
 
+  // Borrador local (localStorage) para "Nueva Factura": lo que hay guardado
+  // sin decidir si continuarlo o descartarlo. Ver src/utils/borradorFactura.js
+  const [borrador, setBorrador] = useState(null)
+  const [borradorGuardadoOk, setBorradorGuardadoOk] = useState(null) // null | true | false
+  // Última versión de `factura`, para poder guardarla desde el intervalo y al
+  // desmontar (salir de la pantalla) sin depender de la identidad del objeto.
+  const facturaRef = useRef(factura)
+  facturaRef.current = factura
+
   useEffect(() => {
     const control = { vivo: true }
     cargarDatosPrevios(control)
@@ -98,6 +114,39 @@ export default function FacturaDetalle() {
     // toca el estado y no pisa una carga posterior más nueva.
     return () => { control.vivo = false }
   }, [id])
+
+  // ── Borrador local de "Nueva Factura" ────────────────────────────────────
+  // Al entrar, si hay un borrador guardado se ofrece continuarlo (no se carga
+  // solo). Se autoguarda con debounce mientras se edita (una vez elegido el
+  // prospecto), y también al salir de la pantalla. Se borra al guardar la
+  // factura de verdad o al descartarlo.
+  useEffect(() => {
+    if (!esNueva) return
+    const b = leerBorrador()
+    if (b && b.prospecto_id) setBorrador(b)
+  }, [esNueva])
+
+  // Autoguardado: cada 2s, y al salir de la pantalla. Se usa un intervalo con
+  // ref (no un debounce sobre `factura`) porque `factura` cambia de identidad
+  // en cascada tras elegir un prospecto y un debounce nunca llegaba a disparar.
+  useEffect(() => {
+    if (!esNueva) return
+    function persistir() {
+      if (!facturaRef.current?.prospecto_id) return
+      setBorradorGuardadoOk(guardarBorrador(facturaRef.current))
+    }
+    const iv = setInterval(persistir, 2000)
+    return () => { clearInterval(iv); persistir() }
+  }, [esNueva])
+
+  function continuarBorrador() {
+    if (borrador) setFactura(prev => ({ ...prev, ...borrador }))
+    setBorrador(null)
+  }
+  function descartarBorrador() {
+    limpiarBorrador()
+    setBorrador(null)
+  }
 
   // Recalcular montos al cambiar tarifa, valor UVA, descuento o pagos.
   // Usa la misma fórmula que el backend (con fallback al 'monto' persistido
@@ -210,6 +259,11 @@ export default function FacturaDetalle() {
     periodo_desde: factura.periodo_desde,
     periodo_hasta: factura.periodo_hasta
   })
+
+  // Campos obligatorios que faltan para poder guardar (solo al crear). Los
+  // botones "Guardar Factura" solo se muestran cuando esto está vacío.
+  const faltantesObligatorios = esNueva ? validarFacturaParaGuardar(factura) : []
+  const puedeGuardar = faltantesObligatorios.length === 0
 
   // Bloque NO editable que se copia con un botón: leyenda + (horas, si está
   // el tilde) + período con fechas completas. Ver componerLeyendaFactura().
@@ -470,12 +524,35 @@ export default function FacturaDetalle() {
 
   async function handleSave(e) {
     e.preventDefault()
+
+    // Campos obligatorios al crear una factura (ver validarFacturaParaGuardar)
+    if (esNueva) {
+      const faltantes = validarFacturaParaGuardar(factura)
+      if (faltantes.length > 0) {
+        setError(faltantes.join(' '))
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
+      }
+    }
+
     setSaving(true)
     setError('')
     try {
       const dataToSave = prepararFacturaParaGuardar(factura, pagos)
 
       const saved = await saveFactura(dataToSave)
+
+      // La factura ya está guardada de verdad: el borrador local no hace falta.
+      limpiarBorrador()
+
+      // Refrescar la caché del listado de Facturación SÍ o SÍ (forzar): si no,
+      // al volver a /facturacion dentro de los 90s del TTL, la lista no se
+      // vuelve a pedir y la factura recién guardada no aparece.
+      try {
+        await refreshFacturas({ silencioso: true, forzar: true })
+      } catch (refreshErr) {
+        console.error('No se pudo refrescar el listado de facturación:', refreshErr)
+      }
 
       // Generar y descargar PDF si es solo invoice
       if (factura.solo_invoice) {
@@ -517,6 +594,11 @@ export default function FacturaDetalle() {
     try {
       await deleteFactura(id)
       console.log('Eliminación exitosa en Supabase')
+      try {
+        await refreshFacturas({ silencioso: true, forzar: true })
+      } catch (refreshErr) {
+        console.error('No se pudo refrescar el listado de facturación:', refreshErr)
+      }
       navigate('/facturacion')
     } catch (err) {
       console.error('Error detallado al eliminar:', err)
@@ -586,10 +668,12 @@ export default function FacturaDetalle() {
       return
     }
 
-    setSaving(true)
+    const input = e.target
+    setError('')
+    setSubiendoArchivo(true)
     try {
-      const url = await uploadFile(file, `facturacion/${id || 'nueva'}`)
-      
+      const url = await subirAdjuntoFactura(file, id)
+
       if (type === 'comprobante') {
         const nuevosAdjuntos = [...factura.comprobantes_adjuntos]
         nuevosAdjuntos[index] = url
@@ -599,9 +683,12 @@ export default function FacturaDetalle() {
       }
     } catch (err) {
       console.error(err)
-      setError('Error al subir el archivo.')
+      setError(/tardó demasiado/i.test(err?.message) ? err.message : 'Error al subir el archivo.')
     } finally {
-      setSaving(false)
+      setSubiendoArchivo(false)
+      // Limpiar el input SIEMPRE: si no, tras un error no se puede volver a
+      // elegir el mismo archivo (el evento 'change' no vuelve a dispararse).
+      if (input) input.value = ''
     }
   }
 
@@ -668,7 +755,15 @@ export default function FacturaDetalle() {
                 {factura.estado.toUpperCase()}
               </span>
             </div>
-            <p className="page-subtitle">{esNueva ? 'Configura los datos del nuevo comprobante' : 'Gestión y seguimiento de cobro'}</p>
+            <p className="page-subtitle">
+              {esNueva ? 'Configura los datos del nuevo comprobante' : 'Gestión y seguimiento de cobro'}
+              {esNueva && factura.prospecto_id && borradorGuardadoOk === true && (
+                <span style={{ marginLeft: '10px', fontSize: '12px', color: 'var(--color-success, #385723)' }}>· Borrador guardado ✓</span>
+              )}
+              {esNueva && factura.prospecto_id && borradorGuardadoOk === false && (
+                <span style={{ marginLeft: '10px', fontSize: '12px', color: 'var(--color-danger)' }}>· No se pudo guardar el borrador (el navegador bloquea el almacenamiento local)</span>
+              )}
+            </p>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
@@ -718,14 +813,46 @@ export default function FacturaDetalle() {
               </button>
             </>
           )}
-          <button type="submit" form="facturaForm" className="btn btn-primary" disabled={saving}>
-            <Save size={18} />
-            {saving ? 'Guardando...' : 'Guardar Factura'}
-          </button>
+          {(!esNueva || puedeGuardar) && (
+            <button type="submit" form="facturaForm" className="btn btn-primary" disabled={saving || subiendoArchivo}>
+              <Save size={18} />
+              {saving ? 'Guardando...' : subiendoArchivo ? 'Subiendo archivo…' : 'Guardar Factura'}
+            </button>
+          )}
         </div>
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: '20px' }}>{error}</div>}
+
+      {esNueva && borrador && !factura.prospecto_id && (
+        <div className="alert alert-warning" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <span>
+            Tenés un borrador sin terminar
+            {(() => {
+              const p = prospectos.find(x => x.id === borrador.prospecto_id)
+              const emp = p?.empresas?.nombre || p?.nombre
+              const per = borrador.periodo_desde
+                ? ` (período ${borrador.periodo_desde}${borrador.periodo_hasta ? ` → ${borrador.periodo_hasta}` : ''})`
+                : ''
+              return emp ? ` — ${emp}${per}` : per
+            })()}.
+          </span>
+          <span style={{ display: 'flex', gap: '8px' }}>
+            <button type="button" className="btn btn-primary" style={{ padding: '4px 12px', fontSize: '12px', height: 'auto' }} onClick={continuarBorrador}>
+              Continuar borrador
+            </button>
+            <button type="button" className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: '12px', height: 'auto' }} onClick={descartarBorrador}>
+              Descartar
+            </button>
+          </span>
+        </div>
+      )}
+
+      {esNueva && !puedeGuardar && prospectoSeleccionado && (
+        <div className="alert alert-warning" style={{ marginBottom: '20px' }}>
+          Para guardar la factura, completá: {faltantesObligatorios.map(f => f.replace(/^Falta (el |la )?/i, '').replace(/\.$/, '')).join(' · ')}.
+        </div>
+      )}
       {advertencia && <div className="alert alert-warning" style={{ marginBottom: '20px' }}>{advertencia}</div>}
       {success && <div className="alert alert-success" style={{ marginBottom: '20px' }}>{success}</div>}
 
@@ -970,13 +1097,14 @@ export default function FacturaDetalle() {
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
               <div className="field">
-                <label>{factura.solo_invoice ? 'Número de Invoice (Auto)' : 'Número de Factura Fiscal'}</label>
-                <input 
-                  type="text" 
+                <label>{factura.solo_invoice ? 'Número de Invoice (Auto)' : 'Número de Factura Fiscal *'}</label>
+                <input
+                  type="text"
                   disabled={factura.solo_invoice && esNueva}
+                  required={!factura.solo_invoice}
                   placeholder={factura.solo_invoice ? "Se generará al guardar" : "Ej. A-0001-00001234"}
-                  value={factura.numero_factura} 
-                  onChange={e => setFactura({...factura, numero_factura: e.target.value})} 
+                  value={factura.numero_factura}
+                  onChange={e => setFactura({...factura, numero_factura: e.target.value})}
                 />
                 {factura.solo_invoice && <small style={{ color: 'var(--color-text-muted)' }}>Auto-numeración desde 300.</small>}
               </div>
@@ -1009,16 +1137,16 @@ export default function FacturaDetalle() {
                 </div>
               )}
               <div className="field">
-                <label>Período (Desde)</label>
-                <input type="date" value={factura.periodo_desde} onChange={e => setFactura({...factura, periodo_desde: e.target.value})} />
+                <label>Período (Desde) *</label>
+                <input type="date" required value={factura.periodo_desde} onChange={e => setFactura({...factura, periodo_desde: e.target.value})} />
               </div>
               <div className="field">
-                <label>Período (Hasta)</label>
-                <input type="date" value={factura.periodo_hasta} onChange={e => setFactura({...factura, periodo_hasta: e.target.value})} />
+                <label>Período (Hasta) *</label>
+                <input type="date" required value={factura.periodo_hasta} onChange={e => setFactura({...factura, periodo_hasta: e.target.value})} />
               </div>
               <div className="field">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <label style={{ marginBottom: 0 }}>Contacto de Cobro Principal</label>
+                  <label style={{ marginBottom: 0 }}>Contacto de Cobro Principal *</label>
                   {!mostrarContacto2 && (
                     <button 
                       type="button" 
@@ -1030,7 +1158,7 @@ export default function FacturaDetalle() {
                     </button>
                   )}
                 </div>
-                <select value={factura.contacto_id} onChange={e => setFactura({...factura, contacto_id: e.target.value})}>
+                <select required value={factura.contacto_id} onChange={e => setFactura({...factura, contacto_id: e.target.value})}>
                   <option value="">-- Seleccionar Contacto --</option>
                   {contactosFiltrados.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>)}
                 </select>
@@ -1070,8 +1198,8 @@ export default function FacturaDetalle() {
                 </select>
               </div>
               <div className="field" style={{ gridColumn: '1 / -1' }}>
-                <label>Leyenda de la Factura</label>
-                <textarea rows="2" value={factura.leyenda} onChange={e => setFactura({...factura, leyenda: e.target.value})} placeholder="Mensaje para el cliente..." />
+                <label>Leyenda de la Factura *</label>
+                <textarea rows="2" required value={factura.leyenda} onChange={e => setFactura({...factura, leyenda: e.target.value})} placeholder="Mensaje para el cliente..." />
               </div>
               <div className="field">
                 <label>Horas facturadas</label>
@@ -1147,11 +1275,26 @@ export default function FacturaDetalle() {
               ) : (
                 <>
                   <div className="field">
-                    <label>Tarifa Base (en UVA)</label>
-                    <input type="number" step="0.1" value={factura.tarifa_base_uva} onChange={e => setFactura({...factura, tarifa_base_uva: e.target.value})} />
+                    <label>
+                      Tarifa Base (en UVA){' '}
+                      <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(se define en el prospecto)</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={factura.tarifa_base_uva}
+                      readOnly
+                      title="Viene del prospecto (Valor Base Índice). Para cambiarla, editá el prospecto."
+                      style={{ background: 'var(--color-surface2)', cursor: 'not-allowed' }}
+                    />
                   </div>
                   <div className="field">
-                    <label>Valor UVA del día ($)</label>
+                    <label>
+                      Valor UVA del día ($)
+                      {fechaParaUVA && (
+                        <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}> · al {String(fechaParaUVA).split('T')[0].split('-').reverse().join('/')}</span>
+                      )}
+                    </label>
                     <input type="number" step="0.01" value={factura.valor_uva_dia} onChange={e => setFactura({...factura, valor_uva_dia: e.target.value})} />
                   </div>
                 </>
@@ -1188,7 +1331,15 @@ export default function FacturaDetalle() {
             <div style={{ padding: '20px', background: 'var(--color-surface)', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '4px' }}>TOTAL NETO A COBRAR</div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary)' }}>${formatearMonto(factura.monto_neto)}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary)' }}>${formatearMonto(factura.monto_neto)}</div>
+                  <BotonCopiar
+                    texto={String(Math.round(Number(factura.monto_neto) || 0))}
+                    title="Copiar el total neto como número entero (sin decimales)"
+                    className="btn btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: '11px', height: 'auto' }}
+                  />
+                </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '4px' }}>SALDO PENDIENTE</div>
@@ -1233,11 +1384,12 @@ export default function FacturaDetalle() {
                             <input
                               type="file"
                               onChange={(e) => handleFileUpload(e, 'comprobante', idx)}
-                              style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                              disabled={subiendoArchivo}
+                              style={{ position: 'absolute', inset: 0, opacity: 0, cursor: subiendoArchivo ? 'wait' : 'pointer' }}
                               accept=".pdf,application/pdf"
                             />
                             <Upload size={24} style={{ marginBottom: '8px', opacity: 0.5 }} />
-                            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Subir Factura {idx + 1}</span>
+                            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>{subiendoArchivo ? 'Subiendo…' : `Subir Factura ${idx + 1}`}</span>
                           </>
                         )}
                       </div>
@@ -1262,14 +1414,15 @@ export default function FacturaDetalle() {
                     </div>
                   ) : (
                     <>
-                      <input 
-                        type="file" 
+                      <input
+                        type="file"
                         onChange={(e) => handleFileUpload(e, 'documento')}
-                        style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} 
+                        disabled={subiendoArchivo}
+                        style={{ position: 'absolute', inset: 0, opacity: 0, cursor: subiendoArchivo ? 'wait' : 'pointer' }}
                         accept=".pdf,.doc,.docx,.xls,.xlsx"
                       />
                       <Upload size={20} style={{ marginRight: '8px', opacity: 0.5 }} />
-                      <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>Haz clic para subir un documento anexo</span>
+                      <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>{subiendoArchivo ? 'Subiendo…' : 'Haz clic para subir un documento anexo'}</span>
                     </>
                   )}
                 </div>
@@ -1363,12 +1516,14 @@ export default function FacturaDetalle() {
           </div>
         )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            <Save size={18} />
-            {saving ? 'Guardando...' : 'Guardar Factura'}
-          </button>
-        </div>
+        {(!esNueva || puedeGuardar) && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="submit" className="btn btn-primary" disabled={saving || subiendoArchivo}>
+              <Save size={18} />
+              {saving ? 'Guardando...' : subiendoArchivo ? 'Subiendo archivo…' : 'Guardar Factura'}
+            </button>
+          </div>
+        )}
 
       </form>
 

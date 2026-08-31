@@ -14,7 +14,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde,
   resolverProspectoParaGuardar, resolverActividades,
-  getActividadesEnRango, getActividadesDelMes, getUltimasReunionesPorProspecto
+  getActividadesEnRango, getHorasDedicadasPorProspecto, getUltimasReunionesPorProspecto
 } from '../services/cronograma'
 import { getColaboradoresLista } from '../services/colaboradores'
 import { esActividadOcupada, normalizarResponsableEInvitados } from '../utils/cronogramaVisibilidad'
@@ -109,10 +109,12 @@ export default function Cronograma() {
   // y creciendo) en cada login. Ahora se piden 3 recortes chicos y
   // puntuales, acotados a lo que la pantalla realmente necesita:
   //   - actividadesRango: lo que se ve en el calendario (el filtro Desde/Hasta)
-  //   - actividadesMes: el mes actual, para el saldo de horas
+  //   - horasDedicadasPorProspecto: horas totales históricas por prospecto
+  //     (Map id -> horas), agregadas server-side — el saldo de horas es
+  //     acumulado desde el inicio del servicio, no "del mes actual".
   //   - reunionesPorProspecto: la última reunión de cada cliente (Map id -> fecha)
   const [actividadesRango, setActividadesRango] = useState([])
-  const [actividadesMes, setActividadesMes] = useState([])
+  const [horasDedicadasPorProspecto, setHorasDedicadasPorProspecto] = useState(new Map())
   const [reunionesPorProspecto, setReunionesPorProspecto] = useState(new Map())
 
   const [selectedColab, setSelectedColab] = useState([])
@@ -209,13 +211,13 @@ export default function Cronograma() {
     try {
       const desde = moment(fechaDesde).startOf('day').toISOString()
       const hasta = moment(fechaHasta).endOf('day').toISOString()
-      const [rango, mes, reuniones] = await Promise.all([
+      const [rango, horasDedicadas, reuniones] = await Promise.all([
         getActividadesEnRango(desde, hasta),
-        getActividadesDelMes(),
+        getHorasDedicadasPorProspecto(),
         getUltimasReunionesPorProspecto()
       ])
       setActividadesRango(rango)
-      setActividadesMes(mes)
+      setHorasDedicadasPorProspecto(horasDedicadas)
       setReunionesPorProspecto(reuniones)
     } catch (err) {
       console.error('Error al cargar el cronograma:', err)
@@ -244,11 +246,6 @@ export default function Cronograma() {
     () => resolverActividades(actividadesRango, prospectos),
     [actividadesRango, prospectos]
   )
-  const actividadesMesResueltas = useMemo(
-    () => resolverActividades(actividadesMes, prospectos),
-    [actividadesMes, prospectos]
-  )
-
   // Orden del panel "Saldo de Horas": se puede ordenar por Saldo o por Días
   // haciendo clic en el encabezado correspondiente. Cada columna arranca,
   // la primera vez que se clickea, mostrando arriba lo que más urge
@@ -273,8 +270,8 @@ export default function Cronograma() {
     return prospectosProduccion
       .map(p => ({
         prospecto: p,
-        saldo: calcularSaldoHoras(p, actividadesMesResueltas),
-        dias: calcularDiasDesde(reunionesPorProspecto.get(p.id))
+        saldo: calcularSaldoHoras(p, horasDedicadasPorProspecto.get(p.id)),
+        dias: calcularDiasDesde(reunionesPorProspecto.get(p.id), p.inicio_servicio)
       }))
       .sort((a, b) => {
         const va = a[ordenColumna]
@@ -284,7 +281,7 @@ export default function Cronograma() {
         if (vb == null) return -1
         return ordenAsc ? va - vb : vb - va
       })
-  }, [prospectosProduccion, actividadesMesResueltas, reunionesPorProspecto, ordenColumna, ordenAsc])
+  }, [prospectosProduccion, horasDedicadasPorProspecto, reunionesPorProspecto, ordenColumna, ordenAsc])
 
   const getColor = (name) => {
     const colors = {
@@ -393,19 +390,22 @@ export default function Cronograma() {
     setShowModal(true)
   }
 
-  // Todas las escrituras de acá para abajo son OPTIMISTAS: los 3 recortes
-  // locales se actualizan al toque, antes de que el servidor responda, para
-  // que la UI nunca quede esperando un round-trip. Guardó bien o falló, al
-  // final siempre se resincroniza en segundo plano contra el servidor
-  // (cargarCronograma) — como las 3 consultas ahora son chicas y puntuales
-  // (no toda la tabla), hacerlo después de cada cambio sale gratis y evita
-  // tener que llevar a mano la lógica de "revertir" ante un error.
+  // Todas las escrituras de acá para abajo son OPTIMISTAS: lo que se ve en
+  // el calendario (actividadesRango) se actualiza al toque, antes de que el
+  // servidor responda, para que la UI nunca quede esperando un round-trip.
+  // Guardó bien o falló, al final siempre se resincroniza en segundo plano
+  // contra el servidor (cargarCronograma).
+  //
+  // El saldo de horas NO se parchea acá a propósito: es un acumulado
+  // histórico agregado server-side (getHorasDedicadasPorProspecto), no una
+  // lista local — ajustarlo bien optimistamente implicaría recalcular la
+  // duración vieja y nueva de la actividad para no contar de más/de menos.
+  // Como cargarCronograma() ya se dispara siempre en el finally, el panel
+  // de saldo se pone al día en el mismo round-trip que reconcilia todo lo
+  // demás — la demora es de un instante, no vale la complejidad extra.
 
   function perteneceARango(act) {
     return moment(act.inicio).isBetween(moment(fechaDesde).startOf('day'), moment(fechaHasta).endOf('day'), null, '[]')
-  }
-  function perteneceAlMesActual(act) {
-    return moment(act.inicio).isBetween(moment().startOf('month'), moment().endOf('month'), null, '[]')
   }
 
   function patchLista(setLista, act, id, pertenece) {
@@ -420,7 +420,6 @@ export default function Cronograma() {
 
   function aplicarOptimista(act, id) {
     patchLista(setActividadesRango, act, id, perteneceARango)
-    patchLista(setActividadesMes, act, id, perteneceAlMesActual)
     if (act.reunion_cliente && act.prospecto_id) {
       setReunionesPorProspecto(prev => {
         const actual = prev.get(act.prospecto_id)
@@ -436,7 +435,6 @@ export default function Cronograma() {
 
   function quitarOptimista(id) {
     setActividadesRango(prev => prev.filter(a => a.id !== id))
-    setActividadesMes(prev => prev.filter(a => a.id !== id))
   }
 
   async function handleSubmit(e) {

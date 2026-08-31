@@ -1,0 +1,33 @@
+-- FIX DE SEGURIDAD - fuga de apsol_contactos al rol anon
+--
+-- Sintoma: GET /rest/v1/apsol_contactos?select=* con solo la anon key
+-- (sin sesion) devolvia las 132 filas completas (nombre, telefono, email,
+-- cargo, empresa_id), a diferencia del resto de las vistas del esquema.
+--
+-- Causa raiz: public.apsol_contactos es una VISTA sobre
+-- apsol_private.contactos (que si tiene RLS: policy "Acceso exclusivo a
+-- Admins"). Todas las vistas wrapper del esquema se crean
+-- WITH (security_invoker = true) salvo esta: la migracion
+-- 20260827221246 "activo_contactos_vista" la recreo con
+-- CREATE OR REPLACE VIEW ... AS SELECT ... sin re-declarar la opcion, y
+-- eso la borro (reloptions quedo en NULL). Sin security_invoker la vista
+-- se ejecuta con los privilegios de su dueno (postgres, superusuario),
+-- por lo que saltea la RLS de la tabla base y expone todo a cualquier rol.
+--
+-- Fix: restaurar security_invoker. La vista pasa a ejecutarse como el rol
+-- que consulta (anon / authenticated) y la RLS de apsol_private.contactos
+-- vuelve a aplicar, igual que en apsol_empresas / apsol_prospectos / etc.
+-- Cubre SELECT/INSERT/UPDATE/DELETE de una sola vez (anon deja de poder
+-- escribir tambien: antes el INSERT via vista corria como el dueno).
+--
+-- Nota: NO se tocan los GRANT de la vista. anon conserva
+-- SELECT/INSERT/UPDATE/DELETE sobre public.apsol_contactos, exactamente
+-- igual que sobre apsol_empresas y las demas vistas: la barrera efectiva
+-- es la RLS de la tabla base + security_invoker, no el GRANT.
+
+ALTER VIEW public.apsol_contactos SET (security_invoker = true);
+
+-- Verificacion (rol anon, sin Authorization de usuario):
+--   curl "https://kursvmadozcqxoaeaccd.supabase.co/rest/v1/apsol_contactos?select=*&limit=2" \
+--     -H "apikey: <ANON_KEY>"
+--   -> debe devolver exactamente []

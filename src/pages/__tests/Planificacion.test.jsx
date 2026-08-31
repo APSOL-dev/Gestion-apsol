@@ -10,6 +10,25 @@ vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ user: { email: 'test@apsol.com' } })
 }))
 
+// Este test monta <DataProvider>, que al ver un usuario dispara la precarga
+// de TODOS los módulos. Sin este mock las consultas salían de verdad contra
+// la base de PRODUCCIÓN en cada corrida de la suite.
+vi.mock("../../lib/supabase", () => ({
+  supabase: {
+    from: vi.fn(() => {
+      const q = {
+        select: vi.fn(() => q), order: vi.fn(() => q), eq: vi.fn(() => q),
+        neq: vi.fn(() => q), not: vi.fn(() => q), limit: vi.fn(() => q),
+        gte: vi.fn(() => q), lte: vi.fn(() => q),
+        then: (res) => Promise.resolve({ data: [], error: null }).then(res)
+      }
+      return q
+    }),
+    rpc: vi.fn(async () => ({ data: [], error: null })),
+    auth: { getSession: vi.fn(async () => ({ data: { session: null } })) }
+  }
+}))
+
 // Mock de los servicios
 vi.mock('../../services/planificacion', () => ({
   getPlanes: vi.fn(),

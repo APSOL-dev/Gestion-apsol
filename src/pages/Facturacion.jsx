@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, Receipt, ChevronRight, ChevronLeft } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { useNavegacionLista } from '../hooks/useNavegacionLista'
+import { diasDesde } from '../utils/fecha'
 import FacturacionDrawer from '../components/FacturacionDrawer'
 
 const FACTURAS_POR_PAGINA = 20
@@ -93,19 +94,15 @@ export default function Facturacion() {
 
   const totalGeneral = totalPendiente + totalPagoParcial + totalCobrado
 
-  // Obtener Próxima Notificación y días de retraso desde emisión si sigue impaga
+  // Obtener Próxima Notificación y días de retraso desde emisión si sigue impaga.
+  // OJO: diasDesde parsea la fecha en hora LOCAL; con `new Date('2026-08-31')`
+  // (UTC) una factura emitida hoy figuraba con "Retraso: 1 Días" el mismo día.
   const getProxNotificacionYRetraso = (factura) => {
     const prox = factura.proxima_notificacion ? formatFecha(factura.proxima_notificacion) : '-'
     if (factura.estado === 'Cobrada total') return prox
 
-    const hoy = new Date()
-    hoy.setHours(0,0,0,0)
-    const emision = new Date(factura.fecha_emision)
-    emision.setHours(0,0,0,0)
-    const diffTime = hoy - emision
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
-
-    if (diffDays > 0) {
+    const diffDays = diasDesde(factura.fecha_emision)
+    if (diffDays != null && diffDays > 0) {
       return `${prox} - Retraso: ${diffDays} Días`
     }
     return prox

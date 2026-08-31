@@ -10,7 +10,36 @@ vi.mock('../../lib/supabase', () => ({
 // (Panel derecho del Cronograma)
 // ──────────────────────────────────────────────────────────────
 
-const FECHA_REF = new Date('2026-08-26T12:00:00')
+const FECHA_REF = new Date('2026-08-26T12:00:00Z')
+
+// El saldo de horas es ACUMULADO desde el inicio del servicio (no se
+// resetea cada mes) — misma fórmula que usaba AppSheet, reconstruida y
+// verificada a mano contra ~12 prospectos reales del histórico (ver
+// database/migration_saldo_horas_acumulado.sql). Las cifras de estos tests
+// (24h/mes, inicio 2025-02-03, referencia 2026-08-30 -> ~454.50h teóricas;
+// 16h/mes, inicio 2026-07-22 -> ~22.17h teóricas) son justamente dos de
+// esos casos reales, no números inventados.
+
+describe('calcularHorasTeoricas', () => {
+  let calcularHorasTeoricas
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    calcularHorasTeoricas = mod.calcularHorasTeoricas
+  })
+
+  test('da 0 cuando el inicio de servicio es la fecha de referencia (todavía no pasó ninguna semana)', () => {
+    expect(calcularHorasTeoricas(10, '2026-08-26', new Date('2026-08-26T12:00:00Z'))).toBe(0)
+  })
+
+  test('reproduce el cálculo real verificado contra el histórico (caso: ~19 meses de antigüedad)', () => {
+    expect(calcularHorasTeoricas(24, '2025-02-03', new Date('2026-08-30T12:00:00Z'))).toBeCloseTo(454.5035, 3)
+  })
+
+  test('reproduce el cálculo real para un inicio de servicio reciente, dentro del mismo año', () => {
+    expect(calcularHorasTeoricas(16, '2026-07-22', new Date('2026-08-30T12:00:00Z'))).toBeCloseTo(22.1709, 3)
+  })
+})
 
 describe('calcularSaldoHoras', () => {
   let calcularSaldoHoras
@@ -20,51 +49,45 @@ describe('calcularSaldoHoras', () => {
     calcularSaldoHoras = mod.calcularSaldoHoras
   })
 
-  test('resta las horas ya agendadas en el mes de las horas contratadas', () => {
-    const prospecto = { nombre: 'Escobar', hs_mensuales: 10 }
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-05T09:00:00', fin: '2026-08-05T13:00:00' }, // 4h
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-10T09:00:00', fin: '2026-08-10T11:00:00' } // 2h
-    ]
-    expect(calcularSaldoHoras(prospecto, actividades, FECHA_REF)).toBe(4)
+  test('resta las horas teóricas (desde el inicio del servicio) de las horas dedicadas en TODO el historial', () => {
+    const prospecto = { hs_mensuales: 16, inicio_servicio: '2026-07-22' }
+    expect(calcularSaldoHoras(prospecto, 16.5, new Date('2026-08-30T12:00:00Z'))).toBe(-5.7)
   })
 
   test('devuelve null si el prospecto no tiene horas mensuales contratadas configuradas', () => {
-    const prospecto = { nombre: 'Escobar', hs_mensuales: null }
-    expect(calcularSaldoHoras(prospecto, [], FECHA_REF)).toBeNull()
+    const prospecto = { hs_mensuales: null, inicio_servicio: '2026-01-01' }
+    expect(calcularSaldoHoras(prospecto, 10, FECHA_REF)).toBeNull()
   })
 
-  test('no cuenta actividades de otros prospectos', () => {
-    const prospecto = { nombre: 'Escobar', hs_mensuales: 10 }
-    const actividades = [
-      { prospecto_nombre: 'Consultora', inicio: '2026-08-05T09:00:00', fin: '2026-08-05T13:00:00' }
-    ]
-    expect(calcularSaldoHoras(prospecto, actividades, FECHA_REF)).toBe(10)
+  test('devuelve null si el prospecto no tiene fecha de inicio de servicio (no hay desde cuándo contar)', () => {
+    const prospecto = { hs_mensuales: 10, inicio_servicio: null }
+    expect(calcularSaldoHoras(prospecto, 10, FECHA_REF)).toBeNull()
   })
 
-  test('no cuenta actividades fuera del mes de referencia', () => {
-    const prospecto = { nombre: 'Escobar', hs_mensuales: 10 }
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-07-05T09:00:00', fin: '2026-07-05T13:00:00' }
-    ]
-    expect(calcularSaldoHoras(prospecto, actividades, FECHA_REF)).toBe(10)
+  test('sin horas dedicadas registradas todavía (undefined), las trata como 0', () => {
+    const prospecto = { hs_mensuales: 16, inicio_servicio: '2026-07-22' }
+    expect(calcularSaldoHoras(prospecto, undefined, new Date('2026-08-30T12:00:00Z'))).toBe(-22.2)
   })
 
-  test('el saldo puede ser negativo si se agendó más de lo contratado', () => {
-    const prospecto = { nombre: 'Escobar', hs_mensuales: 2 }
-    const actividades = [
-      { prospecto_nombre: 'Escobar', inicio: '2026-08-05T09:00:00', fin: '2026-08-05T14:00:00' } // 5h
-    ]
-    expect(calcularSaldoHoras(prospecto, actividades, FECHA_REF)).toBe(-3)
+  test('el saldo puede ser positivo si se dedicó más de lo teórico', () => {
+    const prospecto = { hs_mensuales: 24, inicio_servicio: '2025-02-03' }
+    expect(calcularSaldoHoras(prospecto, 500, new Date('2026-08-30T12:00:00Z'))).toBe(45.5)
   })
 })
 
-// `calcularDiasDesdeUltimaReunion(actividades, nombre, fecha)` (que filtraba
-// un array completo de actividades en el cliente) se reemplazó por
-// `calcularDiasDesde(fechaUltimaReunion, fecha)`: encontrar la última
-// reunión de cada prospecto ahora lo hace el servidor (ver
-// getUltimasReunionesPorProspecto más abajo), así que la función pura solo
-// necesita calcular la diferencia de días entre dos fechas.
+// Fórmula real de AppSheet para "Días desde la última reunión" (la pasó
+// Adrian tal cual del editor):
+//   IF(no hay ninguna reunión con cliente,
+//      [Días desde el inicio de servicio],
+//      HOUR(HOY() - MAX(fecha de la última reunión)) / 24)
+// Dos detalles no obvios, verificados contra ~13 prospectos reales:
+//  1. HOY() se evalúa en UTC (no en la zona horaria local del navegador) -
+//     por eso todo acá usa moment.utc(), no moment().
+//  2. Conserva la HORA exacta de la reunión (no trunca a medianoche como
+//     hacía la versión vieja) - por eso una reunión de la tarde puede dar
+//     un día menos de lo que un diff de calendario puro daría.
+// También, a diferencia de la versión anterior, un valor futuro da un
+// número NEGATIVO (así lo muestra AppSheet), ya no se nulea a "—".
 describe('calcularDiasDesde', () => {
   let calcularDiasDesde
 
@@ -73,22 +96,31 @@ describe('calcularDiasDesde', () => {
     calcularDiasDesde = mod.calcularDiasDesde
   })
 
-  test('calcula los días transcurridos desde la fecha dada', () => {
-    expect(calcularDiasDesde('2026-08-16T09:00:00', FECHA_REF)).toBe(10)
+  test('reproduce el cálculo real verificado contra el histórico (caso: ATC 2025)', () => {
+    expect(calcularDiasDesde('2026-07-15T14:00:00Z', null, new Date('2026-08-30T12:00:00Z'))).toBe(45)
   })
 
-  test('devuelve null si no hay fecha (nunca hubo reunión)', () => {
-    expect(calcularDiasDesde(null, FECHA_REF)).toBeNull()
-    expect(calcularDiasDesde(undefined, FECHA_REF)).toBeNull()
+  test('reproduce el cálculo real para otro caso (Conexion Market 2026)', () => {
+    expect(calcularDiasDesde('2026-08-25T13:00:00Z', null, new Date('2026-08-30T12:00:00Z'))).toBe(4)
   })
 
-  test('devuelve null si la fecha es posterior a la referencia (reunión agendada a futuro)', () => {
-    expect(calcularDiasDesde('2026-09-01T09:00:00', FECHA_REF)).toBeNull()
+  test('una reunión agendada a futuro da un número negativo, no null', () => {
+    expect(calcularDiasDesde('2026-09-01T14:00:00Z', null, new Date('2026-08-30T12:00:00Z'))).toBe(-3)
   })
 
-  test('cuenta por día calendario, no por horas exactas', () => {
-    // FECHA_REF es 2026-08-26T12:00; una reunión esa misma mañana da 0 días, no negativo
-    expect(calcularDiasDesde('2026-08-26T08:00:00', FECHA_REF)).toBe(0)
+  test('una reunión justo a la medianoche UTC de referencia da 0 días', () => {
+    expect(calcularDiasDesde('2026-08-30T00:00:00Z', null, new Date('2026-08-30T12:00:00Z'))).toBe(0)
+  })
+
+  test('sin ninguna reunión registrada nunca, cae al fallback: días desde el inicio de servicio', () => {
+    // inicio_servicio es una fecha pura (sin hora) - de 2026-06-30 a
+    // 2026-08-30 (medianoche UTC) son 61 días de calendario.
+    expect(calcularDiasDesde(null, '2026-06-30', new Date('2026-08-30T12:00:00Z'))).toBe(61)
+  })
+
+  test('sin reunión y sin inicio de servicio tampoco, no hay de dónde partir', () => {
+    expect(calcularDiasDesde(null, null, FECHA_REF)).toBeNull()
+    expect(calcularDiasDesde(undefined, undefined, FECHA_REF)).toBeNull()
   })
 })
 
@@ -135,29 +167,45 @@ describe('getActividadesEnRango', () => {
   })
 })
 
-describe('getActividadesDelMes', () => {
-  let getActividadesDelMes
+describe('getHorasDedicadasPorProspecto', () => {
+  let getHorasDedicadasPorProspecto
 
   beforeEach(async () => {
     vi.clearAllMocks()
     vi.resetModules()
     const mod = await import('../cronograma.js')
-    getActividadesDelMes = mod.getActividadesDelMes
+    getHorasDedicadasPorProspecto = mod.getHorasDedicadasPorProspecto
   })
 
-  test('acota la consulta al mes completo de la fecha de referencia (vía la RPC visible)', async () => {
+  test('agrega las horas server-side vía RPC (SUM+GROUP BY, no trae el historial completo) y arma un Map por prospecto_id', async () => {
     const { supabase } = await import('../../lib/supabase')
-    supabase.rpc.mockResolvedValueOnce({ data: [], error: null })
+    supabase.rpc.mockResolvedValueOnce({
+      data: [
+        { prospecto_id: 'p-1', horas_dedicadas: '368.10' },
+        { prospecto_id: 'p-2', horas_dedicadas: 92.5 }
+      ],
+      error: null
+    })
 
-    const fechaReferencia = new Date('2026-08-15T12:00:00')
-    await getActividadesDelMes(fechaReferencia)
+    const resultado = await getHorasDedicadasPorProspecto()
 
-    const args = supabase.rpc.mock.calls[0][1]
-    // Comparado en UTC contra el mismo cálculo (no contra un string fijo):
-    // en husos horarios negativos, el fin de mes en hora local cae del
-    // lado de septiembre al convertir a UTC — eso es correcto, no un bug.
-    expect(args.p_desde).toBe(moment(fechaReferencia).startOf('month').toISOString())
-    expect(args.p_hasta).toBe(moment(fechaReferencia).endOf('month').toISOString())
+    expect(supabase.rpc).toHaveBeenCalledWith('get_horas_dedicadas_por_prospecto')
+    expect(resultado.get('p-1')).toBe(368.1)
+    expect(resultado.get('p-2')).toBe(92.5)
+    expect(resultado.size).toBe(2)
+  })
+
+  test('devuelve un Map vacío si la RPC no trae nada', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.rpc.mockResolvedValueOnce({ data: null, error: null })
+    const resultado = await getHorasDedicadasPorProspecto()
+    expect(resultado.size).toBe(0)
+  })
+
+  test('propaga el error de la RPC', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.rpc.mockResolvedValueOnce({ data: null, error: new Error('rpc caída') })
+    await expect(getHorasDedicadasPorProspecto()).rejects.toThrow('rpc caída')
   })
 })
 
@@ -171,45 +219,41 @@ describe('getUltimasReunionesPorProspecto', () => {
     getUltimasReunionesPorProspecto = mod.getUltimasReunionesPorProspecto
   })
 
-  test('devuelve un Map con la fecha de la reunión más reciente por prospecto', async () => {
+  test('devuelve un Map con la fecha de la reunión más reciente por prospecto, vía RPC (no una consulta directa sujeta a la RLS del calendario)', async () => {
     const { supabase } = await import('../../lib/supabase')
-    const eqMock = vi.fn().mockReturnThis()
-    supabase.from.mockReturnValueOnce({
-      select: vi.fn().mockReturnThis(),
-      eq: eqMock,
-      lte: vi.fn().mockReturnThis(),
-      order: vi.fn().mockResolvedValueOnce({
-        data: [
-          { prospecto_id: 'p-1', inicio: '2026-08-20T10:00:00' },
-          { prospecto_id: 'p-2', inicio: '2026-08-18T10:00:00' },
-          { prospecto_id: 'p-1', inicio: '2026-08-05T10:00:00' } // más vieja: ya viene ordenado desc, se ignora
-        ],
-        error: null
-      })
+    supabase.rpc.mockResolvedValueOnce({
+      data: [
+        { prospecto_id: 'p-1', ultima_reunion: '2026-08-20T10:00:00+00:00' },
+        { prospecto_id: 'p-2', ultima_reunion: '2026-08-18T10:00:00+00:00' }
+      ],
+      error: null
     })
 
-    const resultado = await getUltimasReunionesPorProspecto(new Date('2026-08-26T12:00:00'))
+    const resultado = await getUltimasReunionesPorProspecto(new Date('2026-08-26T12:00:00Z'))
 
-    expect(eqMock).toHaveBeenCalledWith('reunion_cliente', true)
-    expect(resultado.get('p-1')).toBe('2026-08-20T10:00:00')
-    expect(resultado.get('p-2')).toBe('2026-08-18T10:00:00')
+    expect(supabase.rpc).toHaveBeenCalledWith('get_ultima_reunion_por_prospecto', {
+      p_hasta: moment(new Date('2026-08-26T12:00:00Z')).toISOString()
+    })
+    expect(resultado.get('p-1')).toBe('2026-08-20T10:00:00+00:00')
+    expect(resultado.get('p-2')).toBe('2026-08-18T10:00:00+00:00')
     expect(resultado.size).toBe(2)
   })
 
   test('ignora filas sin prospecto_id (categorías internas sin cliente real)', async () => {
     const { supabase } = await import('../../lib/supabase')
-    supabase.from.mockReturnValueOnce({
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      lte: vi.fn().mockReturnThis(),
-      order: vi.fn().mockResolvedValueOnce({
-        data: [{ prospecto_id: null, inicio: '2026-08-20T10:00:00' }],
-        error: null
-      })
+    supabase.rpc.mockResolvedValueOnce({
+      data: [{ prospecto_id: null, ultima_reunion: '2026-08-20T10:00:00+00:00' }],
+      error: null
     })
 
     const resultado = await getUltimasReunionesPorProspecto()
     expect(resultado.size).toBe(0)
+  })
+
+  test('propaga el error de la RPC', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.rpc.mockResolvedValueOnce({ data: null, error: new Error('rpc caída') })
+    await expect(getUltimasReunionesPorProspecto()).rejects.toThrow('rpc caída')
   })
 })
 
@@ -308,5 +352,54 @@ describe('resolverActividades', () => {
     const resultado = resolverActividades(actividades, PROSPECTOS)
     expect(resultado[0]).toMatchObject({ prospecto_nombre: 'Escobar', descripcion: 'Reunión mensual' })
     expect(resultado[1]).toMatchObject({ prospecto_nombre: 'Consultora', descripcion: 'Varios' })
+  })
+})
+
+// Regresión: `duracion_horas` no lo calcula ningún trigger de la base (se
+// verificó que no existe ninguno) - si saveActividad no la manda, la
+// columna queda NULL y el saldo de horas la ignora en silencio (cuenta 0
+// para esa actividad). Antes, nada en el código la seteaba nunca.
+describe('saveActividad calcula duracion_horas', () => {
+  let saveActividad
+  let insertMock, updateMock, selectMock, singleMock, eqMock, fromMock
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const { supabase } = await import('../../lib/supabase')
+    insertMock = vi.fn()
+    updateMock = vi.fn()
+    selectMock = vi.fn()
+    singleMock = vi.fn().mockResolvedValue({ data: {}, error: null })
+    eqMock = vi.fn()
+    fromMock = vi.fn(() => ({ insert: insertMock, update: updateMock }))
+    supabase.from.mockImplementation(fromMock)
+    insertMock.mockReturnValue({ select: selectMock })
+    updateMock.mockReturnValue({ eq: eqMock })
+    eqMock.mockReturnValue({ select: selectMock })
+    selectMock.mockReturnValue({ single: singleMock })
+
+    const mod = await import('../cronograma.js')
+    saveActividad = mod.saveActividad
+  })
+
+  test('al crear, calcula duracion_horas a partir de inicio/fin y la incluye en el insert', async () => {
+    await saveActividad({
+      prospecto_id: 'p-1',
+      inicio: '2026-08-27T09:00:00',
+      fin: '2026-08-27T12:30:00'
+    })
+
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({ duracion_horas: 3.5 }))
+  })
+
+  test('al editar, recalcula duracion_horas (por si cambió el horario) y la incluye en el update', async () => {
+    await saveActividad({
+      id: 'act-1',
+      inicio: '2026-08-27T09:00:00',
+      fin: '2026-08-27T13:15:00'
+    })
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ duracion_horas: 4.25 }))
   })
 })

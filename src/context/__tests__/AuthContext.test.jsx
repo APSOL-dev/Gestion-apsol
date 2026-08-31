@@ -187,3 +187,48 @@ describe('Contexto AuthContext', () => {
     expect(screen.getByTestId('es-duenio')).toHaveTextContent('si')
   })
 })
+
+// ──────────────────────────────────────────────────────────────
+// BUG REAL (deadlock del lock de auth):
+// El callback de `onAuthStateChange` corre CON EL LOCK DE AUTH TOMADO por
+// auth-js. Si adentro se hace otra llamada a Supabase (cargarPerfil ->
+// supabase.from('apsol_usuarios')), esa llamada pide el token, que vuelve a
+// pedir el mismo lock -> espera los 5s de `lockAcquireTimeout` y recién ahí
+// lo roba. Medido en el navegador de Adrián: getSession() tardaba 5020ms.
+//
+// Efecto: el arranque se traba, salta el "[Auth] Timeout de seguridad" y los
+// 12 módulos de la precarga vencen por timeout -> "no carga nada".
+//
+// Regla: el callback NO debe disparar consultas a Supabase de forma
+// sincrónica; la carga del perfil se difiere para que el callback devuelva
+// (y libere el lock) primero.
+// ──────────────────────────────────────────────────────────────
+describe('AuthContext — no bloquear el lock de auth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    supabase._resetResultados()
+  })
+
+  it('no consulta Supabase de forma sincrónica dentro del callback de onAuthStateChange', async () => {
+    supabase.auth.getSession.mockResolvedValue({ data: { session: null } })
+    let callback
+    supabase.auth.onAuthStateChange.mockImplementation((cb) => {
+      callback = cb
+      return { data: { subscription: { unsubscribe: vi.fn() } } }
+    })
+
+    render(<AuthProvider><TestConsumer /></AuthProvider>)
+    await waitFor(() => expect(callback).toBeDefined())
+
+    supabase._mockFrom.mockClear()
+    const sesion = { user: { id: 'u1', email: 'a@apsol.com' } }
+
+    // El callback debe devolver SIN haber consultado todavía: mientras el
+    // callback corre, el lock de auth está tomado.
+    await callback('SIGNED_IN', sesion)
+    expect(supabase._mockFrom).not.toHaveBeenCalled()
+
+    // Diferido: después del tick, sí carga el perfil.
+    await waitFor(() => expect(supabase._mockFrom).toHaveBeenCalled())
+  })
+})

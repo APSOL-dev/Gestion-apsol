@@ -77,31 +77,48 @@ export function AuthProvider({ children }) {
 
     inicializar()
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       // Si ya inicializó getSession, ignoramos el INITIAL_SESSION duplicado
       if (event === 'INITIAL_SESSION' && inicializado) return
 
       console.log('[Auth] Evento de sesión:', event)
       if (!activo) return
 
-      try {
-        if (session?.user) {
-          setUser(session.user)
-          const prof = await cargarPerfil(session.user.id, session.user.email)
-          if (!activo) return
-          setPerfil(prof)
-        } else {
-          setUser(null)
-          setPerfil(null)
-        }
-      } catch (err) {
-        console.error('[Auth] Error en cambio de estado de sesión:', err)
-      } finally {
-        if (activo) {
-          inicializado = true
-          setLoading(false)
-        }
+      // IMPORTANTE: este callback corre CON EL LOCK DE AUTH TOMADO por
+      // auth-js. Hacer acá adentro otra llamada a Supabase (cargarPerfil ->
+      // supabase.from(...)) pide el token, que vuelve a pedir el MISMO lock:
+      // se traba hasta que vence lockAcquireTimeout (5s) y recién ahí lo roba.
+      // Medido en el navegador de Adrián: getSession() tardaba 5020ms, saltaba
+      // el "[Auth] Timeout de seguridad" y los 12 módulos de la precarga
+      // vencían por timeout — la app "no cargaba nada".
+      //
+      // Por eso el callback solo hace trabajo sin red y devuelve enseguida
+      // (liberando el lock); la carga del perfil se difiere a un tick
+      // posterior. `loading` se apaga recién cuando el perfil está, para no
+      // renderizar rutas antes de saber el rol.
+      if (!session?.user) {
+        setUser(null)
+        setPerfil(null)
+        inicializado = true
+        setLoading(false)
+        return
       }
+
+      setUser(session.user)
+      setTimeout(async () => {
+        if (!activo) return
+        try {
+          const prof = await cargarPerfil(session.user.id, session.user.email)
+          if (activo) setPerfil(prof)
+        } catch (err) {
+          console.error('[Auth] Error al cargar el perfil:', err)
+        } finally {
+          if (activo) {
+            inicializado = true
+            setLoading(false)
+          }
+        }
+      }, 0)
     })
 
     return () => {
