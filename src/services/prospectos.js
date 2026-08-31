@@ -1,5 +1,14 @@
 import { supabase } from '../lib/supabase'
 
+// El formulario ya no obliga a elegir un contacto único para el prospecto
+// (se muestran todos los de la empresa como lista) - el estado del form
+// arranca en '' para ese campo. La columna contacto_id sigue siendo UUID
+// en la base, así que ese '' hay que convertirlo a null antes de guardar,
+// o Postgres tira "invalid input syntax for type uuid".
+export function normalizarContactoId(contactoId) {
+  return contactoId || null
+}
+
 export async function uploadFile(file) {
   const fileExt = file.name.split('.').pop()
   const fileName = `${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`

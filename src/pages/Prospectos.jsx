@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, FolderKanban, Building2, User, ChevronRight, ChevronDown } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { getEstadoProspectoStyle } from '../utils/formateo'
+import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import ProspectoDrawer from '../components/ProspectoDrawer'
 
 export default function Prospectos() {
@@ -68,6 +69,25 @@ export default function Prospectos() {
     const esHistorico = e.includes('h -') || e.includes('finalizado')
     return filtroActivos ? !esHistorico : esHistorico
   })
+
+  // ─── Navegación por teclado (↑↓ entre filas, Enter abre, Esc cierra) ────────
+  // Solo son "navegables" las filas de las secciones expandidas, en el orden
+  // en que se ven.
+  const filasVisibles = estadosAMostrar.flatMap(estado =>
+    expandidos[estado] ? (prospectosPorEstado[estado] || []) : []
+  )
+  const indicePorId = new Map(filasVisibles.map((p, i) => [p.id, i]))
+
+  const { activo: filaActiva } = useNavegacionLista({
+    total: filasVisibles.length,
+    onActivar: (i) => setProspectoSeleccionadoId(filasVisibles[i]?.id ?? null),
+    global: !prospectoSeleccionadoId,
+  })
+
+  const filaActivaRef = useRef(null)
+  useEffect(() => {
+    filaActivaRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [filaActiva])
 
   return (
     <div className="page">
@@ -188,11 +208,16 @@ export default function Prospectos() {
                         </tr>
                       </thead>
                       <tbody>
-                        {items.map((prospecto) => (
-                          <tr 
+                        {items.map((prospecto) => {
+                          const idxFila = indicePorId.get(prospecto.id)
+                          const filaSeleccionada = idxFila === filaActiva
+                          return (
+                          <tr
                             key={prospecto.id}
+                            ref={filaSeleccionada ? filaActivaRef : null}
+                            aria-selected={filaSeleccionada}
                             onClick={() => setProspectoSeleccionadoId(prospecto.id)}
-                            style={{ cursor: 'pointer' }}
+                            style={{ cursor: 'pointer', background: filaSeleccionada ? 'var(--color-surface2, #eef2ff)' : undefined }}
                           >
                             <td style={{ paddingLeft: '20px' }}>
                               <div style={{ fontWeight: '600', color: 'var(--color-text)', fontSize: '14px' }}>
@@ -255,7 +280,8 @@ export default function Prospectos() {
                               <ChevronRight size={16} style={{ opacity: 0.2 }} />
                             </td>
                           </tr>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>

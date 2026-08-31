@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, FileText, Target, Calendar } from 'lucide-react'
 import { useData } from '../context/DataContext'
 
 export default function Proyectos() {
+  const navigate = useNavigate()
   const { proyectos, loadingProyectos, refreshProyectos } = useData()
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Activo')
@@ -87,9 +88,13 @@ export default function Proyectos() {
             </thead>
             <tbody>
               {proyectosFiltrados.map((p) => (
-                <tr key={p.id}>
+                <tr key={p.id} onClick={() => navigate(`/proyectos/${p.id}`)} style={{ cursor: 'pointer' }}>
                   <td>
-                    <Link to={`/proyectos/${p.id}`} style={{ color: 'inherit', textDecoration: 'none', fontWeight: '500' }}>
+                    <Link
+                      to={`/proyectos/${p.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ color: 'inherit', textDecoration: 'none', fontWeight: '500' }}
+                    >
                       {p.nombre}
                     </Link>
                   </td>

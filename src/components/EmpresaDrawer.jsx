@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { X, Pencil, Trash2, MapPin, Briefcase, Users, Target, FileText, Mail, Phone, ChevronDown, ChevronRight } from 'lucide-react'
 import { getEmpresaById, deleteEmpresa } from '../services/empresas'
 import { getEstadoProspectoStyle } from '../utils/formateo'
+import { useDrawerTeclado } from '../hooks/useDrawerTeclado'
 
 export default function EmpresaDrawer({ id, onClose, onChanged }) {
   const navigate = useNavigate()
@@ -12,6 +13,11 @@ export default function EmpresaDrawer({ id, onClose, onChanged }) {
   const [error, setError] = useState('')
   const [eliminando, setEliminando] = useState(false)
   const [contactoExpandidoId, setContactoExpandidoId] = useState(null)
+  const panelRef = useRef(null)
+
+  // Esc cierra, Tab queda atrapado dentro del panel, y el foco vuelve al
+  // disparador al cerrar. Ver src/hooks/useDrawerTeclado.js
+  useDrawerTeclado({ onClose, panelRef, activo: !!id })
 
   async function cargarDetalle() {
     setLoading(true)
@@ -70,6 +76,10 @@ export default function EmpresaDrawer({ id, onClose, onChanged }) {
       {/* Panel lateral */}
       <div
         data-testid="drawer-panel"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
         style={{
           position: 'fixed', top: 0, right: 0, bottom: 0, width: '460px',
           backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0, 0, 0, 0.15)',

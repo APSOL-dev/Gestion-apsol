@@ -47,7 +47,7 @@ export default function ContactoDetalle() {
     provincia: '',
     industria: '',
     tamaño_personas: '',
-    dias_espera_facturacion: 5
+    dias_espera_facturacion: 4
   })
 
   const [loading, setLoading] = useState(true)
@@ -112,12 +112,12 @@ export default function ContactoDetalle() {
         provincia: nuevaEmpresa.provincia,
         industria: nuevaEmpresa.industria,
         tamaño_personas: Number(nuevaEmpresa.tamaño_personas),
-        dias_espera_facturacion: Number(nuevaEmpresa.dias_espera_facturacion) || 5
+        dias_espera_facturacion: Number(nuevaEmpresa.dias_espera_facturacion) || 4
       })
       setEmpresas(prev => [...prev, saved].sort((a, b) => a.nombre.localeCompare(b.nombre)))
       setContacto(prev => ({ ...prev, empresa_id: saved.id }))
       setShowNuevaEmpresa(false)
-      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 5 })
+      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 4 })
     } catch (err) {
       alert('Error al crear la empresa. Intente nuevamente.')
     } finally {

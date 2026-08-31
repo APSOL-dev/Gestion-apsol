@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, Receipt, ChevronRight, ChevronLeft } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import FacturacionDrawer from '../components/FacturacionDrawer'
 
 const FACTURAS_POR_PAGINA = 20
@@ -152,6 +153,20 @@ export default function Facturacion() {
     }
     filasARenderizar.push({ tipo: 'factura', grupo, factura })
   })
+
+  // Navegación por teclado: ↑↓ recorren las facturas de la página (los
+  // encabezados de grupo no cuentan), Enter abre el drawer, Esc lo cierra.
+  const filasNavegables = filasPagina.map(f => f.factura)
+  const indiceFacturaPorId = new Map(filasNavegables.map((f, i) => [f.id, i]))
+  const { activo: filaActiva } = useNavegacionLista({
+    total: filasNavegables.length,
+    onActivar: (i) => setFacturaSeleccionadaId(filasNavegables[i]?.id ?? null),
+    global: !facturaSeleccionadaId,
+  })
+  const filaActivaRef = useRef(null)
+  useEffect(() => {
+    filaActivaRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [filaActiva])
 
   return (
     <div className="page" style={{ padding: '24px' }}>
@@ -350,13 +365,17 @@ export default function Facturacion() {
                     }
 
                     const factura = fila.factura
+                    const filaSeleccionada = indiceFacturaPorId.get(factura.id) === filaActiva
                     return (
                       <tr
                         key={factura.id}
+                        ref={filaSeleccionada ? filaActivaRef : null}
+                        aria-selected={filaSeleccionada}
                         onClick={() => setFacturaSeleccionadaId(factura.id)}
                         style={{
                           cursor: 'pointer',
-                          borderBottom: '1px solid #eee'
+                          borderBottom: '1px solid #eee',
+                          backgroundColor: filaSeleccionada ? 'var(--color-surface2, #eef2ff)' : undefined
                         }}
                         className="hover-row-effect"
                       >

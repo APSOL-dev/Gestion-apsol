@@ -8,6 +8,7 @@ import {
 } from '../services/capacitacion'
 import { useAuth } from '../context/AuthContext'
 import { supabase, supabaseUrl } from '../lib/supabase'
+import CapacitacionChat from '../components/CapacitacionChat'
 
 export default function CapacitacionDetalle() {
   const { id } = useParams()
@@ -455,6 +456,8 @@ export default function CapacitacionDetalle() {
         )}
 
       </div>
+
+      <CapacitacionChat />
     </div>
   )
 }

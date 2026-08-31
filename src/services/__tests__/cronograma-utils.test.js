@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest'
 import moment from 'moment'
 
 vi.mock('../../lib/supabase', () => ({
-  supabase: { from: vi.fn() }
+  supabase: { from: vi.fn(), rpc: vi.fn() }
 }))
 
 // ──────────────────────────────────────────────────────────────
@@ -108,18 +108,30 @@ describe('getActividadesEnRango', () => {
     getActividadesEnRango = mod.getActividadesEnRango
   })
 
-  test('filtra por rango de fechas en el servidor (gte/lte sobre inicio)', async () => {
+  test('lee por la RPC apsol_cronograma_visible (redacción por rol server-side), no de la tabla directa', async () => {
     const { supabase } = await import('../../lib/supabase')
-    const gte = vi.fn().mockReturnThis()
-    const lte = vi.fn().mockReturnThis()
-    const order = vi.fn().mockResolvedValueOnce({ data: [{ id: '1' }], error: null })
-    supabase.from.mockReturnValueOnce({ select: vi.fn().mockReturnThis(), gte, lte, order })
+    supabase.rpc.mockResolvedValueOnce({ data: [{ id: '1' }, { id: '2', descripcion: 'Ocupado' }], error: null })
 
     const resultado = await getActividadesEnRango('2026-08-01T00:00:00.000Z', '2026-08-31T23:59:59.999Z')
 
-    expect(gte).toHaveBeenCalledWith('inicio', '2026-08-01T00:00:00.000Z')
-    expect(lte).toHaveBeenCalledWith('inicio', '2026-08-31T23:59:59.999Z')
-    expect(resultado).toEqual([{ id: '1' }])
+    expect(supabase.rpc).toHaveBeenCalledWith('apsol_cronograma_visible', {
+      p_desde: '2026-08-01T00:00:00.000Z',
+      p_hasta: '2026-08-31T23:59:59.999Z'
+    })
+    expect(supabase.from).not.toHaveBeenCalled()
+    expect(resultado).toEqual([{ id: '1' }, { id: '2', descripcion: 'Ocupado' }])
+  })
+
+  test('devuelve [] si la RPC no trae nada', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.rpc.mockResolvedValueOnce({ data: null, error: null })
+    expect(await getActividadesEnRango('a', 'b')).toEqual([])
+  })
+
+  test('propaga el error de la RPC', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.rpc.mockResolvedValueOnce({ data: null, error: new Error('rpc caída') })
+    await expect(getActividadesEnRango('a', 'b')).rejects.toThrow('rpc caída')
   })
 })
 
@@ -133,21 +145,19 @@ describe('getActividadesDelMes', () => {
     getActividadesDelMes = mod.getActividadesDelMes
   })
 
-  test('acota la consulta al mes completo de la fecha de referencia', async () => {
+  test('acota la consulta al mes completo de la fecha de referencia (vía la RPC visible)', async () => {
     const { supabase } = await import('../../lib/supabase')
-    const gte = vi.fn().mockReturnThis()
-    const lte = vi.fn().mockReturnThis()
-    const order = vi.fn().mockResolvedValueOnce({ data: [], error: null })
-    supabase.from.mockReturnValueOnce({ select: vi.fn().mockReturnThis(), gte, lte, order })
+    supabase.rpc.mockResolvedValueOnce({ data: [], error: null })
 
     const fechaReferencia = new Date('2026-08-15T12:00:00')
     await getActividadesDelMes(fechaReferencia)
 
+    const args = supabase.rpc.mock.calls[0][1]
     // Comparado en UTC contra el mismo cálculo (no contra un string fijo):
     // en husos horarios negativos, el fin de mes en hora local cae del
     // lado de septiembre al convertir a UTC — eso es correcto, no un bug.
-    expect(gte.mock.calls[0][1]).toBe(moment(fechaReferencia).startOf('month').toISOString())
-    expect(lte.mock.calls[0][1]).toBe(moment(fechaReferencia).endOf('month').toISOString())
+    expect(args.p_desde).toBe(moment(fechaReferencia).startOf('month').toISOString())
+    expect(args.p_hasta).toBe(moment(fechaReferencia).endOf('month').toISOString())
   })
 })
 

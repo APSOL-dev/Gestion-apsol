@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState, useRef, useEffect } from 'react'
 import { getFacturas } from '../services/facturacion'
 import { getProspectos } from '../services/prospectos'
 import { getColaboradores } from '../services/colaboradores'
@@ -12,14 +12,22 @@ import { getCredenciales } from '../services/credenciales'
 import { getValoresUVA } from '../services/valoresUva'
 import { sincronizarHistoricoUVA } from '../services/sincronizacionUva'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
+import { crearRefrescador } from '../utils/precargaModulo'
 import { useAuth } from './AuthContext'
 
 const DataContext = createContext({})
 
+// Cuánto vale una precarga antes de re-consultar la red. Ir y volver entre
+// pantallas dentro de esta ventana NO dispara más requests: usa lo cacheado.
+const TTL_MS = 90_000
+// Corte para que una request colgada (cliente de Supabase trabado en un
+// refresh de token) no deje una pantalla en "Cargando..." para siempre.
+const TIMEOUT_MS = 12_000
+
 export function DataProvider({ children }) {
   const { user } = useAuth()
 
-  // 14 Módulos de datos
+  // 13 módulos de datos
   const [facturas, setFacturas] = useState([])
   const [prospectos, setProspectos] = useState([])
   const [colaboradores, setColaboradores] = useState([])
@@ -49,150 +57,47 @@ export function DataProvider({ children }) {
   const [loadingValoresUVA, setLoadingValoresUVA] = useState(false)
   const [loadingCuentasBancarias, setLoadingCuentasBancarias] = useState(false)
 
-  // Métodos de refresco individual
-  async function refreshFacturas(silencioso = false) {
-    if (!silencioso) setLoadingFacturas(true)
-    try {
-      const data = await getFacturas()
-      setFacturas(data || [])
-    } catch (err) {
-      console.error('Error al precargar facturas:', err)
-    } finally {
-      setLoadingFacturas(false)
-    }
+  // Estados de error individual (para que una pantalla pueda ofrecer
+  // "Reintentar" en vez de spinner infinito o lista vacía muda)
+  const [errorFacturas, setErrorFacturas] = useState(false)
+  const [errorProspectos, setErrorProspectos] = useState(false)
+  const [errorColaboradores, setErrorColaboradores] = useState(false)
+  const [errorEmpresas, setErrorEmpresas] = useState(false)
+  const [errorContactos, setErrorContactos] = useState(false)
+  const [errorProyectos, setErrorProyectos] = useState(false)
+  const [errorTickets, setErrorTickets] = useState(false)
+  const [errorPreventivos, setErrorPreventivos] = useState(false)
+  const [errorCapacitaciones, setErrorCapacitaciones] = useState(false)
+  const [errorPlanes, setErrorPlanes] = useState(false)
+  const [errorCredenciales, setErrorCredenciales] = useState(false)
+  const [errorValoresUVA, setErrorValoresUVA] = useState(false)
+  const [errorCuentasBancarias, setErrorCuentasBancarias] = useState(false)
+
+  // Metadata de caché por módulo (no es estado: no queremos re-render al tocarla)
+  const cacheMeta = useRef({})
+  function metaDe(clave) {
+    return cacheMeta.current[clave] || (cacheMeta.current[clave] = { ultimaCargaOk: 0, enVuelo: null })
+  }
+  function nuevoRefrescador(clave, getter, setData, setLoading, setError) {
+    return crearRefrescador({
+      clave, getter, meta: metaDe(clave), setData, setLoading, setError,
+      ttlMs: TTL_MS, timeoutMs: TIMEOUT_MS
+    })
   }
 
-  async function refreshProspectos(silencioso = false) {
-    if (!silencioso) setLoadingProspectos(true)
-    try {
-      const data = await getProspectos({ soloActivos: false })
-      setProspectos(data || [])
-    } catch (err) {
-      console.error('Error al precargar prospectos:', err)
-    } finally {
-      setLoadingProspectos(false)
-    }
-  }
-
-  async function refreshColaboradores(silencioso = false) {
-    if (!silencioso) setLoadingColaboradores(true)
-    try {
-      const data = await getColaboradores()
-      setColaboradores(data || [])
-    } catch (err) {
-      console.error('Error al precargar colaboradores:', err)
-    } finally {
-      setLoadingColaboradores(false)
-    }
-  }
-
-  async function refreshEmpresas(silencioso = false) {
-    if (!silencioso) setLoadingEmpresas(true)
-    try {
-      const data = await getEmpresas()
-      setEmpresas(data || [])
-    } catch (err) {
-      console.error('Error al precargar empresas:', err)
-    } finally {
-      setLoadingEmpresas(false)
-    }
-  }
-
-  async function refreshContactos(silencioso = false) {
-    if (!silencioso) setLoadingContactos(true)
-    try {
-      const data = await getContactos()
-      setContactos(data || [])
-    } catch (err) {
-      console.error('Error al precargar contactos:', err)
-    } finally {
-      setLoadingContactos(false)
-    }
-  }
-
-  async function refreshProyectos(silencioso = false) {
-    if (!silencioso) setLoadingProyectos(true)
-    try {
-      const data = await getProyectos()
-      setProyectos(data || [])
-    } catch (err) {
-      console.error('Error al precargar proyectos:', err)
-    } finally {
-      setLoadingProyectos(false)
-    }
-  }
-
-  async function refreshTickets(silencioso = false) {
-    if (!silencioso) setLoadingTickets(true)
-    try {
-      const data = await getTickets()
-      setTickets(data || [])
-    } catch (err) {
-      console.error('Error al precargar tickets:', err)
-    } finally {
-      setLoadingTickets(false)
-    }
-  }
-
-  async function refreshPreventivos(silencioso = false) {
-    if (!silencioso) setLoadingPreventivos(true)
-    try {
-      const data = await getPreventivos()
-      setPreventivos(data || [])
-    } catch (err) {
-      console.error('Error al precargar preventivos:', err)
-    } finally {
-      setLoadingPreventivos(false)
-    }
-  }
-
-  async function refreshCapacitaciones(silencioso = false) {
-    if (!silencioso) setLoadingCapacitaciones(true)
-    try {
-      const data = await getCapacitaciones()
-      setCapacitaciones(data || [])
-    } catch (err) {
-      console.error('Error al precargar capacitaciones:', err)
-    } finally {
-      setLoadingCapacitaciones(false)
-    }
-  }
-
-  async function refreshPlanes(silencioso = false) {
-    if (!silencioso) setLoadingPlanes(true)
-    try {
-      const data = await getPlanes()
-      setPlanes(data || [])
-    } catch (err) {
-      console.error('Error al precargar planes:', err)
-    } finally {
-      setLoadingPlanes(false)
-    }
-  }
-
-  async function refreshCredenciales(silencioso = false) {
-    if (!silencioso) setLoadingCredenciales(true)
-    try {
-      const data = await getCredenciales()
-      setCredenciales(data || [])
-    } catch (err) {
-      console.error('Error al precargar credenciales:', err)
-    } finally {
-      setLoadingCredenciales(false)
-    }
-  }
-
-  async function refreshValoresUVA(silencioso = false) {
-    if (!silencioso) setLoadingValoresUVA(true)
-    try {
-      const data = await getValoresUVA()
-      setValoresUVA(data || [])
-    } catch (err) {
-      console.error('Error al precargar valores UVA:', err)
-    } finally {
-      setLoadingValoresUVA(false)
-    }
-  }
+  const refreshFacturas = nuevoRefrescador('facturas', getFacturas, setFacturas, setLoadingFacturas, setErrorFacturas)
+  const refreshProspectos = nuevoRefrescador('prospectos', () => getProspectos({ soloActivos: false }), setProspectos, setLoadingProspectos, setErrorProspectos)
+  const refreshColaboradores = nuevoRefrescador('colaboradores', getColaboradores, setColaboradores, setLoadingColaboradores, setErrorColaboradores)
+  const refreshEmpresas = nuevoRefrescador('empresas', getEmpresas, setEmpresas, setLoadingEmpresas, setErrorEmpresas)
+  const refreshContactos = nuevoRefrescador('contactos', getContactos, setContactos, setLoadingContactos, setErrorContactos)
+  const refreshProyectos = nuevoRefrescador('proyectos', getProyectos, setProyectos, setLoadingProyectos, setErrorProyectos)
+  const refreshTickets = nuevoRefrescador('tickets', getTickets, setTickets, setLoadingTickets, setErrorTickets)
+  const refreshPreventivos = nuevoRefrescador('preventivos', getPreventivos, setPreventivos, setLoadingPreventivos, setErrorPreventivos)
+  const refreshCapacitaciones = nuevoRefrescador('capacitaciones', getCapacitaciones, setCapacitaciones, setLoadingCapacitaciones, setErrorCapacitaciones)
+  const refreshPlanes = nuevoRefrescador('planes', getPlanes, setPlanes, setLoadingPlanes, setErrorPlanes)
+  const refreshCredenciales = nuevoRefrescador('credenciales', getCredenciales, setCredenciales, setLoadingCredenciales, setErrorCredenciales)
+  const refreshValoresUVA = nuevoRefrescador('valoresUVA', getValoresUVA, setValoresUVA, setLoadingValoresUVA, setErrorValoresUVA)
+  const refreshCuentasBancarias = nuevoRefrescador('cuentasBancarias', getCuentasBancarias, setCuentasBancarias, setLoadingCuentasBancarias, setErrorCuentasBancarias)
 
   // Sincroniza en segundo plano las cotizaciones UVA faltantes desde la API
   // pública (Argentina Datos) al abrir la app. Solo inserta fechas que
@@ -201,119 +106,51 @@ export function DataProvider({ children }) {
     try {
       const { insertados } = await sincronizarHistoricoUVA()
       if (insertados > 0) {
-        await refreshValoresUVA(true)
+        await refreshValoresUVA({ silencioso: true, forzar: true })
       }
     } catch (err) {
       console.error('Error al sincronizar histórico de valores UVA:', err)
     }
   }
 
-  async function refreshCuentasBancarias(silencioso = false) {
-    if (!silencioso) setLoadingCuentasBancarias(true)
-    try {
-      const data = await getCuentasBancarias()
-      setCuentasBancarias(data || [])
-    } catch (err) {
-      console.error('Error al precargar cuentas bancarias:', err)
-    } finally {
-      setLoadingCuentasBancarias(false)
-    }
-  }
-
-  // Precarga global de todo al iniciar sesión
+  // Precarga al iniciar sesión: SOLO los módulos que se usan siempre. El
+  // resto (proyectos, tickets, preventivos, capacitación, planes,
+  // credenciales, cuentas bancarias) se trae al entrar a su pantalla por
+  // primera vez, y con el TTL ya no se re-consulta en cada navegación.
   useEffect(() => {
     if (user) {
-      // Disparar precargas silenciosas en paralelo al iniciar sesión.
-      // `cronograma` y `valores_uva` quedaron afuera a propósito: son las
-      // dos tablas grandes (4400+ y 3800+ filas, creciendo) y la mayoría de
-      // los logins no visita esas pantallas. Cronograma ahora pide sus
-      // propios recortes acotados (ver pages/Cronograma.jsx) y ValoresUVA
-      // se autocarga al entrar a esa pantalla — precargarlas siempre acá
-      // era puro desperdicio.
-      refreshFacturas(true)
-      refreshProspectos(true)
-      refreshColaboradores(true)
-      refreshEmpresas(true)
-      refreshContactos(true)
-      refreshProyectos(true)
-      refreshTickets(true)
-      refreshPreventivos(true)
-      refreshCapacitaciones(true)
-      refreshPlanes(true)
-      refreshCredenciales(true)
-      refreshCuentasBancarias(true)
+      refreshFacturas({ silencioso: true, forzar: true })
+      refreshProspectos({ silencioso: true, forzar: true })
+      refreshColaboradores({ silencioso: true, forzar: true })
+      refreshEmpresas({ silencioso: true, forzar: true })
+      refreshContactos({ silencioso: true, forzar: true })
       sincronizarValoresUVA()
     } else {
-      // Limpiar datos al cerrar sesión
-      setFacturas([])
-      setProspectos([])
-      setColaboradores([])
-      setEmpresas([])
-      setContactos([])
-      setProyectos([])
-      setTickets([])
-      setPreventivos([])
-      setCapacitaciones([])
-      setPlanes([])
-      setCredenciales([])
-      setValoresUVA([])
+      // Limpiar datos y metadata de caché al cerrar sesión
+      cacheMeta.current = {}
+      setFacturas([]); setProspectos([]); setColaboradores([]); setEmpresas([])
+      setContactos([]); setProyectos([]); setTickets([]); setPreventivos([])
+      setCapacitaciones([]); setPlanes([]); setCredenciales([]); setValoresUVA([])
       setCuentasBancarias([])
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   return (
     <DataContext.Provider value={{
-      facturas,
-      loadingFacturas,
-      refreshFacturas,
-
-      prospectos,
-      loadingProspectos,
-      refreshProspectos,
-
-      colaboradores,
-      loadingColaboradores,
-      refreshColaboradores,
-
-      empresas,
-      loadingEmpresas,
-      refreshEmpresas,
-
-      contactos,
-      loadingContactos,
-      refreshContactos,
-
-      proyectos,
-      loadingProyectos,
-      refreshProyectos,
-
-      tickets,
-      loadingTickets,
-      refreshTickets,
-
-      preventivos,
-      loadingPreventivos,
-      refreshPreventivos,
-
-      capacitaciones,
-      loadingCapacitaciones,
-      refreshCapacitaciones,
-
-      planes,
-      loadingPlanes,
-      refreshPlanes,
-
-      credenciales,
-      loadingCredenciales,
-      refreshCredenciales,
-
-      valoresUVA,
-      loadingValoresUVA,
-      refreshValoresUVA,
-
-      cuentasBancarias,
-      loadingCuentasBancarias,
-      refreshCuentasBancarias
+      facturas, loadingFacturas, errorFacturas, refreshFacturas,
+      prospectos, loadingProspectos, errorProspectos, refreshProspectos,
+      colaboradores, loadingColaboradores, errorColaboradores, refreshColaboradores,
+      empresas, loadingEmpresas, errorEmpresas, refreshEmpresas,
+      contactos, loadingContactos, errorContactos, refreshContactos,
+      proyectos, loadingProyectos, errorProyectos, refreshProyectos,
+      tickets, loadingTickets, errorTickets, refreshTickets,
+      preventivos, loadingPreventivos, errorPreventivos, refreshPreventivos,
+      capacitaciones, loadingCapacitaciones, errorCapacitaciones, refreshCapacitaciones,
+      planes, loadingPlanes, errorPlanes, refreshPlanes,
+      credenciales, loadingCredenciales, errorCredenciales, refreshCredenciales,
+      valoresUVA, loadingValoresUVA, errorValoresUVA, refreshValoresUVA,
+      cuentasBancarias, loadingCuentasBancarias, errorCuentasBancarias, refreshCuentasBancarias
     }}>
       {children}
     </DataContext.Provider>
