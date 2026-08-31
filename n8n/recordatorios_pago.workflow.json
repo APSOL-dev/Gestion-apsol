@@ -1,0 +1,173 @@
+{
+  "name": "APSOL — Recordatorios de pago",
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 9 * * *" }
+          ]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "Cron diario 09:00 (AR)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-40, 300],
+      "notes": "Corre todos los días a las 09:00 hora Argentina (timezone del workflow). Reclama pagos de facturas Pendientes cuya proxima_notificacion ya venció."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM public.apsol_recordatorios_pago;",
+        "options": {}
+      },
+      "id": "db-leer",
+      "name": "Leer facturas a reclamar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [200, 300],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase APSOL (postgres)" }
+      },
+      "notes": "Vista apsol_recordatorios_pago: 1 fila por factura Pendiente con proxima_notificacion <= hoy (o NULL). Ya trae todo desnormalizado (empresa, contacto+telefono+email, cuenta bancaria, dias_mora, dias_espera_facturacion). Si devuelve 0 filas, el resto del workflow no corre."
+    },
+    {
+      "parameters": {
+        "options": { "reset": false }
+      },
+      "id": "loop",
+      "name": "Por cada factura",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [440, 300],
+      "notes": "batchSize 1 (default). Salida 'done' (0) = al terminar todas. Salida 'loop' (1) = cuerpo del ciclo."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Arma el texto de WhatsApp y el HTML del email para UNA factura.\n// Tono APSOL: profesional cálido, directo, argentino, sin sonar a IA.\n\nconst f = $json;\n\n// --- Normalización de teléfono a formato Evolution API (AR): 549XXXXXXXXXX ---\nfunction telAR(raw) {\n  let d = String(raw || '').replace(/\\D/g, '');\n  if (!d) return null;\n  d = d.replace(/^00/, '');\n  if (d.startsWith('54')) {\n    if (!d.startsWith('549')) d = '549' + d.slice(2);\n  } else if (d.startsWith('0')) {\n    d = '549' + d.slice(1);\n  } else {\n    d = '549' + d;\n  }\n  return d;\n}\n\n// --- Formato de plata AR ---\nconst montoFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' })\n  .format(Number(f.monto || 0));\n\n// --- Fecha dd/mm/aaaa ---\nconst [y, m, d] = String(f.fecha_emision).slice(0, 10).split('-');\nconst fechaFmt = `${d}/${m}/${y}`;\n\nconst nombre = (f.contacto_nombre || '').trim() || 'buen día';\nconst nroFactura = f.numero_factura ? `N° ${f.numero_factura}` : 'de servicios';\nconst mora = Number(f.dias_mora || 0);\nconst moraTxt = mora > 0 ? ` (hace ${mora} día${mora === 1 ? '' : 's'})` : '';\nconst esReiteracion = Number(f.recordatorios_enviados || 0) >= 1;\n\nconst apertura = esReiteracion\n  ? `Hola ${nombre}, te reitero el aviso por la factura ${nroFactura} de ${f.empresa_nombre}.`\n  : `Hola ${nombre}, ¿cómo va? Te escribo de APSOL por la factura ${nroFactura} de ${f.empresa_nombre}.`;\n\nconst datosPago = [\n  `Banco: ${f.cuenta_banco || '-'}`,\n  `CBU: ${f.cuenta_cbu || '-'}`,\n  `Alias: ${f.cuenta_alias || '-'}`,\n  `Titular: ${f.cuenta_titular || '-'}`\n].join('\\n');\n\nconst whatsappTexto =\n`${apertura}\n\nFue emitida el ${fechaFmt} por ${montoFmt} y todavía figura como pendiente de pago${moraTxt}.\n\nSi ya la abonaron, avisame así la doy de baja. Si no, te dejo los datos para transferir:\n\n${datosPago}\n\nCualquier cosa quedo a disposición. ¡Gracias!`;\n\nconst emailAsunto = `Recordatorio de pago — Factura ${f.numero_factura || '(servicios)'} — APSOL`;\n\nconst emailHtml =\n`<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.5\">\n  <p>${apertura.replace(/\\n/g, '<br>')}</p>\n  <p>Fue emitida el <b>${fechaFmt}</b> por <b>${montoFmt}</b> y todavía figura como <b>pendiente de pago</b>${moraTxt}.</p>\n  <p>Si ya la abonaron, avisanos así la damos de baja. Si no, dejamos los datos para transferir:</p>\n  <table style=\"border-collapse:collapse\">\n    <tr><td style=\"padding:2px 12px 2px 0\">Banco</td><td><b>${f.cuenta_banco || '-'}</b></td></tr>\n    <tr><td style=\"padding:2px 12px 2px 0\">CBU</td><td><b>${f.cuenta_cbu || '-'}</b></td></tr>\n    <tr><td style=\"padding:2px 12px 2px 0\">Alias</td><td><b>${f.cuenta_alias || '-'}</b></td></tr>\n    <tr><td style=\"padding:2px 12px 2px 0\">Titular</td><td><b>${f.cuenta_titular || '-'}</b></td></tr>\n  </table>\n  <p>Cualquier cosa quedamos a disposición.<br>Saludos,<br>APSOL</p>\n</div>`;\n\nreturn [{\n  json: {\n    ...f,\n    telefono_wa: telAR(f.contacto_telefono),\n    tiene_email: !!(f.contacto_email && String(f.contacto_email).includes('@')),\n    monto_fmt: montoFmt,\n    fecha_emision_fmt: fechaFmt,\n    whatsapp_texto: whatsappTexto,\n    email_asunto: emailAsunto,\n    email_html: emailHtml\n  }\n}];"
+      },
+      "id": "armar",
+      "name": "Armar WhatsApp y email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400],
+      "notes": "Genera whatsapp_texto, email_asunto, email_html y normaliza el teléfono a 549XXXXXXXXXX (formato Evolution API). Cambia el saludo si ya es reiteración (recordatorios_enviados >= 1)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evo.apsol-consultora.com.ar/message/sendText/APSOL",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $json.telefono_wa }}\",\n  \"text\": {{ JSON.stringify($json.whatsapp_texto) }}\n}",
+        "options": {}
+      },
+      "id": "enviar-wa",
+      "name": "Enviar WhatsApp (Evolution API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": { "id": "REEMPLAZAR", "name": "Evolution API (apikey)" }
+      },
+      "notes": "TODO revisar: URL = https://<tu-evolution>/message/sendText/<instancia>. Credencial httpHeaderAuth con Name=apikey y Value=<API key de la instancia>. Si usás WhatsApp Cloud API en vez de Evolution, reemplazá este nodo por el POST a graph.facebook.com/v20.0/<phone_id>/messages con template. La salida de error va directo al UPDATE-skip para no frenar el resto del lote."
+    },
+    {
+      "parameters": {
+        "fromEmail": "contacto@apsol.com.ar",
+        "toEmail": "={{ $json.contacto_email }}",
+        "subject": "={{ $json.email_asunto }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "ccEmail": "={{ $json.contacto2_email || '' }}",
+          "replyTo": "contacto@apsol.com.ar"
+        }
+      },
+      "id": "enviar-email",
+      "name": "Enviar email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1160, 300],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "credentials": {
+        "smtp": { "id": "REEMPLAZAR", "name": "SMTP Hostinger (contacto@apsol.com.ar)" }
+      },
+      "notes": "SMTP de Hostinger. onError=continueRegularOutput: si el mail falla igual seguimos y marcamos el recordatorio (ya salió el WhatsApp). Si el contacto no tiene email, el nodo puede fallar: opcional agregar un IF previo con {{ $json.tiene_email }}."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.apsol_facturacion\nSET ultima_notificacion    = CURRENT_DATE,\n    proxima_notificacion   = public.apsol_sumar_dias_habiles(CURRENT_DATE, $1),\n    recordatorios_enviados = recordatorios_enviados + 1\nWHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ $json.dias_espera_facturacion }},={{ $json.id }}"
+        }
+      },
+      "id": "db-marcar",
+      "name": "Marcar recordatorio enviado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1400, 300],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase APSOL (postgres)" }
+      },
+      "notes": "Reagenda la factura: ultima_notificacion = hoy, proxima_notificacion = hoy + dias_espera_facturacion días hábiles (función SQL), recordatorios_enviados +1. Con queryReplacement ($1=dias_espera, $2=id) evita inyección. Al reagendarse, la factura sale de la vista hasta la próxima fecha."
+    },
+    {
+      "parameters": {},
+      "id": "noop-fin",
+      "name": "Fin (sin pendientes)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [680, 180],
+      "notes": "Rama 'done' del loop. Enganchá acá un nodo de resumen/log si querés registrar cuántos recordatorios se mandaron."
+    }
+  ],
+  "connections": {
+    "Cron diario 09:00 (AR)": {
+      "main": [[{ "node": "Leer facturas a reclamar", "type": "main", "index": 0 }]]
+    },
+    "Leer facturas a reclamar": {
+      "main": [[{ "node": "Por cada factura", "type": "main", "index": 0 }]]
+    },
+    "Por cada factura": {
+      "main": [
+        [{ "node": "Fin (sin pendientes)", "type": "main", "index": 0 }],
+        [{ "node": "Armar WhatsApp y email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Armar WhatsApp y email": {
+      "main": [[{ "node": "Enviar WhatsApp (Evolution API)", "type": "main", "index": 0 }]]
+    },
+    "Enviar WhatsApp (Evolution API)": {
+      "main": [
+        [{ "node": "Enviar email", "type": "main", "index": 0 }],
+        [{ "node": "Enviar email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Enviar email": {
+      "main": [[{ "node": "Marcar recordatorio enviado", "type": "main", "index": 0 }]]
+    },
+    "Marcar recordatorio enviado": {
+      "main": [[{ "node": "Por cada factura", "type": "main", "index": 0 }]]
+    }
+  }
+}

@@ -1,9 +1,9 @@
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseUrl } from '../lib/supabase'
 
 export async function getCapacitaciones() {
   const { data, error } = await supabase
     .from('apsol_capacitacion')
-    .select('*')
+    .select('*, videos:apsol_videos(visto_por)')
     .order('fecha_creacion', { ascending: false })
 
   if (error) throw error
@@ -127,6 +127,25 @@ export async function deleteComentario(id) {
   if (error) throw error
 }
 
+// ASISTENTE DE IA
+export async function preguntarAsistenteIA(mensaje, historial = []) {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Necesitás iniciar sesión para usar el asistente.')
+
+  const resp = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/capacitacion-chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ message: mensaje, history: historial }),
+  })
+
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.error || 'Error al consultar el asistente de IA')
+  return data.reply
+}
+
 // ========================
 // LÓGICA PURA (testeable sin red / DOM)
 // ========================
@@ -207,4 +226,27 @@ export function nombreUsuario(usuarios, userId) {
   const u = (usuarios || []).find(u => u.id === userId)
   if (!u) return 'Usuario'
   return [u.nombre, u.apellido].filter(Boolean).join(' ') || 'Usuario'
+}
+
+// Une el "visto_por" de todos los videos de un tema en una sola lista de ids
+// sin duplicados (el permiso/visto vive por video, pero en el listado se
+// muestra a nivel tema).
+export function vistoPorDeTema(capacitacion) {
+  const ids = new Set()
+  for (const v of capacitacion?.videos || []) {
+    for (const id of v.visto_por || []) ids.add(id)
+  }
+  return [...ids]
+}
+
+// Agrupa temas de capacitación por clasificación, para el listado tipo
+// planilla (una sección por clasificación, ordenadas alfabéticamente).
+export function agruparPorClasificacion(capacitaciones) {
+  const map = new Map()
+  for (const c of capacitaciones || []) {
+    const clave = c.clasificacion || 'Sin clasificar'
+    if (!map.has(clave)) map.set(clave, [])
+    map.get(clave).push(c)
+  }
+  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], 'es'))
 }

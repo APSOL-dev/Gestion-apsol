@@ -14,6 +14,23 @@ export async function getContactos() {
   return data
 }
 
+// Usado por ProspectoDrawer para mostrar "Contactos asociados" (todos los
+// contactos de la empresa del prospecto). Filtra server-side en vez de
+// reusar getContactos() + filtrar en el cliente, para no traer la tabla
+// completa cada vez que se abre el panel lateral de un prospecto.
+export async function getContactosPorEmpresa(empresaId) {
+  if (!empresaId) return []
+
+  const { data, error } = await supabase
+    .from('apsol_contactos')
+    .select('*')
+    .eq('empresa_id', empresaId)
+    .order('nombre')
+
+  if (error) throw error
+  return data || []
+}
+
 export async function getContactoById(id) {
   const { data, error } = await supabase
     .from('apsol_contactos')

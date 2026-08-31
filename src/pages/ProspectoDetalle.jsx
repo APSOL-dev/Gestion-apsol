@@ -3,23 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, FolderKanban, Star, Plus, Clock, User, Building2, X, Link, Upload, DownloadCloud, ChevronDown, Calendar, DollarSign, RefreshCw, Users, CreditCard, Activity, Mail, ExternalLink } from 'lucide-react'
 import CreatableSelect from 'react-select/creatable'
 
-import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, uploadFile } from '../services/prospectos'
+import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, uploadFile, normalizarContactoId } from '../services/prospectos'
 import { getEmpresas, saveEmpresa } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
+import { getCuentasBancarias } from '../services/cuentasBancarias'
 import { sumarMeses } from '../utils/fecha'
-import { construirEnlaceContacto } from '../utils/navegacion'
 import { ESTADOS_PROSPECTO, getEstadoProspectoStyle } from '../utils/formateo'
-
-const TIPOS_TAREA = [
-  'Llamada Comercial',
-  'Reunión Virtual',
-  'Reunión Presencial',
-  'Envío de Presupuesto',
-  'Seguimiento de Propuesta',
-  'Demostración de Producto',
-  'Visita Técnica',
-  'Otro'
-]
+import { TIPOS_TAREA, componerProximaTarea, descomponerProximaTarea } from '../utils/tareas'
 
 const PAISES_LATAM = [
   'Argentina', 'Bolivia', 'Brasil', 'Chile', 'Colombia', 'Costa Rica', 'Cuba',
@@ -87,6 +77,8 @@ export default function ProspectoDetalle() {
     hs_mensuales: '',
     moneda_cobro: 'ARS',
     indice_cobro: 'UVA',
+    uva_referencia_periodo: 'inicio',
+    cuenta_bancaria_id: '',
     tarifa_base: '',
     base_indice_valor: '',
     mensualidad_vigente_actual: '',
@@ -109,6 +101,8 @@ export default function ProspectoDetalle() {
     hs_mensuales: '',
     moneda_cobro: 'ARS',
     indice_cobro: 'UVA',
+    uva_referencia_periodo: 'inicio',
+    cuenta_bancaria_id: '',
     tarifa_base: '',
     base_indice_valor: '',
     mensualidad_vigente_actual: '',
@@ -131,7 +125,7 @@ export default function ProspectoDetalle() {
   const [showNuevaEmpresa, setShowNuevaEmpresa] = useState(false)
   const [creandoEmpresa, setCreandoEmpresa] = useState(false)
   const [nuevaEmpresa, setNuevaEmpresa] = useState({
-    nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 5
+    nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 4
   })
 
   const [showNuevoContacto, setShowNuevoContacto] = useState(false)
@@ -142,6 +136,7 @@ export default function ProspectoDetalle() {
 
   const [observaciones, setObservaciones] = useState([])
   const [nuevaObsTexto, setNuevaObsTexto] = useState('')
+  const [cuentasBancarias, setCuentasBancarias] = useState([])
   
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -165,7 +160,6 @@ export default function ProspectoDetalle() {
   const [selectedCanal, setSelectedCanal] = useState(null)
 
   const adjuntosList = getAdjuntosParsed()
-  const enlaceContacto = construirEnlaceContacto(prospecto.contacto_id, todosLosContactos)
 
   useEffect(() => {
     cargarDatos()
@@ -216,12 +210,14 @@ export default function ProspectoDetalle() {
   async function cargarDatos() {
     setLoading(true)
     try {
-      const [empresasData, contactosData] = await Promise.all([
+      const [empresasData, contactosData, cuentasData] = await Promise.all([
         getEmpresas(),
-        getContactos()
+        getContactos(),
+        getCuentasBancarias()
       ])
       setEmpresas(empresasData)
       setTodosLosContactos(contactosData)
+      setCuentasBancarias(cuentasData || [])
 
       // Listas de autocompletado
       setIndustriasExistentes([...new Set(empresasData.map(e => e.industria).filter(Boolean))].sort())
@@ -230,20 +226,7 @@ export default function ProspectoDetalle() {
 
       if (!esNuevo) {
         const data = await getProspectoById(id)
-        
-        let tipoTarea = ''
-        let comentarioTarea = data.proxima_tarea || ''
-        for (const t of TIPOS_TAREA) {
-          if (comentarioTarea.startsWith(t + ' - ')) {
-            tipoTarea = t
-            comentarioTarea = comentarioTarea.substring(t.length + 3)
-            break
-          } else if (comentarioTarea === t) {
-            tipoTarea = t
-            comentarioTarea = ''
-            break
-          }
-        }
+        const { tipo: tipoTarea, comentario: comentarioTarea } = descomponerProximaTarea(data.proxima_tarea)
 
         setProspecto({
           ...data,
@@ -320,12 +303,12 @@ export default function ProspectoDetalle() {
         provincia: nuevaEmpresa.provincia,
         industria: nuevaEmpresa.industria,
         tamaño_personas: Number(nuevaEmpresa.tamaño_personas),
-        dias_espera_facturacion: Number(nuevaEmpresa.dias_espera_facturacion) || 5
+        dias_espera_facturacion: Number(nuevaEmpresa.dias_espera_facturacion) || 4
       })
       setEmpresas(prev => [...prev, saved].sort((a, b) => a.nombre.localeCompare(b.nombre)))
       setProspecto(prev => ({ ...prev, empresa_id: saved.id }))
       setShowNuevaEmpresa(false)
-      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 5 })
+      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 4 })
     } catch (err) {
       alert('Error al crear la empresa. Intente nuevamente.')
     } finally {
@@ -345,7 +328,6 @@ export default function ProspectoDetalle() {
         activo: true
       })
       setTodosLosContactos(prev => [...prev, saved])
-      setProspecto(prev => ({ ...prev, contacto_id: saved.id }))
       setShowNuevoContacto(false)
       setNuevoContacto({ nombre: '', apellido: '', telefono: '', email: '', cargo: '', area: '' })
     } catch (err) {
@@ -357,17 +339,15 @@ export default function ProspectoDetalle() {
 
   async function handleInitialSave(e) {
     if (e) e.preventDefault()
-    if (!prospecto.nombre || !prospecto.empresa_id || !prospecto.contacto_id) {
-      setError('Nombre, Empresa y Contacto son obligatorios.')
+    if (!prospecto.nombre || !prospecto.empresa_id) {
+      setError('Nombre y Empresa son obligatorios.')
       return
     }
     setSaving(true)
     setError('')
     
     try {
-      const p_tarea = prospecto.proxima_tarea_tipo 
-        ? (prospecto.proxima_tarea_comentario ? `${prospecto.proxima_tarea_tipo} - ${prospecto.proxima_tarea_comentario}` : prospecto.proxima_tarea_tipo)
-        : (prospecto.proxima_tarea_comentario || null)
+      const p_tarea = componerProximaTarea(prospecto.proxima_tarea_tipo, prospecto.proxima_tarea_comentario)
 
       // Limpieza exhaustiva mediante desestructuración
       const { 
@@ -378,6 +358,7 @@ export default function ProspectoDetalle() {
 
       const dataToSave = {
         ...datosBase,
+        contacto_id: normalizarContactoId(prospecto.contacto_id),
         proxima_tarea: p_tarea,
         servicios_requeridos: selectedServicios.map(s => s.value),
         canal_contacto: selectedCanal ? selectedCanal.value : '',
@@ -414,9 +395,7 @@ export default function ProspectoDetalle() {
     setSaving(true)
     setError('')
     try {
-      const p_tarea = prospecto.proxima_tarea_tipo 
-        ? (prospecto.proxima_tarea_comentario ? `${prospecto.proxima_tarea_tipo} - ${prospecto.proxima_tarea_comentario}` : prospecto.proxima_tarea_tipo)
-        : (prospecto.proxima_tarea_comentario || null)
+      const p_tarea = componerProximaTarea(prospecto.proxima_tarea_tipo, prospecto.proxima_tarea_comentario)
 
       const toSave = { 
         id: prospecto.id,
@@ -437,9 +416,7 @@ export default function ProspectoDetalle() {
   async function handleFinalSave() {
     setSaving(true)
     try {
-      const p_tarea = planningData.proxima_tarea_tipo 
-        ? (planningData.proxima_tarea_comentario ? `${planningData.proxima_tarea_tipo} - ${planningData.proxima_tarea_comentario}` : planningData.proxima_tarea_tipo)
-        : (planningData.proxima_tarea_comentario || null)
+      const p_tarea = componerProximaTarea(planningData.proxima_tarea_tipo, planningData.proxima_tarea_comentario)
 
       const toSave = { 
         id: prospecto.id,
@@ -479,6 +456,8 @@ export default function ProspectoDetalle() {
         hs_mensuales: parseFloat(prospecto.hs_mensuales) || 0,
         moneda_cobro: prospecto.moneda_cobro,
         indice_cobro: prospecto.indice_cobro,
+        uva_referencia_periodo: prospecto.uva_referencia_periodo || 'inicio',
+        cuenta_bancaria_id: prospecto.cuenta_bancaria_id || null,
         tarifa_base: parseFloat(prospecto.tarifa_base) || 0,
         base_indice_valor: parseFloat(prospecto.base_indice_valor) || 0,
         mensualidad_vigente_actual: parseFloat(prospecto.mensualidad_vigente_actual) || 0,
@@ -516,6 +495,8 @@ export default function ProspectoDetalle() {
         dataToSave.hs_mensuales = parseFloat(newStatusData.hs_mensuales) || 0
         dataToSave.moneda_cobro = newStatusData.moneda_cobro
         dataToSave.indice_cobro = newStatusData.indice_cobro
+        dataToSave.uva_referencia_periodo = newStatusData.uva_referencia_periodo || 'inicio'
+        dataToSave.cuenta_bancaria_id = newStatusData.cuenta_bancaria_id || null
         dataToSave.tarifa_base = parseFloat(newStatusData.tarifa_base) || 0
         dataToSave.base_indice_valor = parseFloat(newStatusData.base_indice_valor) || 0
         dataToSave.mensualidad_vigente_actual = parseFloat(newStatusData.mensualidad_vigente_actual) || 0
@@ -792,46 +773,61 @@ export default function ProspectoDetalle() {
               )}
             </div>
 
-            {/* SECCIÓN CONTACTO */}
+            {/* SECCIÓN CONTACTOS ASOCIADOS */}
             <div className="field">
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <User size={14} /> Contacto *
+                  <Users size={14} /> Contactos asociados
                 </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  {enlaceContacto && (
-                    <a
-                      href={enlaceContacto.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={enlaceContacto.label}
-                      style={{ fontSize: '11px', color: 'var(--color-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
-                    >
-                      <ExternalLink size={13} /> Ver ficha
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!prospecto.empresa_id) alert('Selecciona una empresa primero')
-                      else setShowNuevoContacto(!showNuevoContacto)
-                    }}
-                    style={{ fontSize: '11px', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
-                  >
-                    <Plus size={13} /> Crear nuevo
-                  </button>
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!prospecto.empresa_id) alert('Selecciona una empresa primero')
+                    else setShowNuevoContacto(!showNuevoContacto)
+                  }}
+                  style={{ fontSize: '11px', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
+                >
+                  <Plus size={13} /> Crear nuevo
+                </button>
               </label>
-              <select
-                value={prospecto.contacto_id || ''}
-                onChange={e => setProspecto({ ...prospecto, contacto_id: e.target.value })}
-                disabled={!prospecto.empresa_id && contactos.length === 0}
-              >
-                <option value="">Seleccionar contacto...</option>
-                {contactos.map(c => (
-                  <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
-                ))}
-              </select>
+
+              {!prospecto.empresa_id ? (
+                <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', margin: '4px 0 0' }}>
+                  Seleccioná una empresa para ver sus contactos.
+                </p>
+              ) : contactos.length === 0 ? (
+                <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', margin: '4px 0 0' }}>
+                  Esta empresa todavía no tiene contactos cargados.
+                </p>
+              ) : (
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  {contactos.map(c => (
+                    <div
+                      key={c.id}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '10px 12px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}
+                    >
+                      <div style={{ display: 'grid', gap: '2px', minWidth: 0 }}>
+                        <span style={{ fontWeight: 500, fontSize: '13px' }}>{c.nombre} {c.apellido}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                          {[c.cargo, c.area].filter(Boolean).join(' · ') || '—'}
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                          {[c.telefono, c.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}
+                        </span>
+                      </div>
+                      <a
+                        href={`/contactos/${c.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`Ver ficha de ${c.nombre} ${c.apellido}`}
+                        style={{ fontSize: '11px', color: 'var(--color-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500, flexShrink: 0 }}
+                      >
+                        <ExternalLink size={13} /> Ver ficha
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {showNuevoContacto && prospecto.empresa_id && (
                 <div style={{ marginTop: '12px', padding: '16px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-primary)', display: 'grid', gap: '14px' }}>
@@ -882,7 +878,7 @@ export default function ProspectoDetalle() {
                   </div>
 
                   <button type="button" className="btn btn-primary w-full" onClick={crearContactoRapido} disabled={creandoContacto}>
-                    {creandoContacto ? 'Creando contacto...' : 'Crear y seleccionar contacto'}
+                    {creandoContacto ? 'Creando contacto...' : 'Crear contacto'}
                   </button>
                 </div>
               )}
@@ -1183,11 +1179,35 @@ export default function ProspectoDetalle() {
                 </div>
                 <div className="field">
                   <label>Valor Base (Índice)</label>
-                  <input 
-                    type="number" 
-                    value={prospecto.base_indice_valor || ''} 
+                  <input
+                    type="number"
+                    value={prospecto.base_indice_valor || ''}
                     onChange={e => setProspecto({...prospecto, base_indice_valor: e.target.value})}
                   />
+                </div>
+                <div className="field">
+                  <label>Valor UVA de referencia</label>
+                  <select
+                    value={prospecto.uva_referencia_periodo || 'inicio'}
+                    onChange={e => setProspecto({...prospecto, uva_referencia_periodo: e.target.value})}
+                    title="Qué día del período se usa para buscar el valor UVA de cada factura."
+                  >
+                    <option value="inicio">Inicio del período</option>
+                    <option value="fin">Fin del período</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Cuenta para depósito (por defecto)</label>
+                  <select
+                    value={prospecto.cuenta_bancaria_id || ''}
+                    onChange={e => setProspecto({...prospecto, cuenta_bancaria_id: e.target.value})}
+                    title="La cuenta a la que este prospecto deposita en general. Se precarga en cada factura nueva."
+                  >
+                    <option value="">-- Sin definir --</option>
+                    {cuentasBancarias.map(c => (
+                      <option key={c.id} value={c.id}>{c.banco} - {c.titular} ({c.moneda})</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="field">
                   <label>Inicio de Servicio</label>
@@ -1445,12 +1465,36 @@ export default function ProspectoDetalle() {
 
                   <div className="field">
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><DollarSign size={14} /> Base (Índice)</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       placeholder="Ej. 537"
-                      value={newStatusData.base_indice_valor} 
-                      onChange={e => setNewStatusData({...newStatusData, base_indice_valor: e.target.value})} 
+                      value={newStatusData.base_indice_valor}
+                      onChange={e => setNewStatusData({...newStatusData, base_indice_valor: e.target.value})}
                     />
+                  </div>
+
+                  <div className="field">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><DollarSign size={14} /> Valor UVA de referencia</label>
+                    <select
+                      value={newStatusData.uva_referencia_periodo || 'inicio'}
+                      onChange={e => setNewStatusData({...newStatusData, uva_referencia_periodo: e.target.value})}
+                    >
+                      <option value="inicio">Inicio del período</option>
+                      <option value="fin">Fin del período</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><CreditCard size={14} /> Cuenta para depósito (por defecto)</label>
+                    <select
+                      value={newStatusData.cuenta_bancaria_id || ''}
+                      onChange={e => setNewStatusData({...newStatusData, cuenta_bancaria_id: e.target.value})}
+                    >
+                      <option value="">-- Sin definir --</option>
+                      {cuentasBancarias.map(c => (
+                        <option key={c.id} value={c.id}>{c.banco} - {c.titular} ({c.moneda})</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="field">

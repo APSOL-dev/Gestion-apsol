@@ -48,6 +48,16 @@ export default function FiltroMultiSelect({
     ))
   }
 
+  const todosSeleccionados = options.length > 0 && options.every(opt => selectedIds.includes(getId(opt)))
+
+  function toggleTodos() {
+    if (todosSeleccionados) {
+      onChange(() => [])
+    } else {
+      onChange(() => options.map(getId))
+    }
+  }
+
   return (
     <div className="filtro-multiselect" ref={rootRef}>
       <button
@@ -63,20 +73,29 @@ export default function FiltroMultiSelect({
           {options.length === 0 ? (
             <div className="picker-empty">{emptyMessage}</div>
           ) : (
-            options.map(opt => {
-              const id = getId(opt)
-              const checked = selectedIds.includes(id)
-              return (
-                <div
-                  key={id}
-                  className={`picker-option checklist ${checked ? 'checked' : ''}`}
-                  onClick={() => toggleOpcion(id)}
-                >
-                  {checked ? <CheckSquare size={14} /> : <Square size={14} />}
-                  {getLabel(opt)}
-                </div>
-              )
-            })
+            <>
+              <div
+                className="picker-option checklist picker-option-todos"
+                onClick={toggleTodos}
+              >
+                {todosSeleccionados ? <CheckSquare size={14} /> : <Square size={14} />}
+                {todosSeleccionados ? 'Deseleccionar todos' : 'Seleccionar todos'}
+              </div>
+              {options.map(opt => {
+                const id = getId(opt)
+                const checked = selectedIds.includes(id)
+                return (
+                  <div
+                    key={id}
+                    className={`picker-option checklist ${checked ? 'checked' : ''}`}
+                    onClick={() => toggleOpcion(id)}
+                  >
+                    {checked ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {getLabel(opt)}
+                  </div>
+                )
+              })}
+            </>
           )}
         </div>
       )}

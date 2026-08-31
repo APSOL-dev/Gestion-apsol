@@ -3,7 +3,9 @@ import { vi, describe, test, expect, beforeEach } from 'vitest'
 import moment from 'moment'
 import Cronograma from '../Cronograma'
 import { useData } from '../../context/DataContext'
+import { useAuth } from '../../context/AuthContext'
 import * as cronogramaService from '../../services/cronograma'
+import * as colaboradoresService from '../../services/colaboradores'
 
 // --- Mocks de módulos externos ---
 vi.mock('react-big-calendar/lib/css/react-big-calendar.css', () => ({}))
@@ -41,6 +43,10 @@ vi.mock('../../context/DataContext', () => ({
   useData: vi.fn()
 }))
 
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: vi.fn()
+}))
+
 // El Cronograma ya no trae toda la tabla vía DataContext: pide 3 recortes
 // puntuales directo al servicio (ver services/cronograma.js). Se mockean
 // esas 3 funciones además de saveActividad/deleteActividad; el resto
@@ -56,6 +62,13 @@ vi.mock('../../services/cronograma', async () => {
     getActividadesDelMes: vi.fn(),
     getUltimasReunionesPorProspecto: vi.fn()
   }
+})
+
+// El Cronograma trae la lista mínima de colaboradores (para el filtro
+// "Personal" y el selector de invitados) con getColaboradoresLista().
+vi.mock('../../services/colaboradores', async () => {
+  const real = await vi.importActual('../../services/colaboradores')
+  return { ...real, getColaboradoresLista: vi.fn() }
 })
 
 // --- Datos de prueba ---
@@ -98,19 +111,19 @@ const PROSPECTOS_MOCK = [
 ]
 
 const COLABORADORES_MOCK = [
-  { id: 'col-1', usuarios: { nombre: 'Ana', apellido: 'López' } },
-  { id: 'col-2', usuarios: { nombre: 'Carlos', apellido: 'Gómez' } }
+  { id: 'col-1', usuario_id: 'user-1', nombre: 'Ana', apellido: 'López', activo: true },
+  { id: 'col-2', usuario_id: 'user-2', nombre: 'Carlos', apellido: 'Gómez', activo: true }
 ]
 
 function mockUseData(overrides = {}) {
   const { prospectos: prospectosOverride, colaboradores: colaboradoresOverride, ...resto } = overrides
+  // El componente lee la lista de colaboradores por getColaboradoresLista(),
+  // no por DataContext.
+  colaboradoresService.getColaboradoresLista.mockResolvedValue(colaboradoresOverride ?? COLABORADORES_MOCK)
   useData.mockReturnValue({
     prospectos: prospectosOverride ?? PROSPECTOS_MOCK,
     loadingProspectos: false,
     refreshProspectos: vi.fn().mockResolvedValue(),
-    colaboradores: colaboradoresOverride ?? COLABORADORES_MOCK,
-    loadingColaboradores: false,
-    refreshColaboradores: vi.fn().mockResolvedValue(),
     ...resto
   })
 }
@@ -134,11 +147,18 @@ async function esperarCargaInicial() {
   })
 }
 
+function mockUseAuth(user = null) {
+  useAuth.mockReturnValue({ user })
+}
+
 describe('Cronograma', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseData()
     mockServiciosCronograma()
+    // Sin usuario logueado por defecto: así el preseleccionado automático
+    // de "Personal" no interfiere con los tests que no lo ejercitan.
+    mockUseAuth(null)
   })
 
   // ─── Tests de filtros ───────────────────────────────────────────────────────
@@ -179,6 +199,68 @@ describe('Cronograma', () => {
   test('ya no muestra el buscador de texto libre (eliminado por confuso/redundante)', () => {
     render(<Cronograma />)
     expect(screen.queryByPlaceholderText('Buscar Cronograma...')).not.toBeInTheDocument()
+  })
+
+  // ─── Tests de la preselección de "Personal" con el usuario logueado ───────
+
+  test('preselecciona en "Personal" al colaborador que corresponde al usuario logueado', async () => {
+    mockUseData({
+      colaboradores: [
+        { id: 'col-1', usuario_id: 'user-1', nombre: 'Ana', apellido: 'López' },
+        { id: 'col-2', usuario_id: 'user-2', nombre: 'Carlos', apellido: 'Gómez' }
+      ]
+    })
+    mockUseAuth({ id: 'user-1' })
+
+    render(<Cronograma />)
+
+    // Con "Personal" preseleccionado en Ana (col-1), el evento de Carlos
+    // (responsable_id col-2) queda filtrado y desaparece del calendario.
+    await waitFor(() => {
+      expect(screen.getByTestId('event-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Personal/ })).toHaveTextContent('Personal (1)')
+  })
+
+  test('sin colaborador asociado al usuario logueado, "Personal" arranca sin filtrar (se ven todos)', async () => {
+    mockUseData({
+      colaboradores: [
+        { id: 'col-1', usuario_id: 'user-1', nombre: 'Ana', apellido: 'López' },
+        { id: 'col-2', usuario_id: 'user-2', nombre: 'Carlos', apellido: 'Gómez' }
+      ]
+    })
+    // El usuario logueado no tiene ficha de colaborador (ej: es un rol admin puro)
+    mockUseAuth({ id: 'user-sin-colaborador' })
+
+    render(<Cronograma />)
+    await esperarCargaInicial()
+    expect(screen.getByRole('button', { name: /Personal/ })).toHaveTextContent('Personal')
+    expect(screen.getByRole('button', { name: /Personal/ })).not.toHaveTextContent('Personal (')
+  })
+
+  test('si el usuario destilda manualmente su preselección de "Personal", no se le vuelve a imponer', async () => {
+    mockUseData({
+      colaboradores: [
+        { id: 'col-1', usuario_id: 'user-1', nombre: 'Ana', apellido: 'López' },
+        { id: 'col-2', usuario_id: 'user-2', nombre: 'Carlos', apellido: 'Gómez' }
+      ]
+    })
+    mockUseAuth({ id: 'user-1' })
+
+    render(<Cronograma />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Personal/ })).toHaveTextContent('Personal (1)')
+    })
+
+    // Abre el desplegable y destilda a Ana (la única preseleccionada)
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    fireEvent.click(screen.getByText('Ana López'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Personal/ })).toHaveTextContent('Personal')
+      expect(screen.getByRole('button', { name: /Personal/ })).not.toHaveTextContent('Personal (')
+    })
   })
 
   // ─── Tests del modal ────────────────────────────────────────────────────────
@@ -295,6 +377,7 @@ describe('Cronograma', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
     // Hay dos combobox en el modal: el input con datalist y el select. Tomamos el select (índice 1).
+    await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
     fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
     fireEvent.click(screen.getByText('Confirmar y Agendar'))
 
@@ -367,6 +450,7 @@ describe('Cronograma', () => {
     // Rellenamos el prospecto
     fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
     // Seleccionamos responsable (el segundo combobox)
+    await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
     fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
 
     // Ponemos inicio = 2026-08-25T19:00 y fin = 2026-08-25T18:00
@@ -457,6 +541,100 @@ describe('Cronograma', () => {
     await waitFor(() => {
       const item = container.querySelector('.compliance-item')
       expect(item.querySelector('.p-days')).toHaveTextContent('5d')
+    })
+  })
+
+  test('por defecto ordena el panel de saldo de horas de más negativo a más positivo', async () => {
+    const inicioMes = moment().startOf('month').add(1, 'day').hour(9).minute(0)
+    mockUseData({
+      prospectos: [
+        { id: 'p-alto', nombre: 'Saldo Alto', estado: '6A - En producción', hs_mensuales: 10 },
+        { id: 'p-medio', nombre: 'Saldo Medio Negativo', estado: '6A - En producción', hs_mensuales: 5 },
+        { id: 'p-bajo', nombre: 'Saldo Muy Negativo', estado: '6A - En producción', hs_mensuales: 5 }
+      ]
+    })
+    mockServiciosCronograma({
+      actividades: [
+        // Saldo Alto: sin actividades -> 10h
+        {
+          id: 'a-medio', prospecto_id: 'p-medio', descripcion: 'Trabajo',
+          inicio: inicioMes.format(), fin: inicioMes.clone().add(8, 'hours').format(),
+          responsable_id: 'col-1', reunion_cliente: false
+        }, // 5 - 8 = -3h
+        {
+          id: 'a-bajo', prospecto_id: 'p-bajo', descripcion: 'Trabajo',
+          inicio: inicioMes.format(), fin: inicioMes.clone().add(20, 'hours').format(),
+          responsable_id: 'col-1', reunion_cliente: false
+        } // 5 - 20 = -15h
+      ]
+    })
+
+    const { container } = render(<Cronograma />)
+    await waitFor(() => {
+      const nombres = [...container.querySelectorAll('.compliance-item .p-name')].map(el => el.textContent)
+      expect(nombres).toEqual(['Saldo Muy Negativo', 'Saldo Medio Negativo', 'Saldo Alto'])
+    })
+  })
+
+  test('un clic en el encabezado "Saldo" invierte el orden del panel', async () => {
+    mockUseData({
+      prospectos: [
+        { id: 'p-alto', nombre: 'Saldo Alto', estado: '6A - En producción', hs_mensuales: 10 },
+        { id: 'p-bajo', nombre: 'Saldo Bajo', estado: '6A - En producción', hs_mensuales: -5 }
+      ]
+    })
+    mockServiciosCronograma({ actividades: [] })
+
+    const { container } = render(<Cronograma />)
+    await waitFor(() => {
+      const nombres = [...container.querySelectorAll('.compliance-item .p-name')].map(el => el.textContent)
+      expect(nombres).toEqual(['Saldo Bajo', 'Saldo Alto'])
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Saldo/ }))
+
+    await waitFor(() => {
+      const nombres = [...container.querySelectorAll('.compliance-item .p-name')].map(el => el.textContent)
+      expect(nombres).toEqual(['Saldo Alto', 'Saldo Bajo'])
+    })
+  })
+
+  test('por defecto no ordena por días, pero un clic en el encabezado "Días" sí lo hace (más días primero)', async () => {
+    mockUseData({
+      prospectos: [
+        { id: 'p-reciente', nombre: 'Vio Hace Poco', estado: '6A - En producción' },
+        { id: 'p-viejo', nombre: 'No Lo Vemos Hace Rato', estado: '6A - En producción' }
+      ]
+    })
+    mockServiciosCronograma({
+      actividades: [],
+      reuniones: new Map([
+        ['p-reciente', moment().subtract(2, 'days').format()],
+        ['p-viejo', moment().subtract(40, 'days').format()]
+      ])
+    })
+
+    const { container } = render(<Cronograma />)
+    // Por defecto se ordena por saldo (ambos null acá), así que el orden
+    // de días todavía no cambió respecto al orden original de carga.
+    await waitFor(() => {
+      expect(container.querySelectorAll('.compliance-item').length).toBe(2)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Días/ }))
+
+    // Primer clic en "Días" ordena descendente por defecto: el que hace
+    // más tiempo que no se ve (más urgente) queda arriba.
+    await waitFor(() => {
+      const nombres = [...container.querySelectorAll('.compliance-item .p-name')].map(el => el.textContent)
+      expect(nombres).toEqual(['No Lo Vemos Hace Rato', 'Vio Hace Poco'])
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Días/ }))
+
+    await waitFor(() => {
+      const nombres = [...container.querySelectorAll('.compliance-item .p-name')].map(el => el.textContent)
+      expect(nombres).toEqual(['Vio Hace Poco', 'No Lo Vemos Hace Rato'])
     })
   })
 
@@ -621,7 +799,8 @@ describe('Cronograma', () => {
 
       fireEvent.click(screen.getByTitle('Nueva Actividad'))
       fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
-      fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
+      await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
       fireEvent.click(screen.getByText('Confirmar y Agendar'))
 
       // El modal se cierra y el evento nuevo ya aparece SIN que saveActividad
@@ -657,7 +836,8 @@ describe('Cronograma', () => {
 
       fireEvent.click(screen.getByTitle('Nueva Actividad'))
       fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
-      fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
+      await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
       fireEvent.click(screen.getByText('Confirmar y Agendar'))
 
       await waitFor(() => {

@@ -99,6 +99,39 @@ describe('FiltroMultiSelect', () => {
     expect(estado).toEqual(['a', 'b'])
   })
 
+  // ─── "Seleccionar todos" ────────────────────────────────────────────────
+
+  test('muestra la opción "Seleccionar todos" arriba de la lista', () => {
+    renderFiltro({ selectedIds: [] })
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    expect(screen.getByText('Seleccionar todos')).toBeInTheDocument()
+  })
+
+  test('clickear "Seleccionar todos" selecciona todas las opciones de una', () => {
+    const { onChange } = renderFiltro({ selectedIds: ['a'] })
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    fireEvent.click(screen.getByText('Seleccionar todos'))
+
+    const updater = onChange.mock.calls[0][0]
+    expect(updater(['a'])).toEqual(['a', 'b', 'c'])
+  })
+
+  test('con todo seleccionado, la opción pasa a "Deseleccionar todos" y limpia la selección', () => {
+    const { onChange } = renderFiltro({ selectedIds: ['a', 'b', 'c'] })
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    expect(screen.getByText('Deseleccionar todos')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Deseleccionar todos'))
+    const updater = onChange.mock.calls[0][0]
+    expect(updater(['a', 'b', 'c'])).toEqual([])
+  })
+
+  test('no muestra "Seleccionar todos" cuando no hay opciones', () => {
+    renderFiltro({ options: [] })
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    expect(screen.queryByText('Seleccionar todos')).not.toBeInTheDocument()
+  })
+
   test('muestra el mensaje vacío cuando no hay opciones', () => {
     renderFiltro({ options: [] })
     fireEvent.click(screen.getByRole('button', { name: /Personal/ }))

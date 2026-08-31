@@ -99,22 +99,24 @@ export function extraerProspectoParaMostrar(prospectoNombreReal, descripcion) {
 }
 
 /**
- * Trae las actividades cuyo inicio cae dentro de [desde, hasta] (inclusive).
- * Reemplaza traer TODA la tabla (4400+ filas y creciendo) para filtrar en
- * el cliente: el calendario nunca necesita más que lo que se ve en pantalla.
+ * Trae las actividades cuyo inicio cae dentro de [desde, hasta] (inclusive),
+ * YA FILTRADAS SEGÚN EL ROL de quien pregunta (RPC apsol_cronograma_visible,
+ * database/migration_cronograma_visibilidad.sql):
+ *   - Un Colaborador ve sus actividades y las de otros colaboradores completas.
+ *   - Las reuniones del Admin en las que no participa llegan como bloque
+ *     "Ocupado" (descripcion='Ocupado', sin datos).
+ *   - Los bloques de trabajo del Admin no se devuelven.
+ *   - Un Admin ve todo.
  * @param {string} desde  ISO 8601
  * @param {string} hasta  ISO 8601
  */
 export async function getActividadesEnRango(desde, hasta) {
-  const { data, error } = await supabase
-    .from('apsol_cronograma')
-    .select('*')
-    .gte('inicio', desde)
-    .lte('inicio', hasta)
-    .order('inicio', { ascending: false })
-
+  const { data, error } = await supabase.rpc('apsol_cronograma_visible', {
+    p_desde: desde,
+    p_hasta: hasta
+  })
   if (error) throw error
-  return data
+  return data || []
 }
 
 /**
@@ -191,7 +193,7 @@ export async function getActividadById(id) {
 const CAMPOS_EDITABLES_CRONOGRAMA = [
   'prospecto_id', 'inicio', 'fin', 'duracion_horas', 'descripcion',
   'responsable_id', 'reunion_cliente', 'link_reunion', 'comentarios_reunion',
-  'multiplicador', 'notas_multiplicador', 'herramientas'
+  'multiplicador', 'notas_multiplicador', 'herramientas', 'participantes_ids'
 ]
 
 function limpiarPayloadCronograma(actividad) {

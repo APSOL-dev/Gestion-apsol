@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { X, Pencil, Trash2, Building2, User, Mail, Phone, Clock, Receipt, MessageSquare, ChevronDown, Briefcase, Paperclip } from 'lucide-react'
+import { X, Pencil, Trash2, Building2, Users, Mail, Phone, Clock, Receipt, MessageSquare, ChevronDown, Briefcase, Paperclip, Copy, Check } from 'lucide-react'
 import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion } from '../services/prospectos'
+import { getContactosPorEmpresa } from '../services/contactos'
 import { getEstadoProspectoStyle, ESTADOS_PROSPECTO } from '../utils/formateo'
+import { TIPOS_TAREA, componerProximaTarea, descomponerProximaTarea } from '../utils/tareas'
+import { useDrawerTeclado } from '../hooks/useDrawerTeclado'
 
 function parseAdjuntos(adjuntosStr) {
   try {
@@ -23,6 +26,16 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
   const [cambiandoEstado, setCambiandoEstado] = useState(false)
   const [nuevaObs, setNuevaObs] = useState('')
   const [savingObs, setSavingObs] = useState(false)
+  const panelRef = useRef(null)
+
+  // Esc cierra, Tab queda atrapado dentro del panel, y el foco vuelve al
+  // disparador al cerrar. Ver src/hooks/useDrawerTeclado.js
+  useDrawerTeclado({ onClose, panelRef, activo: !!id })
+  const [contactosEmpresa, setContactosEmpresa] = useState([])
+  const [copiadoCampo, setCopiadoCampo] = useState('')
+  const [editandoTarea, setEditandoTarea] = useState(false)
+  const [tareaEdit, setTareaEdit] = useState({ tipo: '', comentario: '', fecha: '' })
+  const [savingTarea, setSavingTarea] = useState(false)
 
   async function cargarDetalle() {
     setLoading(true)
@@ -41,6 +54,59 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
   useEffect(() => {
     if (id) cargarDetalle()
   }, [id])
+
+  // Todos los contactos de la empresa del prospecto (no solo el que quedó
+  // como contacto_id histórico) - se recarga cada vez que cambia la empresa.
+  useEffect(() => {
+    const empresaId = prospecto?.empresas?.id
+    if (!empresaId) {
+      setContactosEmpresa([])
+      return
+    }
+    getContactosPorEmpresa(empresaId)
+      .then(setContactosEmpresa)
+      .catch(err => console.error('Error al cargar contactos de la empresa:', err))
+  }, [prospecto?.empresas?.id])
+
+  async function copiarAlPortapapeles(texto, campoId) {
+    try {
+      await navigator.clipboard.writeText(texto)
+      setCopiadoCampo(campoId)
+      setTimeout(() => setCopiadoCampo(prev => (prev === campoId ? '' : prev)), 1500)
+    } catch (err) {
+      console.error('Error al copiar al portapapeles:', err)
+    }
+  }
+
+  function abrirEdicionTarea() {
+    const { tipo, comentario } = descomponerProximaTarea(prospecto.proxima_tarea)
+    setTareaEdit({
+      tipo,
+      comentario,
+      fecha: prospecto.fecha_proxima_tarea ? prospecto.fecha_proxima_tarea.split('T')[0] : ''
+    })
+    setEditandoTarea(true)
+  }
+
+  async function guardarTarea(e) {
+    e.preventDefault()
+    setSavingTarea(true)
+    try {
+      const saved = await saveProspecto({
+        id,
+        proxima_tarea: componerProximaTarea(tareaEdit.tipo, tareaEdit.comentario),
+        fecha_proxima_tarea: tareaEdit.fecha || null
+      })
+      setProspecto(prev => ({ ...prev, ...saved }))
+      setEditandoTarea(false)
+      if (onChanged) onChanged()
+    } catch (err) {
+      console.error('Error al actualizar la próxima tarea:', err)
+      alert('No se pudo actualizar la tarea.')
+    } finally {
+      setSavingTarea(false)
+    }
+  }
 
   async function handleEliminar() {
     if (!window.confirm('¿Estás seguro de eliminar este prospecto?')) return
@@ -137,6 +203,10 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
 
       <div
         data-testid="drawer-panel"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
         style={{
           position: 'fixed', top: 0, right: 0, bottom: 0, width: '460px',
           backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0, 0, 0, 0.15)',
@@ -244,39 +314,122 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
                     <span style={{ fontWeight: '500', color: '#333' }}>{prospecto.canal_contacto}</span>
                   </div>
                 )}
-                {prospecto.contactos && (
-                  <>
-                    <div style={{ borderTop: '1px dashed #eee', margin: '2px 0' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-                      <span style={{ color: '#777', display: 'flex', alignItems: 'center', gap: '6px' }}><User size={13} /> Contacto</span>
-                      <span style={{ fontWeight: '500', color: '#333' }}>{prospecto.contactos.nombre} {prospecto.contactos.apellido}</span>
-                    </div>
-                    {prospecto.contactos.email && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <span style={{ color: '#777', display: 'flex', alignItems: 'center', gap: '6px' }}><Mail size={12} /> Email</span>
-                        <span style={{ color: '#333' }}>{prospecto.contactos.email}</span>
+              </div>
+
+              {/* Contactos asociados: todos los de la empresa, no solo uno */}
+              <div>
+                <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: '#444', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Users size={15} /> Contactos asociados ({contactosEmpresa.length})
+                </h3>
+                {contactosEmpresa.length === 0 ? (
+                  <p style={{ fontSize: '12px', color: '#999', margin: 0, fontStyle: 'italic' }}>
+                    {prospecto.empresas ? 'Esta empresa todavía no tiene contactos cargados.' : 'Sin empresa asociada.'}
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {contactosEmpresa.map(c => (
+                      <div key={c.id} style={{ padding: '10px 12px', background: '#f9f9f9', border: '1px solid #eee', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ fontWeight: '600', fontSize: '13px', color: '#333' }}>{c.nombre} {c.apellido}</span>
+                        {(c.cargo || c.area) && (
+                          <span style={{ fontSize: '11px', color: '#999' }}>{[c.cargo, c.area].filter(Boolean).join(' · ')}</span>
+                        )}
+                        {c.email && (
+                          <button
+                            type="button"
+                            onClick={() => copiarAlPortapapeles(c.email, `email-${c.id}`)}
+                            title="Copiar email"
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#555', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+                          >
+                            <Mail size={12} /> {c.email}
+                            {copiadoCampo === `email-${c.id}` ? <Check size={12} color="#385723" /> : <Copy size={11} style={{ opacity: 0.5 }} />}
+                          </button>
+                        )}
+                        {c.telefono && (
+                          <button
+                            type="button"
+                            onClick={() => copiarAlPortapapeles(c.telefono, `tel-${c.id}`)}
+                            title="Copiar teléfono"
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#555', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+                          >
+                            <Phone size={12} /> {c.telefono}
+                            {copiadoCampo === `tel-${c.id}` ? <Check size={12} color="#385723" /> : <Copy size={11} style={{ opacity: 0.5 }} />}
+                          </button>
+                        )}
                       </div>
-                    )}
-                    {prospecto.contactos.telefono && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <span style={{ color: '#777', display: 'flex', alignItems: 'center', gap: '6px' }}><Phone size={12} /> Teléfono</span>
-                        <span style={{ color: '#333' }}>{prospecto.contactos.telefono}</span>
-                      </div>
-                    )}
-                  </>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {/* Próxima Tarea */}
-              {(prospecto.proxima_tarea || prospecto.fecha_proxima_tarea) && (
-                <div style={{ backgroundColor: '#f0f7ff', border: '1px solid #cce0ff', borderRadius: '6px', padding: '16px' }}>
-                  <h3 style={{ fontSize: '13px', fontWeight: 'bold', color: '#1a56db', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {/* Próxima Tarea (seguimiento / CRM) - editable acá mismo */}
+              <div style={{ backgroundColor: '#f0f7ff', border: '1px solid #cce0ff', borderRadius: '6px', padding: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <h3 style={{ fontSize: '13px', fontWeight: 'bold', color: '#1a56db', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <Clock size={14} /> Próxima Tarea
                   </h3>
-                  <div style={{ fontSize: '13px', color: '#333', marginBottom: '6px' }}>{prospecto.proxima_tarea || '-'}</div>
-                  <div style={{ fontSize: '12px', color: '#555' }}>{formatFecha(prospecto.fecha_proxima_tarea)}</div>
+                  {!editandoTarea && (
+                    <button
+                      type="button"
+                      onClick={abrirEdicionTarea}
+                      title="Editar próxima tarea"
+                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#1a56db', padding: '4px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      className="btn-hover-circle"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  )}
                 </div>
-              )}
+
+                {editandoTarea ? (
+                  <form onSubmit={guardarTarea} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <select
+                      value={tareaEdit.tipo}
+                      onChange={e => setTareaEdit({ ...tareaEdit, tipo: e.target.value })}
+                      style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '6px 8px', fontSize: '12px' }}
+                    >
+                      <option value="">Sin tipo</option>
+                      {TIPOS_TAREA.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Comentario..."
+                      value={tareaEdit.comentario}
+                      onChange={e => setTareaEdit({ ...tareaEdit, comentario: e.target.value })}
+                      style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '6px 8px', fontSize: '12px' }}
+                    />
+                    <input
+                      type="date"
+                      value={tareaEdit.fecha}
+                      onChange={e => setTareaEdit({ ...tareaEdit, fecha: e.target.value })}
+                      style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '6px 8px', fontSize: '12px' }}
+                    />
+                    <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={() => setEditandoTarea(false)}
+                        disabled={savingTarea}
+                        style={{ background: 'none', border: '1px solid #ddd', borderRadius: '4px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingTarea}
+                        style={{ background: '#1a56db', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                      >
+                        {savingTarea ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (prospecto.proxima_tarea || prospecto.fecha_proxima_tarea) ? (
+                  <>
+                    <div style={{ fontSize: '13px', color: '#333', marginBottom: '6px' }}>{prospecto.proxima_tarea || '-'}</div>
+                    <div style={{ fontSize: '12px', color: '#555' }}>{formatFecha(prospecto.fecha_proxima_tarea)}</div>
+                  </>
+                ) : (
+                  <p style={{ fontSize: '12px', color: '#7c93c9', margin: 0, fontStyle: 'italic' }}>Sin tarea programada.</p>
+                )}
+              </div>
 
               {/* Comercial: necesidad, presupuesto, servicios requeridos */}
               {(prospecto.necesidad || prospecto.presupuesto || (prospecto.servicios_requeridos || []).length > 0) && (

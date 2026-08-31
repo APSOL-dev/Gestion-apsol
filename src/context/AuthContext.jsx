@@ -22,7 +22,17 @@ export function AuthProvider({ children }) {
         console.warn('No se pudo obtener el perfil:', error.message)
         return { cargo: 'Colaborador', nombre: nombreDefecto, email: emailStr }
       }
-      return data
+
+      // Team Lead no es un cargo aparte (usuarios.cargo sigue siendo solo
+      // Admin/Colaborador): es un flag sobre la ficha de colaborador, así
+      // que cualquier usuario con ficha puede tenerlo, sea cual sea su cargo.
+      const { data: colab } = await supabase
+        .from('apsol_colaboradores')
+        .select('es_team_lead')
+        .eq('usuario_id', userId)
+        .maybeSingle()
+
+      return { ...data, es_team_lead: colab?.es_team_lead === true }
     } catch (err) {
       console.error('Error al cargar perfil:', err)
       return { cargo: 'Colaborador', nombre: nombreDefecto, email: emailStr }
@@ -112,9 +122,11 @@ export function AuthProvider({ children }) {
   }
 
   const esDuenio = perfil?.cargo === 'Admin' || perfil?.cargo === 'Dueño'
+  const esColaborador = perfil?.cargo === 'Colaborador'
+  const esTeamLead = perfil?.es_team_lead === true
 
   return (
-    <AuthContext.Provider value={{ user, perfil, loading, login, logout, signOut: logout, esDuenio }}>
+    <AuthContext.Provider value={{ user, perfil, loading, login, logout, signOut: logout, esDuenio, esColaborador, esTeamLead }}>
       {children}
     </AuthContext.Provider>
   )

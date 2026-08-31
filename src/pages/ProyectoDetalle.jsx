@@ -1,13 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, Save, Trash2, FileText, Target, Activity, Wrench } from 'lucide-react'
+import { ArrowLeft, Save, Trash2, FileText, Target, Activity, Wrench, ListChecks, Plus } from 'lucide-react'
 import { getProyectoById, saveProyecto, deleteProyecto } from '../services/proyectos'
 import { getProspectos } from '../services/prospectos'
 import { getColaboradores } from '../services/colaboradores'
+import { useData } from '../context/DataContext'
+import { filtrarProspectosParaProyecto } from '../utils/prospectos'
+import { getSprintsDeProyecto, crearSprint } from '../services/sprints'
+import { contarEstados, porcentajeAvance, siguienteNumeroSprint, ESTADOS_ITEM, ORDEN_ESTADOS } from '../services/sprints-utils'
 
 export default function ProyectoDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { refreshProyectos } = useData()
   const esNuevo = id === 'nuevo'
 
   const [proyecto, setProyecto] = useState({
@@ -21,28 +26,67 @@ export default function ProyectoDetalle() {
     descripcion: ''
   })
   
-  const [prospectos, setProspectos] = useState([])
+  // `prospectosElegibles` (de cargarDependencias) y `prospectoVinculado` (de
+  // cargarProyecto) se cargan en paralelo y sin orden garantizado. Combinarlos
+  // acá en vez de "appendear" uno sobre el otro con setState evita que, según
+  // qué carga termine última, el prospecto vinculado quede duplicado (o se
+  // pierda) en el <select>.
+  const [prospectosElegibles, setProspectosElegibles] = useState([])
+  const [prospectoVinculado, setProspectoVinculado] = useState(null)
+  const prospectos = useMemo(() => {
+    if (!prospectoVinculado) return prospectosElegibles
+    if (prospectosElegibles.some(p => p.id === prospectoVinculado.id)) return prospectosElegibles
+    return [...prospectosElegibles, prospectoVinculado]
+  }, [prospectosElegibles, prospectoVinculado])
   const [colaboradores, setColaboradores] = useState([])
   const [tickets, setTickets] = useState([])
   const [preventivos, setPreventivos] = useState([])
-  
+  const [sprints, setSprints] = useState([])
+  const [creandoSprint, setCreandoSprint] = useState(false)
+
   const [loading, setLoading] = useState(!esNuevo)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
     cargarDependencias()
-    if (!esNuevo) cargarProyecto()
+    if (!esNuevo) {
+      cargarProyecto()
+      cargarSprints()
+    }
   }, [id])
+
+  async function cargarSprints() {
+    try {
+      setSprints(await getSprintsDeProyecto(id))
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  async function nuevoSprint() {
+    setCreandoSprint(true)
+    try {
+      const s = await crearSprint({ proyecto_id: id, numero: siguienteNumeroSprint(sprints) })
+      navigate(`/sprints/${s.id}`)
+    } catch (err) {
+      console.error(err)
+      alert('No se pudo crear el sprint.')
+    } finally {
+      setCreandoSprint(false)
+    }
+  }
 
   async function cargarDependencias() {
     try {
       const [pData, cData] = await Promise.all([
-        getProspectos(), // Deberíamos filtrar por "Ganado" idealmente
+        getProspectos(),
         getColaboradores()
       ])
-      // Filtramos solo prospectos ganados si es posible
-      setProspectos(pData.filter(p => p.estado === 'Ganado' || p.estado === 'Vendido/Ganado' || p.estado === 'Activo'))
+      // Solo prospectos que ya son cliente con proyecto (6A En producción /
+      // 5H Finalizados). El vinculado al proyecto en edición se agrega aparte
+      // (ver prospectoVinculado) si quedara fuera del filtro.
+      setProspectosElegibles(filtrarProspectosParaProyecto(pData))
       setColaboradores(cData.filter(c => c.activo !== false))
     } catch (err) {
       console.error(err)
@@ -60,11 +104,7 @@ export default function ProyectoDetalle() {
       })
       setTickets(data.tickets || [])
       setPreventivos(data.preventivos || [])
-      
-      // Si el prospecto del proyecto no está en los filtrados ganados, lo agregamos para que el select funcione
-      if (data.prospectos && !prospectos.some(p => p.id === data.prospecto_id)) {
-        setProspectos(prev => [...prev, data.prospectos])
-      }
+      setProspectoVinculado(data.prospectos || null)
     } catch (err) {
       console.error(err)
       setError('Error al cargar datos del proyecto.')
@@ -85,6 +125,7 @@ export default function ProyectoDetalle() {
       if (!dataToSave.prospecto_id) dataToSave.prospecto_id = null
 
       const saved = await saveProyecto(dataToSave)
+      refreshProyectos({ forzar: true })
       if (esNuevo) {
         navigate(`/proyectos/${saved.id}`, { replace: true })
       }
@@ -100,6 +141,7 @@ export default function ProyectoDetalle() {
     if (!window.confirm('¿Estás seguro de eliminar este proyecto? Los tickets y preventivos asociados también podrían verse afectados.')) return
     try {
       await deleteProyecto(id)
+      refreshProyectos({ forzar: true })
       navigate('/proyectos')
     } catch (err) {
       console.error(err)
@@ -167,12 +209,12 @@ export default function ProyectoDetalle() {
               <div className="field" style={{ gridColumn: '1 / -1' }}>
                 <label>Oportunidad Vinculada (Prospecto) *</label>
                 <select required value={proyecto.prospecto_id} onChange={e => setProyecto({...proyecto, prospecto_id: e.target.value})}>
-                  <option value="">-- Seleccionar Prospecto Ganado --</option>
+                  <option value="">-- Seleccionar Prospecto --</option>
                   {prospectos.map(p => (
                     <option key={p.id} value={p.id}>{p.nombre} ({p.empresas?.nombre || 'Sin Empresa'})</option>
                   ))}
                 </select>
-                <small style={{ color: 'var(--color-text-muted)' }}>Solo se muestran prospectos Ganados o Activos</small>
+                <small style={{ color: 'var(--color-text-muted)' }}>Solo se muestran prospectos en producción (6A) o finalizados (5H)</small>
               </div>
 
               <div className="field" style={{ gridColumn: '1 / -1' }}>
@@ -210,6 +252,62 @@ export default function ProyectoDetalle() {
               </div>
             </form>
           </div>
+
+          {/* SPRINTS */}
+          {!esNuevo && (
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ListChecks size={20} className="text-primary" />
+                  Sprints
+                </h3>
+                <button className="btn btn-secondary" onClick={nuevoSprint} disabled={creandoSprint}>
+                  <Plus size={16} /> {creandoSprint ? 'Creando…' : 'Nuevo Sprint'}
+                </button>
+              </div>
+              {sprints.length === 0 ? (
+                <p style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>
+                  Todavía no hay sprints. Creá el primero para empezar a seguir el trabajo del equipo.
+                </p>
+              ) : (
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Sprint</th>
+                        <th>Estado</th>
+                        <th>Avance</th>
+                        <th>Semáforo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sprints.map(s => {
+                        const c = contarEstados(s.items || [])
+                        return (
+                          <tr key={s.id}>
+                            <td>
+                              <Link to={`/sprints/${s.id}`} style={{ fontWeight: '500', color: 'inherit', textDecoration: 'none' }}>
+                                Sprint {s.numero}{s.nombre ? ` · ${s.nombre}` : ''}
+                              </Link>
+                            </td>
+                            <td><span className="badge badge-gray">{s.estado}</span></td>
+                            <td>{porcentajeAvance(s.items || [])}%</td>
+                            <td>
+                              <span style={{ display: 'inline-flex', gap: '8px', fontSize: '13px' }}>
+                                {ORDEN_ESTADOS.map(e => (
+                                  <span key={e} title={ESTADOS_ITEM[e].label}>{ESTADOS_ITEM[e].emoji} {c[e]}</span>
+                                ))}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* TAREAS / TICKETS */}
           {!esNuevo && (

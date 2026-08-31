@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, FileText, CheckCircle2, AlertCircle, TrendingUp, Building2, Calendar, Target, Wrench } from 'lucide-react'
+import { DollarSign, FileText, CheckCircle2, AlertCircle, TrendingUp, Building2, Calendar, Target, Wrench, UserCog } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { useAuth } from '../context/AuthContext'
 import { getPreventivos } from '../services/operaciones'
 import { getEventosCronograma } from '../services/agenda'
+import { facturasVencidas as calcularFacturasVencidas, prospectosConSeguimientoVencido, contratosPorVencer } from '../services/notificaciones-utils'
 
 export default function Dashboard() {
-  const { facturas, prospectos, refreshFacturas, refreshProspectos } = useData()
+  const { facturas, prospectos, colaboradores, refreshFacturas, refreshProspectos } = useData()
+  const { esColaborador } = useAuth()
   const [preventivos, setPreventivos] = useState([])
   const [eventos, setEventos] = useState([])
   
@@ -20,12 +23,13 @@ export default function Dashboard() {
     const esPrimeraCarga = facturas.length === 0 || prospectos.length === 0
     if (esPrimeraCarga) setLoading(true)
     try {
-      const [prevData, eData] = await Promise.all([
-        getPreventivos(),
-        getEventosCronograma(),
-        refreshFacturas(true),
-        refreshProspectos(true)
-      ])
+      const tareas = [getPreventivos(), getEventosCronograma()]
+      // Un Colaborador no ve cobranzas ni CRM, así que no tiene sentido
+      // pedir facturas/prospectos (además la RLS se los niega).
+      if (!esColaborador) {
+        tareas.push(refreshFacturas(true), refreshProspectos(true))
+      }
+      const [prevData, eData] = await Promise.all(tareas)
       setPreventivos(prevData)
       setEventos(eData)
     } catch (err) {
@@ -40,23 +44,17 @@ export default function Dashboard() {
   const totalCobrado = facturas.reduce((acc, f) => acc + (Number(f.monto_neto || 0) - Number(f.saldo_pendiente || 0)), 0)
   const totalPendiente = facturas.reduce((acc, f) => acc + Number(f.saldo_pendiente || 0), 0)
   
-  const facturasVencidas = facturas.filter(f => 
-    f.estado !== 'Cobrada total' && f.fecha_vencimiento && new Date(f.fecha_vencimiento) < new Date()
-  )
-  const totalVencido = facturasVencidas.reduce((acc, f) => acc + Number(f.saldo_pendiente || 0), 0)
+  const facturasVencidasList = calcularFacturasVencidas(facturas)
+  const totalVencido = facturasVencidasList.reduce((acc, f) => acc + Number(f.saldo_pendiente || 0), 0)
 
-  // --- 2. PROSPECTOS CON TAREAS PENDIENTES ---
+  // --- 2. PROSPECTOS CON SEGUIMIENTO VENCIDO ---
   const hoy = new Date()
   hoy.setHours(0,0,0,0)
-  
-  const prospectosActivos = prospectos.filter(p => {
-    // Si no está perdido (4) ni ganado (8) y tiene una tarea próxima <= hoy
-    if (p.estado === 4 || p.estado === 8) return false
-    if (!p.fecha_proxima_tarea) return false
-    const fechaTarea = new Date(p.fecha_proxima_tarea)
-    fechaTarea.setHours(0,0,0,0)
-    return fechaTarea <= hoy
-  })
+
+  const prospectosActivos = prospectosConSeguimientoVencido(prospectos)
+
+  // --- 2b. CONTRATOS DE COLABORADORES POR VENCER (próximos 30 días o ya vencidos) ---
+  const contratosAlerta = contratosPorVencer(colaboradores, 30)
 
   // --- 3. PREVENTIVOS VENCIDOS O PRÓXIMOS ---
   const preventivosAlertas = preventivos.filter(p => {
@@ -82,7 +80,9 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Dashboard APSOL</h1>
-          <p className="page-subtitle">Panel de control de operaciones y cobranzas</p>
+          <p className="page-subtitle">
+            {esColaborador ? 'Panel de control de operaciones' : 'Panel de control de operaciones y cobranzas'}
+          </p>
         </div>
       </div>
 
@@ -93,8 +93,9 @@ export default function Dashboard() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* KPI FACTURACIÓN */}
+
+          {/* KPI FACTURACIÓN — solo para roles con acceso a cobranzas */}
+          {!esColaborador && (
           <div className="dashboard-grid">
             <div className="stat-card">
               <div className="stat-icon" style={{ background: 'rgba(59, 130, 246, 0.1)', color: 'var(--color-primary)' }}>
@@ -142,12 +143,13 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-            
+          <div style={{ display: 'grid', gridTemplateColumns: esColaborador ? '1fr' : '1fr 1fr', gap: '24px' }}>
+
             {/* ALERTAS OPERATIVAS (Izquierda) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              
+
               {/* Eventos de Hoy */}
               <div className="card">
                 <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -210,9 +212,10 @@ export default function Dashboard() {
 
             </div>
 
-            {/* ALERTAS CRM & COBRANZAS (Derecha) */}
+            {/* ALERTAS CRM & COBRANZAS (Derecha) — oculto para Colaborador */}
+            {!esColaborador && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              
+
               {/* Prospectos */}
               <div className="card">
                 <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -227,7 +230,7 @@ export default function Dashboard() {
                       <div key={p.id} style={{ padding: '12px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                           <Link to={`/prospectos/${p.id}`} style={{ fontWeight: '500', fontSize: '14px', color: 'inherit', textDecoration: 'none' }}>
-                            {p.nombre_prospecto}
+                            {p.nombre}
                           </Link>
                           <span className="badge badge-gray">{p.proxima_tarea}</span>
                         </div>
@@ -241,12 +244,12 @@ export default function Dashboard() {
               </div>
 
               {/* Facturas Vencidas Detalle */}
-              <div className="card" style={{ borderColor: facturasVencidas.length > 0 ? 'var(--color-danger)' : 'var(--color-border)' }}>
-                <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: facturasVencidas.length > 0 ? 'var(--color-danger)' : 'inherit' }}>
+              <div className="card" style={{ borderColor: facturasVencidasList.length > 0 ? 'var(--color-danger)' : 'var(--color-border)' }}>
+                <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: facturasVencidasList.length > 0 ? 'var(--color-danger)' : 'inherit' }}>
                   <AlertCircle size={20} />
                   Top Facturas Vencidas
                 </h3>
-                {facturasVencidas.length === 0 ? (
+                {facturasVencidasList.length === 0 ? (
                   <p style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>¡Excelente! No hay facturas vencidas.</p>
                 ) : (
                   <div className="table-container">
@@ -259,7 +262,7 @@ export default function Dashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {facturasVencidas.sort((a,b) => b.saldo_pendiente - a.saldo_pendiente).slice(0, 5).map(f => (
+                        {facturasVencidasList.sort((a,b) => b.saldo_pendiente - a.saldo_pendiente).slice(0, 5).map(f => (
                           <tr key={f.id}>
                             <td>
                               <Link to={`/facturacion/${f.id}`} style={{ color: 'inherit', textDecoration: 'none', fontWeight: '500' }}>
@@ -284,7 +287,28 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Contratos de colaboradores por vencer */}
+              {contratosAlerta.length > 0 && (
+                <div className="card" style={{ borderColor: 'var(--color-danger)' }}>
+                  <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
+                    <UserCog size={20} />
+                    Contratos por Vencer
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {contratosAlerta.map(c => (
+                      <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)' }}>
+                        <Link to={`/colaboradores/${c.id}`} style={{ fontWeight: '500', fontSize: '14px', color: 'inherit', textDecoration: 'none' }}>
+                          {c.nombre} {c.apellido}
+                        </Link>
+                        <span className="badge badge-orange">{new Date(c.renovacion_contrato).toLocaleDateString('es-AR')}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
             </div>
+            )}
 
           </div>
         </div>

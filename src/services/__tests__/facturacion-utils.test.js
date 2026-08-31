@@ -42,6 +42,35 @@ describe('calcularMontosFactura', () => {
     const resultado = calcularMontosFactura(factura, [{ monto: 150 }])
     expect(resultado.saldo_pendiente).toBe(0)
   })
+
+  test('redondeo_multiplo > 0: redondea el NETO hacia abajo al múltiplo indicado', () => {
+    // bruto = 100.37 * 1500 = 150555 ; sin descuento ; neto crudo 150555
+    const factura = { tarifa_base_uva: 100.37, valor_uva_dia: 1500, porcentaje_descuento: 0, redondeo_multiplo: 1000 }
+    const r = calcularMontosFactura(factura, [])
+    expect(r.monto_bruto).toBe(150555)
+    expect(r.monto_neto).toBe(150000)
+    expect(r.saldo_pendiente).toBe(150000)
+  })
+
+  test('redondeo_multiplo aplica DESPUÉS del descuento', () => {
+    // bruto 150000 ; -7% = 139500 ; floor a 1000 = 139000
+    const factura = { tarifa_base_uva: 100, valor_uva_dia: 1500, porcentaje_descuento: 7, redondeo_multiplo: 1000 }
+    const r = calcularMontosFactura(factura, [])
+    expect(r.descuento).toBe(10500)
+    expect(r.monto_neto).toBe(139000)
+  })
+
+  test('redondeo_multiplo = 0 (o ausente) no cambia nada: facturas históricas intactas', () => {
+    const factura = { tarifa_base_uva: 100, valor_uva_dia: 1500, porcentaje_descuento: 10, redondeo_multiplo: 0 }
+    expect(calcularMontosFactura(factura, []).monto_neto).toBe(135000)
+    const sinCampo = { tarifa_base_uva: 100, valor_uva_dia: 1500, porcentaje_descuento: 10 }
+    expect(calcularMontosFactura(sinCampo, []).monto_neto).toBe(135000)
+  })
+
+  test('redondeo_multiplo también aplica sobre un monto manual', () => {
+    const factura = { tarifa_base_uva: null, valor_uva_dia: null, porcentaje_descuento: 0, monto: 137450, redondeo_multiplo: 1000 }
+    expect(calcularMontosFactura(factura, []).monto_neto).toBe(137000)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────
@@ -52,10 +81,16 @@ describe('calcularMontosFactura', () => {
 // ──────────────────────────────────────────────────────────────
 describe('calcularPrefillFactura', () => {
   let calcularPrefillFactura
+  let REDONDEO_MULTIPLO_DEFAULT
 
   beforeEach(async () => {
     const mod = await import('../facturacion.js')
     calcularPrefillFactura = mod.calcularPrefillFactura
+    REDONDEO_MULTIPLO_DEFAULT = mod.REDONDEO_MULTIPLO_DEFAULT
+  })
+
+  test('el múltiplo de redondeo por defecto es 1000', () => {
+    expect(REDONDEO_MULTIPLO_DEFAULT).toBe(1000)
   })
 
   test('BUG real: trae la tarifa UVA de "base_indice_valor" del prospecto, no de "tarifa_base" (columna vieja sin uso, siempre en 0)', () => {
@@ -145,6 +180,220 @@ describe('calcularPrefillFactura', () => {
     expect(updates.tarifa_base_uva).toBeUndefined()
     expect(updates.contacto_id).toBeUndefined()
     expect(updates.cuenta_bancaria_id).toBeUndefined()
+  })
+
+  test('arrastra a la próxima factura el redondeo, el tilde de horas en leyenda y las horas facturadas', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const ultimaFactura = {
+      periodo_hasta: '2026-01-19', tarifa_base_uva: 36,
+      redondeo_multiplo: 1000, incluir_horas_leyenda: true, hs_facturadas: 15
+    }
+    const updates = calcularPrefillFactura({ prospecto, ultimaFactura, esNueva: true, facturaActual: {} })
+    expect(updates.redondeo_multiplo).toBe(1000)
+    expect(updates.incluir_horas_leyenda).toBe(true)
+    expect(updates.hs_facturadas).toBe(15)
+  })
+
+  test('redondeo: sin última factura, arranca en 1000 por defecto', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const updates = calcularPrefillFactura({ prospecto, ultimaFactura: null, esNueva: true, facturaActual: {} })
+    expect(updates.redondeo_multiplo).toBe(1000)
+  })
+
+  test('redondeo: si la última factura tiene 0 (histórica, sin elección real), igual arranca en 1000', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { periodo_hasta: '2026-01-19', redondeo_multiplo: 0 },
+      esNueva: true, facturaActual: {}
+    })
+    expect(updates.redondeo_multiplo).toBe(1000)
+  })
+
+  test('redondeo: un múltiplo propio > 0 de la última factura le gana al default', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { periodo_hasta: '2026-01-19', redondeo_multiplo: 500 },
+      esNueva: true, facturaActual: {}
+    })
+    expect(updates.redondeo_multiplo).toBe(500)
+  })
+
+  test('horas facturadas: por defecto toma las horas contratadas del prospecto (hs_mensuales)', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30, hs_mensuales: 20 }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { periodo_hasta: '2026-01-19', tarifa_base_uva: 36 }, // sin hs_facturadas
+      esNueva: true, facturaActual: {}
+    })
+    expect(updates.hs_facturadas).toBe(20)
+  })
+
+  test('horas facturadas: el valor de la última factura le gana a las horas contratadas del prospecto', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30, hs_mensuales: 20 }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { periodo_hasta: '2026-01-19', hs_facturadas: 15 },
+      esNueva: true, facturaActual: {}
+    })
+    expect(updates.hs_facturadas).toBe(15)
+  })
+
+  test('horas facturadas: sin última factura ni hs_mensuales cargadas, no precompleta nada', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const updates = calcularPrefillFactura({ prospecto, ultimaFactura: null, esNueva: true, facturaActual: {} })
+    expect(updates.hs_facturadas).toBeUndefined()
+  })
+
+  test('cuenta para depósito: por defecto toma la cuenta configurada en el prospecto', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30, cuenta_bancaria_id: 'cuenta-prospecto' }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { periodo_hasta: '2026-01-19', tarifa_base_uva: 36 }, // sin cuenta_bancaria_id
+      esNueva: true, facturaActual: {}
+    })
+    expect(updates.cuenta_bancaria_id).toBe('cuenta-prospecto')
+  })
+
+  test('cuenta para depósito: la de la última factura le gana a la del prospecto', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30, cuenta_bancaria_id: 'cuenta-prospecto' }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { periodo_hasta: '2026-01-19', cuenta_bancaria_id: 'cuenta-ultima-factura' },
+      esNueva: true, facturaActual: {}
+    })
+    expect(updates.cuenta_bancaria_id).toBe('cuenta-ultima-factura')
+  })
+
+  test('cuenta para depósito: no pisa la que el usuario ya eligió a mano', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30, cuenta_bancaria_id: 'cuenta-prospecto' }
+    const updates = calcularPrefillFactura({
+      prospecto,
+      ultimaFactura: { cuenta_bancaria_id: 'cuenta-ultima-factura' },
+      esNueva: true, facturaActual: { cuenta_bancaria_id: 'cuenta-elegida-a-mano' }
+    })
+    expect(updates.cuenta_bancaria_id).toBeUndefined()
+  })
+
+  test('no pisa el redondeo / tilde / horas que el usuario ya cargó a mano en la factura', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const ultimaFactura = { redondeo_multiplo: 1000, incluir_horas_leyenda: true, hs_facturadas: 15 }
+    const updates = calcularPrefillFactura({
+      prospecto, ultimaFactura, esNueva: true,
+      facturaActual: { redondeo_multiplo: 500, incluir_horas_leyenda: false, hs_facturadas: 8 }
+    })
+    expect(updates.redondeo_multiplo).toBeUndefined()
+    expect(updates.incluir_horas_leyenda).toBeUndefined()
+    expect(updates.hs_facturadas).toBeUndefined()
+  })
+
+  test('en edición (esNueva=false) no arrastra redondeo / tilde / horas', () => {
+    const prospecto = { inicio_servicio: '2025-02-03', base_indice_valor: 30 }
+    const ultimaFactura = { redondeo_multiplo: 1000, incluir_horas_leyenda: true, hs_facturadas: 15 }
+    const updates = calcularPrefillFactura({ prospecto, ultimaFactura, esNueva: false, facturaActual: {} })
+    expect(updates.redondeo_multiplo).toBeUndefined()
+    expect(updates.incluir_horas_leyenda).toBeUndefined()
+    expect(updates.hs_facturadas).toBeUndefined()
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// componerLeyendaFactura: arma el bloque NO editable que se copia con un
+// botón. Es leyenda + (horas, si está el tilde) + período (fechas completas
+// dd/mm/aaaa, las dos puntas). Función pura.
+// ──────────────────────────────────────────────────────────────
+describe('componerLeyendaFactura', () => {
+  let componerLeyendaFactura
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    componerLeyendaFactura = mod.componerLeyendaFactura
+  })
+
+  test('leyenda + período con fechas completas dd/mm/aaaa', () => {
+    const out = componerLeyendaFactura({
+      leyenda: 'Servicios profesionales de consultoría',
+      periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31'
+    })
+    expect(out).toBe('Servicios profesionales de consultoría\nPeríodo: 01/08/2026 al 31/08/2026')
+  })
+
+  test('con el tilde activo agrega la línea de horas facturadas entre la leyenda y el período', () => {
+    const out = componerLeyendaFactura({
+      leyenda: 'Mantenimiento mensual',
+      incluir_horas_leyenda: true, hs_facturadas: 12,
+      periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31'
+    })
+    expect(out).toBe('Mantenimiento mensual\nHoras facturadas: 12\nPeríodo: 01/08/2026 al 31/08/2026')
+  })
+
+  test('sin el tilde, las horas NO aparecen aunque haya valor cargado', () => {
+    const out = componerLeyendaFactura({
+      leyenda: 'Mantenimiento mensual',
+      incluir_horas_leyenda: false, hs_facturadas: 12,
+      periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31'
+    })
+    expect(out).not.toMatch(/Horas facturadas/)
+  })
+
+  test('con el tilde pero sin horas cargadas (0, null, vacío) no agrega la línea de horas', () => {
+    const base = { leyenda: 'X', incluir_horas_leyenda: true, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31' }
+    expect(componerLeyendaFactura({ ...base, hs_facturadas: 0 })).not.toMatch(/Horas facturadas/)
+    expect(componerLeyendaFactura({ ...base, hs_facturadas: null })).not.toMatch(/Horas facturadas/)
+    expect(componerLeyendaFactura({ ...base, hs_facturadas: '' })).not.toMatch(/Horas facturadas/)
+  })
+
+  test('sin leyenda arranca directo (sin línea en blanco arriba)', () => {
+    const out = componerLeyendaFactura({ leyenda: '', periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31' })
+    expect(out).toBe('Período: 01/08/2026 al 31/08/2026')
+  })
+
+  test('si falta alguna fecha del período, no agrega la línea de período', () => {
+    expect(componerLeyendaFactura({ leyenda: 'X', periodo_desde: '2026-08-01', periodo_hasta: '' })).toBe('X')
+    expect(componerLeyendaFactura({ leyenda: 'X', periodo_desde: '', periodo_hasta: '2026-08-31' })).toBe('X')
+  })
+
+  test('tolera fechas ISO con hora (las recorta a la parte de fecha)', () => {
+    const out = componerLeyendaFactura({
+      leyenda: 'X', periodo_desde: '2026-08-01T00:00:00', periodo_hasta: '2026-08-31T00:00:00'
+    })
+    expect(out).toBe('X\nPeríodo: 01/08/2026 al 31/08/2026')
+  })
+
+  test('todo vacío devuelve string vacío', () => {
+    expect(componerLeyendaFactura({})).toBe('')
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// fechaReferenciaUva: qué fecha del período se usa para buscar el valor UVA.
+// Por defecto la de inicio; el prospecto puede pedir la de fin.
+// ──────────────────────────────────────────────────────────────
+describe('fechaReferenciaUva', () => {
+  let fechaReferenciaUva
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    fechaReferenciaUva = mod.fechaReferenciaUva
+  })
+
+  test('por defecto usa la fecha de inicio del período', () => {
+    expect(fechaReferenciaUva({ periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31' })).toBe('2026-08-01')
+    expect(fechaReferenciaUva({ uva_referencia_periodo: 'inicio', periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31' })).toBe('2026-08-01')
+  })
+
+  test('con "fin" usa la fecha de fin del período', () => {
+    expect(fechaReferenciaUva({ uva_referencia_periodo: 'fin', periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31' })).toBe('2026-08-31')
+  })
+
+  test('un valor desconocido cae a inicio', () => {
+    expect(fechaReferenciaUva({ uva_referencia_periodo: 'cualquiera', periodo_desde: '2026-08-01', periodo_hasta: '2026-08-31' })).toBe('2026-08-01')
+  })
+
+  test('devuelve string vacío si la fecha elegida no está cargada', () => {
+    expect(fechaReferenciaUva({ uva_referencia_periodo: 'fin', periodo_desde: '2026-08-01', periodo_hasta: '' })).toBe('')
+    expect(fechaReferenciaUva({})).toBe('')
   })
 })
 
@@ -270,6 +519,7 @@ vi.stubGlobal('fetch', mockFetch)
 vi.mock('../../lib/supabase', () => ({
   supabase: {
     from: vi.fn(),
+    rpc: vi.fn(),
   }
 }))
 
@@ -658,12 +908,187 @@ describe('getFacturaById', () => {
     expect(selectArg).toMatch(/contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey\([^)]*telefono/)
     expect(selectArg).toMatch(/contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey\([^)]*telefono/)
   })
+
+  test('trae dias_espera_facturacion de la empresa (lo usa saveFactura para agendar el 1er recordatorio de cobro)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const selectFactura = vi.fn().mockReturnThis()
+
+    supabase.from
+      .mockReturnValueOnce({
+        select: selectFactura,
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: { id: 'factura-1', monto: 100, tarifa_base_uva: null, valor_uva_dia: null, porcentaje_descuento: 0 },
+          error: null
+        })
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
+      })
+
+    await getFacturaById('factura-1')
+
+    const selectArg = selectFactura.mock.calls[0][0]
+    expect(selectArg).toMatch(/empresas:apsol_empresas\([^)]*dias_espera_facturacion/)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Tests de resolverDiasEspera: cuántos días hábiles espera la app antes
+// de agendar el primer recordatorio de pago. Sale de la empresa; si no
+// hay dato (empresa nueva o vieja sin cargar), el estándar es 4.
+// ──────────────────────────────────────────────────────────────
+describe('resolverDiasEspera', () => {
+  let resolverDiasEspera
+  let DIAS_ESPERA_FACTURACION_DEFAULT
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    resolverDiasEspera = mod.resolverDiasEspera
+    DIAS_ESPERA_FACTURACION_DEFAULT = mod.DIAS_ESPERA_FACTURACION_DEFAULT
+  })
+
+  test('el estándar de la casa es 4 días hábiles (coincide con el DEFAULT de la columna en la DB)', () => {
+    expect(DIAS_ESPERA_FACTURACION_DEFAULT).toBe(4)
+  })
+
+  test('respeta un fallback explícito distinto si se lo pasan', () => {
+    expect(resolverDiasEspera(null, 10)).toBe(10)
+    expect(resolverDiasEspera({ dias_espera_facturacion: 0 }, 10)).toBe(10)
+  })
+
+  test('usa dias_espera_facturacion de la empresa cuando es un número válido', () => {
+    expect(resolverDiasEspera({ dias_espera_facturacion: 7 })).toBe(7)
+  })
+
+  test('acepta el valor aunque venga como string (los <input number> lo devuelven así)', () => {
+    expect(resolverDiasEspera({ dias_espera_facturacion: '6' })).toBe(6)
+  })
+
+  test('cae a 4 cuando la empresa no tiene el campo, es null, es 0 o es inválido', () => {
+    expect(resolverDiasEspera({ dias_espera_facturacion: null })).toBe(4)
+    expect(resolverDiasEspera({ dias_espera_facturacion: 0 })).toBe(4)
+    expect(resolverDiasEspera({ dias_espera_facturacion: 'x' })).toBe(4)
+    expect(resolverDiasEspera({})).toBe(4)
+  })
+
+  test('cae a 4 cuando no llega ninguna empresa (factura sin joins resueltos)', () => {
+    expect(resolverDiasEspera(null)).toBe(4)
+    expect(resolverDiasEspera(undefined)).toBe(4)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Tests de prepararFacturaParaGuardar: limpieza del objeto de factura que
+// arma la pantalla de detalle antes de mandarlo a saveFactura.
+// ──────────────────────────────────────────────────────────────
+describe('prepararFacturaParaGuardar', () => {
+  let prepararFacturaParaGuardar
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    prepararFacturaParaGuardar = mod.prepararFacturaParaGuardar
+  })
+
+  test('saca los campos que vienen de joins (no son columnas físicas)', () => {
+    const out = prepararFacturaParaGuardar({
+      id: 'f1', monto: 100,
+      prospectos: { nombre: 'X' }, contactos: { nombre: 'Y' }, contacto2: null, pagos: [{ id: 'p1' }]
+    })
+    expect(out).not.toHaveProperty('prospectos')
+    expect(out).not.toHaveProperty('contactos')
+    expect(out).not.toHaveProperty('contacto2')
+    expect(out).not.toHaveProperty('pagos')
+    expect(out.id).toBe('f1')
+    expect(out.monto).toBe(100)
+  })
+
+  test('NO manda el bookkeeping de recordatorios (lo maneja la app al crear y n8n después)', () => {
+    const out = prepararFacturaParaGuardar({
+      id: 'f1',
+      proxima_notificacion: '2026-09-03',
+      ultima_notificacion: '2026-08-20',
+      recordatorios_enviados: 2
+    })
+    expect(out).not.toHaveProperty('proxima_notificacion')
+    expect(out).not.toHaveProperty('ultima_notificacion')
+    expect(out).not.toHaveProperty('recordatorios_enviados')
+  })
+
+  test('convierte a null los ids y fechas opcionales que vienen vacíos', () => {
+    const out = prepararFacturaParaGuardar({
+      prospecto_id: '', contacto_id: '', contacto_cobro2_id: '',
+      fecha_vencimiento: '', periodo_desde: '', periodo_hasta: '',
+      razon_social_id: '', cuenta_bancaria_id: ''
+    })
+    for (const campo of [
+      'prospecto_id', 'contacto_id', 'contacto_cobro2_id', 'fecha_vencimiento',
+      'periodo_desde', 'periodo_hasta', 'razon_social_id', 'cuenta_bancaria_id'
+    ]) {
+      expect(out[campo]).toBeNull()
+    }
+  })
+
+  test('no pisa un id/fecha opcional que sí vino cargado', () => {
+    const out = prepararFacturaParaGuardar({ prospecto_id: 'p1', periodo_desde: '2026-08-01' })
+    expect(out.prospecto_id).toBe('p1')
+    expect(out.periodo_desde).toBe('2026-08-01')
+  })
+
+  test('marca "Cobrada total" cuando el saldo es 0 y hay pagos', () => {
+    const out = prepararFacturaParaGuardar({ estado: 'Pendiente', saldo_pendiente: 0 }, [{ monto: 100 }])
+    expect(out.estado).toBe('Cobrada total')
+  })
+
+  test('marca "Cobrada parcial" cuando hay pagos pero queda saldo', () => {
+    const out = prepararFacturaParaGuardar({ estado: 'Pendiente', saldo_pendiente: 40 }, [{ monto: 60 }])
+    expect(out.estado).toBe('Cobrada parcial')
+  })
+
+  test('nunca cambia el estado de una factura Anulada', () => {
+    const out = prepararFacturaParaGuardar({ estado: 'Anulada', saldo_pendiente: 0 }, [{ monto: 100 }])
+    expect(out.estado).toBe('Anulada')
+  })
+
+  test('sin pagos deja el estado como estaba', () => {
+    const out = prepararFacturaParaGuardar({ estado: 'Pendiente', saldo_pendiente: 100 }, [])
+    expect(out.estado).toBe('Pendiente')
+  })
+
+  test('no muta el objeto factura original', () => {
+    const factura = { id: 'f1', prospectos: { nombre: 'X' }, proxima_notificacion: '2026-09-03', prospecto_id: '' }
+    prepararFacturaParaGuardar(factura, [])
+    expect(factura.prospectos).toEqual({ nombre: 'X' })
+    expect(factura.proxima_notificacion).toBe('2026-09-03')
+    expect(factura.prospecto_id).toBe('')
+  })
+
+  test('coacciona los campos nuevos: hs_facturadas "" -> null, redondeo_multiplo "" -> 0, incluir_horas_leyenda -> booleano', () => {
+    const out = prepararFacturaParaGuardar({
+      hs_facturadas: '', redondeo_multiplo: '', incluir_horas_leyenda: undefined
+    })
+    expect(out.hs_facturadas).toBeNull()
+    expect(out.redondeo_multiplo).toBe(0)
+    expect(out.incluir_horas_leyenda).toBe(false)
+  })
+
+  test('conserva los campos nuevos cuando vienen cargados (como número / booleano)', () => {
+    const out = prepararFacturaParaGuardar({
+      hs_facturadas: '12.5', redondeo_multiplo: '1000', incluir_horas_leyenda: true
+    })
+    expect(out.hs_facturadas).toBe(12.5)
+    expect(out.redondeo_multiplo).toBe(1000)
+    expect(out.incluir_horas_leyenda).toBe(true)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────
 // Tests de saveFactura: notificación "primera_vez" al webhook único
 // de facturación solo cuando se CREA una factura (insert), nunca al
-// editar una ya existente (update).
+// editar una ya existente (update). Además, al crear se agenda la
+// primera fecha de recordatorio de cobro (proxima_notificacion).
 // ──────────────────────────────────────────────────────────────
 describe('saveFactura', () => {
   let saveFactura
@@ -673,6 +1098,95 @@ describe('saveFactura', () => {
     vi.resetModules()
     const mod = await import('../facturacion.js')
     saveFactura = mod.saveFactura
+  })
+
+  // Helpers para los mocks de saveFactura al crear (insert + getFacturaById + pagos).
+  function mockearAltaFactura(supabase, { empresa = { dias_espera_facturacion: 4 }, fechaEmision = '2026-08-28' } = {}) {
+    supabase.from
+      // 1. INSERT de la factura
+      .mockReturnValueOnce({
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: { id: 'factura-1', numero_factura: '303', contacto_cobro_id: 'contacto-1', prospecto_id: 'prospecto-1' },
+          error: null
+        })
+      })
+      // 2. getFacturaById -> SELECT de la factura completa (trae la empresa con su dias_espera_facturacion)
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: {
+            id: 'factura-1', numero_factura: '303', contacto_cobro_id: 'contacto-1',
+            prospecto_id: 'prospecto-1', fecha_emision: fechaEmision,
+            monto: 0, tarifa_base_uva: null, valor_uva_dia: null, porcentaje_descuento: 0,
+            prospectos: { id: 'prospecto-1', empresas: empresa }
+          },
+          error: null
+        })
+      })
+      // 3. getFacturaById -> SELECT de los pagos (factura nueva, sin pagos)
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
+      })
+  }
+
+  test('al crear una factura nueva, agenda proxima_notificacion = emisión + días hábiles de la empresa (cálculo local, sin RPC)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+
+    const updateProxNotif = vi.fn().mockReturnThis()
+    const updateProxNotifEq = vi.fn().mockResolvedValueOnce({ error: null })
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-08-28' })
+    // 4. UPDATE de proxima_notificacion sobre la factura recién creada
+    supabase.from.mockReturnValueOnce({ update: updateProxNotif, eq: updateProxNotifEq })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    // viernes 2026-08-28 + 4 días hábiles = jueves 2026-09-03
+    expect(updateProxNotif).toHaveBeenCalledWith({ proxima_notificacion: '2026-09-03' })
+    expect(updateProxNotifEq).toHaveBeenCalledWith('id', 'factura-1')
+    expect(supabase.rpc).not.toHaveBeenCalled()
+  })
+
+  test('empresa sin dias_espera_facturacion: usa el estándar de 4 días hábiles', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const updateProxNotif = vi.fn().mockReturnThis()
+
+    mockearAltaFactura(supabase, { empresa: {}, fechaEmision: '2026-08-28' })
+    supabase.from.mockReturnValueOnce({ update: updateProxNotif, eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    expect(updateProxNotif).toHaveBeenCalledWith({ proxima_notificacion: '2026-09-03' })
+  })
+
+  test('sin fecha de emisión no intenta agendar recordatorio (no hay 4ª consulta)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: null })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    // insert + 2 de getFacturaById = 3 llamadas. Nunca la 4ª (el UPDATE).
+    expect(supabase.from).toHaveBeenCalledTimes(3)
+  })
+
+  test('si el UPDATE de proxima_notificacion falla, la factura igual queda guardada', async () => {
+    const { supabase } = await import('../../lib/supabase')
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-08-28' })
+    supabase.from.mockReturnValueOnce({
+      update: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockRejectedValueOnce(new Error('timeout de la base'))
+    })
+
+    const resultado = await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    expect(resultado.id).toBe('factura-1')
   })
 
   test('al crear una factura nueva, notifica "primera_vez" con la factura completa (con joins)', async () => {
@@ -833,5 +1347,25 @@ describe('getUltimaFacturaProspecto', () => {
 
     const resultado = await getUltimaFacturaProspecto('prospecto-nuevo')
     expect(resultado).toBeNull()
+  })
+
+  test('pide también redondeo_multiplo, incluir_horas_leyenda y hs_facturadas (se arrastran a la próxima factura)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const select = vi.fn().mockReturnThis()
+    supabase.from.mockReturnValueOnce({
+      select,
+      eq: vi.fn().mockReturnThis(),
+      not: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValueOnce({ data: null, error: null })
+    })
+
+    await getUltimaFacturaProspecto('prospecto-1')
+
+    const selectArg = select.mock.calls[0][0]
+    expect(selectArg).toMatch(/redondeo_multiplo/)
+    expect(selectArg).toMatch(/incluir_horas_leyenda/)
+    expect(selectArg).toMatch(/hs_facturadas/)
   })
 })
