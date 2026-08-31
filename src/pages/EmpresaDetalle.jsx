@@ -28,7 +28,7 @@ export default function EmpresaDetalle() {
     provincia: '',
     industria: '',
     tamaño_personas: '',
-    dias_espera_facturacion: 5
+    dias_espera_facturacion: 4
   })
 
   const [razonesSociales, setRazonesSociales] = useState([])
@@ -83,7 +83,7 @@ export default function EmpresaDetalle() {
         provincia: data.provincia || '',
         industria: data.industria || '',
         tamaño_personas: data.tamaño_personas || '',
-        dias_espera_facturacion: data.dias_espera_facturacion || 5
+        dias_espera_facturacion: data.dias_espera_facturacion ?? 4
       })
       setContactos(data.contactos || [])
       setProspectos(data.prospectos || [])

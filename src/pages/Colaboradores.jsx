@@ -1,29 +1,74 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Search, Users, Phone, Mail, Award } from 'lucide-react'
+import { Plus, Search, Users } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { agruparColaboradores } from '../utils/colaboradores'
+
+function formatearFecha(valor) {
+  if (!valor) return '—'
+  const d = new Date(`${String(valor).split('T')[0]}T12:00:00`)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-AR')
+}
+
+function FilaColaborador({ c }) {
+  return (
+    <tr style={{ opacity: c.activo === false ? 0.6 : 1 }}>
+      <td>
+        <Link
+          to={`/colaboradores/${c.id}`}
+          style={{ color: 'inherit', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}
+        >
+          <div className="sidebar-avatar" style={{ width: '32px', height: '32px', fontSize: '13px' }}>
+            {(c.nombre || c.apellido || 'C').charAt(0)}
+          </div>
+          <span>{c.nombre} {c.apellido}</span>
+        </Link>
+      </td>
+      <td>{c.puesto || '—'}</td>
+      <td style={{ color: 'var(--color-primary)', fontWeight: '500' }}>{formatearFecha(c.proxima_fecha_pago)}</td>
+      <td>{formatearFecha(c.fin_contrato)}</td>
+    </tr>
+  )
+}
+
+function GrupoEstado({ titulo, colaboradores }) {
+  if (colaboradores.length === 0) return null
+  return (
+    <>
+      <tr>
+        <td colSpan={4} style={{ background: 'var(--color-surface2)', fontWeight: '700', color: 'var(--color-success)', fontSize: '13px' }}>
+          {titulo}
+        </td>
+      </tr>
+      {colaboradores.map(c => <FilaColaborador key={c.id} c={c} />)}
+    </>
+  )
+}
 
 export default function Colaboradores() {
   const { colaboradores, loadingColaboradores, refreshColaboradores } = useData()
   const [search, setSearch] = useState('')
 
   useEffect(() => {
-    const esSilencioso = colaboradores.length > 0
-    refreshColaboradores(esSilencioso)
+    refreshColaboradores(colaboradores.length > 0)
   }, [])
 
-  const colaboradoresFiltrados = colaboradores.filter(c => 
-    `${c.nombre || ''} ${c.apellido || ''}`.toLowerCase().includes(search.toLowerCase()) ||
-    (c.puesto && c.puesto.toLowerCase().includes(search.toLowerCase())) ||
-    (c.email && c.email.toLowerCase().includes(search.toLowerCase()))
+  const q = search.toLowerCase()
+  const colaboradoresFiltrados = colaboradores.filter(c =>
+    `${c.nombre || ''} ${c.apellido || ''}`.toLowerCase().includes(q) ||
+    (c.puesto && c.puesto.toLowerCase().includes(q)) ||
+    (c.email && c.email.toLowerCase().includes(q))
   )
+
+  const { activos, inactivos } = agruparColaboradores(colaboradoresFiltrados)
+  const hayResultados = activos.length + inactivos.length > 0
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Colaboradores</h1>
-          <p className="page-subtitle">Gestión de recursos humanos, roles y tarifas base</p>
+          <p className="page-subtitle">Equipo, honorarios y contratos</p>
         </div>
         <Link to="/colaboradores/nuevo" className="btn btn-primary">
           <Plus size={18} />
@@ -48,7 +93,7 @@ export default function Colaboradores() {
           <div className="loading-spinner" />
           <p>Cargando colaboradores...</p>
         </div>
-      ) : colaboradoresFiltrados.length === 0 ? (
+      ) : !hayResultados ? (
         <div className="placeholder-card">
           <Users className="placeholder-icon" />
           <h3>No se encontraron colaboradores</h3>
@@ -59,56 +104,15 @@ export default function Colaboradores() {
           <table>
             <thead>
               <tr>
-                <th>Colaborador</th>
-                <th>Puesto / Rol</th>
-                <th>Contacto</th>
-                <th>Tarifa Base (Hora)</th>
-                <th>Dedicación Mensual</th>
+                <th>Nombre y Apellido</th>
+                <th>Puesto</th>
+                <th>Próxima Fecha de pago</th>
+                <th>Fin de contrato</th>
               </tr>
             </thead>
             <tbody>
-              {colaboradoresFiltrados.map((c) => (
-                <tr key={c.id} style={{ opacity: c.activo === false ? 0.6 : 1 }}>
-                  <td>
-                    <Link to={`/colaboradores/${c.id}`} style={{ color: 'inherit', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}>
-                      <div className="sidebar-avatar" style={{ width: '32px', height: '32px', fontSize: '13px' }}>
-                        {(c.nombre || c.apellido || 'C').charAt(0)}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span>{c.nombre} {c.apellido}</span>
-                        {c.activo === false && <span style={{ fontSize: '11px', color: 'var(--color-danger)' }}>Inactivo</span>}
-                      </div>
-                    </Link>
-                  </td>
-                  <td>
-                    {c.puesto ? (
-                      <span className="badge badge-purple" style={{ display: 'flex', alignItems: 'center', gap: '4px', width: 'fit-content' }}>
-                        <Award size={12} /> {c.puesto}
-                      </span>
-                    ) : '-'}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      {c.email && (
-                        <a href={`mailto:${c.email}`} style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-muted)', textDecoration: 'none', fontSize: '12px' }}>
-                          <Mail size={12} /> {c.email}
-                        </a>
-                      )}
-                      {c.telefono && (
-                        <a href={`tel:${c.telefono}`} style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-muted)', textDecoration: 'none', fontSize: '12px' }}>
-                          <Phone size={12} /> {c.telefono}
-                        </a>
-                      )}
-                    </div>
-                  </td>
-                  <td style={{ fontWeight: '500' }}>
-                    {c.tarifa_base_hora ? `$${Number(c.tarifa_base_hora).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '-'}
-                  </td>
-                  <td>
-                    {c.dedicacion_mensual_horas ? `${c.dedicacion_mensual_horas} hs` : '-'}
-                  </td>
-                </tr>
-              ))}
+              <GrupoEstado titulo="Activo" colaboradores={activos} />
+              <GrupoEstado titulo="No Activo" colaboradores={inactivos} />
             </tbody>
           </table>
         </div>

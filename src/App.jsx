@@ -6,14 +6,17 @@ import { useState, useEffect, useRef } from 'react'
 import { 
   LayoutDashboard, Building2, Users, FileText, Target, Briefcase, 
   Wrench, Activity, GraduationCap, Calendar as CalendarIcon, 
-  ShieldCheck, Receipt, DollarSign, Wallet, Mail, Menu, X, ChevronLeft, ChevronRight, LogOut, Pin, HelpCircle
+  ShieldCheck, Receipt, DollarSign, Wallet, Mail, Menu, X, ChevronLeft, ChevronRight, LogOut, Pin, HelpCircle, UserCircle
 } from 'lucide-react'
 import PageLoader from './components/PageLoader'
+import NotificacionesBell from './components/NotificacionesBell'
+import { rutaVisibleParaRol, filtrarFavoritosPorRol, claveFavoritos } from './utils/permisos'
 
 // ─── Lazy imports (Code Splitting) ───────────────────────────────────────────
 // Cada página se carga solo cuando el usuario la visita por primera vez
 const Login            = lazy(() => import('./pages/Login'))
 const Dashboard        = lazy(() => import('./pages/Dashboard'))
+const MiPerfil         = lazy(() => import('./pages/MiPerfil'))
 
 // Mapa de iconos para persistencia en Favoritos
 const ICON_MAP = {
@@ -50,6 +53,8 @@ const Credenciales        = lazy(() => import('./pages/Credenciales'))
 const CredencialDetalle   = lazy(() => import('./pages/CredencialDetalle'))
 const Planificacion       = lazy(() => import('./pages/Planificacion'))
 const PlanDetalle         = lazy(() => import('./pages/PlanDetalle'))
+const Sprints             = lazy(() => import('./pages/Sprints'))
+const SprintDetalle       = lazy(() => import('./pages/SprintDetalle'))
 // ─────────────────────────────────────────────────────────────────────────────
 
 function Layout() {
@@ -68,23 +73,31 @@ function Layout() {
     mainContentRef.current?.scrollTo(0, 0)
   }, [location.pathname])
 
-  // Estado para favoritos con persistencia y LIMPIEZA DE SEGURIDAD
-  const [favorites, setFavorites] = useState(() => {
+  // Favoritos: AISLADOS POR USUARIO. Antes se guardaban en una sola clave
+  // global del navegador ('apsol_favorites'), así que los pins del Admin le
+  // aparecían al Colaborador que entraba en la misma máquina. Ahora la clave
+  // lleva el id del usuario. Se cargan/persisten en efectos porque `user`
+  // todavía no está disponible en el primer render.
+  const [favorites, setFavorites] = useState([])
+  const favoritosCargadosRef = useRef(false)
+
+  useEffect(() => {
+    favoritosCargadosRef.current = false
+    // Limpieza del esquema viejo global (dejaba pins de un usuario a otro)
+    try { localStorage.removeItem('apsol_favorites') } catch (e) { /* noop */ }
+
+    if (!user?.id) { setFavorites([]); return }
     try {
-      const saved = localStorage.getItem('apsol_favorites')
-      if (!saved) return []
-      const parsed = JSON.parse(saved)
-      // Si los datos guardados tienen iconos que no son texto, están corruptos (del error anterior)
-      const isCorrupt = parsed.some(f => typeof f.icon !== 'string')
-      if (isCorrupt) {
-        localStorage.removeItem('apsol_favorites')
-        return []
-      }
-      return parsed
+      const saved = localStorage.getItem(claveFavoritos(user.id))
+      const parsed = saved ? JSON.parse(saved) : []
+      // Iconos que no son texto = datos corruptos de una versión anterior
+      const corrupto = !Array.isArray(parsed) || parsed.some(f => typeof f?.icon !== 'string')
+      setFavorites(corrupto ? [] : parsed)
     } catch (e) {
-      return []
+      setFavorites([])
     }
-  })
+    favoritosCargadosRef.current = true
+  }, [user?.id])
 
   const [openSections, setOpenSections] = useState({
     CRM: true,
@@ -94,8 +107,12 @@ function Layout() {
   })
 
   useEffect(() => {
-    localStorage.setItem('apsol_favorites', JSON.stringify(favorites))
-  }, [favorites])
+    // No persistir hasta haber cargado los del usuario (evita pisar con [])
+    if (!user?.id || !favoritosCargadosRef.current) return
+    try {
+      localStorage.setItem(claveFavoritos(user.id), JSON.stringify(favorites))
+    } catch (e) { /* noop */ }
+  }, [favorites, user?.id])
 
   const isActive = (path) => location.pathname.startsWith(path)
   const closeSidebar = () => setSidebarOpen(false)
@@ -117,16 +134,8 @@ function Layout() {
     }))
   }
 
-  const rutasPermitidasColaborador = ['/', '/cronograma', '/proyectos', '/tickets', '/preventivos']
-  const esRutaPermitida = () => {
-    if (perfil?.cargo === 'Colaborador') {
-      const path = location.pathname
-      return rutasPermitidasColaborador.some(ruta => 
-        ruta === '/' ? path === '/' : path.startsWith(ruta)
-      )
-    }
-    return true
-  }
+  // Permisos por rol: única fuente de verdad en utils/permisos.js
+  const esRutaPermitida = () => rutaVisibleParaRol(location.pathname, perfil?.cargo)
 
   if (loading) {
     return <PageLoader />
@@ -134,6 +143,14 @@ function Layout() {
 
   if (!user) {
     return <Navigate to="/login" replace />
+  }
+
+  // "Mi Perfil" es solo para colaboradores. El administrador gestiona todo
+  // (incluida su propia cuenta) desde la sección Colaboradores. Va ANTES del
+  // guard genérico para mandarlo a /colaboradores y no a "/".
+  const esColaborador = perfil?.cargo === 'Colaborador'
+  if (user && perfil && !esColaborador && location.pathname.startsWith('/mi-perfil')) {
+    return <Navigate to="/colaboradores" replace />
   }
 
   if (user && perfil && !esRutaPermitida()) {
@@ -159,6 +176,7 @@ function Layout() {
         { to: '/cronograma', icon: 'Calendar', label: 'Cronograma' },
         { to: '/planificacion', icon: 'Calendar', label: 'Planificación' },
         { to: '/proyectos', icon: 'FileText', label: 'Proyectos' },
+        { to: '/sprints', icon: 'Activity', label: 'Sprints' },
         { to: '/tickets', icon: 'Activity', label: 'Tickets' },
         { to: '/preventivos', icon: 'Wrench', label: 'Preventivos' },
       ]
@@ -185,20 +203,17 @@ function Layout() {
     }
   ]
 
-  const filteredNavConfig = navConfig.map(section => {
-    if (perfil?.cargo === 'Colaborador') {
-      return {
-        ...section,
-        items: section.items.filter(item => item.to !== '/planificacion')
-      }
-    }
-    return section
-  }).filter(section => {
-    if (perfil?.cargo === 'Colaborador') {
-      return section.id === 'Operaciones'
-    }
-    return true
-  })
+  // Deja en cada sección solo los ítems que el rol puede ver, y descarta las
+  // secciones que quedan vacías. Misma regla que el guard de rutas y los
+  // favoritos (utils/permisos.js), así no se desincronizan.
+  const filteredNavConfig = navConfig
+    .map(section => ({
+      ...section,
+      items: section.items.filter(item => rutaVisibleParaRol(item.to, perfil?.cargo))
+    }))
+    .filter(section => section.items.length > 0)
+
+  const favoritosVisibles = filtrarFavoritosPorRol(favorites, perfil?.cargo)
 
   const NavLink = ({ to, icon, label, exact, sub, item }) => {
     const active = exact ? location.pathname === to : isActive(to)
@@ -280,11 +295,12 @@ function Layout() {
           
           <nav className="sidebar-nav">
             <NavLink to="/" icon={LayoutDashboard} label="Inicio" exact />
-            
-            {favorites.length > 0 && (
+            {esColaborador && <NavLink to="/mi-perfil" icon={UserCircle} label="Mi Perfil" />}
+
+            {favoritosVisibles.length > 0 && (
               <div className="nav-section favorites-section">
                 {!isCollapsed && <div className="nav-group" style={{ fontSize: '0.75rem', padding: '10px 12px', color: 'var(--color-text-subtle)' }}>Favoritos</div>}
-                {favorites.map(item => (
+                {favoritosVisibles.map(item => (
                   <NavLink key={item.to} to={item.to} icon={item.icon} label={item.label} item={item} />
                 ))}
               </div>
@@ -319,16 +335,23 @@ function Layout() {
           </nav>
           
           <div className="sidebar-footer">
-            {!isCollapsed && perfil && (
-              <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--color-border)', marginBottom: '4px' }}>
-                <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--color-text)' }}>
-                  {perfil.nombre || user?.email?.split('@')[0] || 'Usuario'}
-                </div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-subtle)' }}>
-                  {perfil.cargo || 'Sin cargo'}
-                </div>
-              </div>
-            )}
+            {!isCollapsed && perfil && (() => {
+              const contenido = (
+                <>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--color-text)' }}>
+                    {perfil.nombre || user?.email?.split('@')[0] || 'Usuario'}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--color-text-subtle)' }}>
+                    {perfil.cargo || 'Sin cargo'}{esColaborador ? ' · Ver mi perfil' : ''}
+                  </div>
+                </>
+              )
+              const estilo = { display: 'block', textDecoration: 'none', padding: '10px 12px', borderBottom: '1px solid var(--color-border)', marginBottom: '4px' }
+              return esColaborador
+                ? <Link to="/mi-perfil" onClick={closeSidebar} style={estilo}>{contenido}</Link>
+                : <div style={estilo}>{contenido}</div>
+            })()}
+            <NotificacionesBell collapsed={isCollapsed} />
             <button onClick={signOut} className="sidebar-logout" style={{ background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: '12px', width: '100%', padding: '10px 12px', cursor: 'pointer', color: 'var(--color-text-subtle)' }}>
               <LogOut size={16} /> {!isCollapsed && <span>Cerrar Sesión</span>}
             </button>
@@ -365,6 +388,7 @@ export default function App() {
               <Route path="/login" element={<Login />} />
               <Route element={<Layout />}>
                 <Route index element={<Dashboard />} />
+                <Route path="mi-perfil" element={<MiPerfil />} />
 
                 <Route path="facturacion">
                   <Route index element={<Facturacion />} />
@@ -398,6 +422,10 @@ export default function App() {
                 <Route path="proyectos">
                   <Route index element={<Proyectos />} />
                   <Route path=":id" element={<ProyectoDetalle />} />
+                </Route>
+                <Route path="sprints">
+                  <Route index element={<Sprints />} />
+                  <Route path=":id" element={<SprintDetalle />} />
                 </Route>
                 <Route path="tickets">
                   <Route index element={<Tickets />} />

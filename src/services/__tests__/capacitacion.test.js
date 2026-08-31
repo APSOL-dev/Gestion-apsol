@@ -164,3 +164,61 @@ describe('nombreUsuario', () => {
     expect(nombreUsuario([], 'u1')).toBe('Usuario')
   })
 })
+
+describe('vistoPorDeTema', () => {
+  let vistoPorDeTema
+
+  beforeEach(async () => {
+    const mod = await import('../capacitacion.js')
+    vistoPorDeTema = mod.vistoPorDeTema
+  })
+
+  test('une el visto_por de todos los videos del tema sin duplicados', () => {
+    const tema = {
+      videos: [
+        { visto_por: ['u1', 'u2'] },
+        { visto_por: ['u2', 'u3'] }
+      ]
+    }
+    expect(vistoPorDeTema(tema)).toEqual(['u1', 'u2', 'u3'])
+  })
+
+  test('devuelve lista vacía si no hay videos o nadie vio nada', () => {
+    expect(vistoPorDeTema({ videos: [] })).toEqual([])
+    expect(vistoPorDeTema({ videos: [{ visto_por: [] }] })).toEqual([])
+    expect(vistoPorDeTema({})).toEqual([])
+    expect(vistoPorDeTema(null)).toEqual([])
+  })
+})
+
+describe('agruparPorClasificacion', () => {
+  let agruparPorClasificacion
+
+  beforeEach(async () => {
+    const mod = await import('../capacitacion.js')
+    agruparPorClasificacion = mod.agruparPorClasificacion
+  })
+
+  test('agrupa los temas por clasificación', () => {
+    const temas = [
+      { id: '1', clasificacion: 'N8N' },
+      { id: '2', clasificacion: 'AppSheet' },
+      { id: '3', clasificacion: 'N8N' }
+    ]
+    const grupos = agruparPorClasificacion(temas)
+    expect(grupos).toEqual([
+      ['AppSheet', [temas[1]]],
+      ['N8N', [temas[0], temas[2]]]
+    ])
+  })
+
+  test('agrupa sin clasificación bajo "Sin clasificar"', () => {
+    const temas = [{ id: '1', clasificacion: null }]
+    expect(agruparPorClasificacion(temas)).toEqual([['Sin clasificar', temas]])
+  })
+
+  test('devuelve lista vacía si no hay temas', () => {
+    expect(agruparPorClasificacion([])).toEqual([])
+    expect(agruparPorClasificacion(null)).toEqual([])
+  })
+})

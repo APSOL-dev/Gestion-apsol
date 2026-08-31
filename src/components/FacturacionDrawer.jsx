@@ -1,15 +1,21 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { X, MessageCircle, Plus, Trash2, Pencil, FileText } from 'lucide-react'
 import { getFacturaById, savePago, deletePago, deleteFactura } from '../services/facturacion'
 import { fechaLocalISO } from '../utils/fecha'
+import { useDrawerTeclado } from '../hooks/useDrawerTeclado'
 
 export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
   const navigate = useNavigate()
   const [factura, setFactura] = useState(null)
   const [pagos, setPagos] = useState([])
   const [loading, setLoading] = useState(true)
+  const panelRef = useRef(null)
+
+  // Esc cierra, Tab queda atrapado dentro del panel, y el foco vuelve al
+  // disparador al cerrar. Ver src/hooks/useDrawerTeclado.js
+  useDrawerTeclado({ onClose, panelRef, activo: !!id })
   const [savingPago, setSavingPago] = useState(false)
   const [eliminando, setEliminando] = useState(false)
   const [mostrandoFormPago, setMostrandoFormPago] = useState(false)
@@ -192,6 +198,10 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
       {/* Panel lateral */}
       <div
         data-testid="drawer-panel"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
         style={{
           position: 'fixed',
           top: 0,

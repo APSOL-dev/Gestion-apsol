@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Receipt, DollarSign, Calendar, UploadCloud, Plus, Search, Copy, Check, FileText, Upload, Briefcase, Building2, Download } from 'lucide-react'
-import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto } from '../services/facturacion'
+import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto, prepararFacturaParaGuardar, componerLeyendaFactura, fechaReferenciaUva } from '../services/facturacion'
+import BotonCopiar from '../components/BotonCopiar'
 import { getContactos } from '../services/contactos'
 import { getProspectos } from '../services/prospectos'
 import { getValoresUVA } from '../services/valoresUva'
@@ -12,6 +13,7 @@ import { uploadFile } from '../services/storage'
 import { formatearMonto } from '../utils/formateo'
 import { fechaLocalISO, esFechaCompleta, sumarDias } from '../utils/fecha'
 import { esArchivoPDF } from '../utils/archivos'
+import { reintentar, conTimeout } from '../utils/reintentar'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -41,6 +43,9 @@ export default function FacturaDetalle() {
     documento_general: '',
     notas: '',
     leyenda: '',
+    hs_facturadas: '',
+    incluir_horas_leyenda: false,
+    redondeo_multiplo: '', // el prefill lo pone en 1000 (REDONDEO_MULTIPLO_DEFAULT) al elegir prospecto
     cuenta_bancaria_id: '',
     razon_social_id: '',
     solo_invoice: true
@@ -60,6 +65,11 @@ export default function FacturaDetalle() {
 
   const [loading, setLoading] = useState(!esNueva)
   const [saving, setSaving] = useState(false)
+  // Carga de datos base del formulario (prospectos, contactos, UVA, cuentas).
+  // Antes: un Promise.all que si fallaba una request dejaba la lista de
+  // prospectos vacía sin aviso ni reintento -> había que recargar la página.
+  const [cargandoDatosPrevios, setCargandoDatosPrevios] = useState(true)
+  const [errorDatosPrevios, setErrorDatosPrevios] = useState(false)
   // true = el monto se escribe a mano en vez de calcularse con tarifa UVA x valor UVA
   // (para redondeos, precios especiales, etc.)
   const [modoManualMonto, setModoManualMonto] = useState(false)
@@ -79,8 +89,14 @@ export default function FacturaDetalle() {
   const [mostrarContacto2, setMostrarContacto2] = useState(false)
 
   useEffect(() => {
-    cargarDatosPrevios()
+    const control = { vivo: true }
+    cargarDatosPrevios(control)
     if (!esNueva) cargarFactura()
+    // Si el usuario sale de la pantalla mientras una request sigue colgada
+    // (cliente de Supabase trabado en un refresh de token), al desmontar
+    // marcamos el control como muerto: la carga que quede en curso ya no
+    // toca el estado y no pisa una carga posterior más nueva.
+    return () => { control.vivo = false }
   }, [id])
 
   // Recalcular montos al cambiar tarifa, valor UVA, descuento o pagos.
@@ -108,7 +124,7 @@ export default function FacturaDetalle() {
       ...montos,
       estado: nuevoEstado
     }))
-  }, [factura.tarifa_base_uva, factura.valor_uva_dia, factura.porcentaje_descuento, factura.monto, pagos])
+  }, [factura.tarifa_base_uva, factura.valor_uva_dia, factura.porcentaje_descuento, factura.monto, factura.redondeo_multiplo, pagos])
 
   // Filtrar contactos de la empresa del prospecto seleccionado
   const contactosFiltrados = factura.prospecto_id 
@@ -182,16 +198,39 @@ export default function FacturaDetalle() {
     }
   }, [factura.fecha_emision, esNueva])
 
-  // Efecto para buscar valor UVA por fecha 'Desde' (con fallback a API externa).
-  // Solo dispara con una fecha COMPLETA y válida: algunos navegadores emiten
-  // valores parciales de <input type="date"> mientras se tipea el año
+  // Qué fecha del período se usa para buscar el valor UVA: por defecto la de
+  // inicio (periodo_desde); el prospecto puede pedir la de fin (periodo_hasta)
+  // vía uva_referencia_periodo. Ver fechaReferenciaUva().
+  const uvaReferenciaPeriodo =
+    prospectoSeleccionado?.uva_referencia_periodo ||
+    factura.prospectos?.uva_referencia_periodo ||
+    'inicio'
+  const fechaParaUVA = fechaReferenciaUva({
+    uva_referencia_periodo: uvaReferenciaPeriodo,
+    periodo_desde: factura.periodo_desde,
+    periodo_hasta: factura.periodo_hasta
+  })
+
+  // Bloque NO editable que se copia con un botón: leyenda + (horas, si está
+  // el tilde) + período con fechas completas. Ver componerLeyendaFactura().
+  const leyendaGenerada = componerLeyendaFactura({
+    leyenda: factura.leyenda,
+    hs_facturadas: factura.hs_facturadas,
+    incluir_horas_leyenda: factura.incluir_horas_leyenda,
+    periodo_desde: factura.periodo_desde,
+    periodo_hasta: factura.periodo_hasta
+  })
+
+  // Efecto para buscar valor UVA por la fecha de referencia (con fallback a API
+  // externa). Solo dispara con una fecha COMPLETA y válida: algunos navegadores
+  // emiten valores parciales de <input type="date"> mientras se tipea el año
   // (ej. '0002-08-10'), y eso antes generaba consultas y, peor, guardaba
   // cotizaciones en el histórico bajo fechas truncadas.
   useEffect(() => {
     async function buscarUVA() {
-      if (!esFechaCompleta(factura.periodo_desde)) return
+      if (!esFechaCompleta(fechaParaUVA)) return
       try {
-        const valor = await obtenerUVAParaFecha(factura.periodo_desde)
+        const valor = await obtenerUVAParaFecha(fechaParaUVA)
         if (valor) {
           setFactura(prev => ({
             ...prev,
@@ -204,7 +243,7 @@ export default function FacturaDetalle() {
       }
     }
     buscarUVA()
-  }, [factura.periodo_desde, esNueva])
+  }, [fechaParaUVA, esNueva])
 
   // Efecto para auto-numerar Invoice
   useEffect(() => {
@@ -224,25 +263,60 @@ export default function FacturaDetalle() {
     autoNumerar()
   }, [factura.solo_invoice, esNueva])
 
-  async function cargarDatosPrevios() {
+  async function cargarDatosPrevios(control = { vivo: true }) {
+    setCargandoDatosPrevios(true)
+    setErrorDatosPrevios(false)
     try {
-      const [prospectosData, contactosData, uvaData, cuentasData] = await Promise.all([
-        getProspectos({ estadoExacto: '6A - En producción' }),
-        getContactos(),
-        getValoresUVA(),
-        getCuentasBancarias()
-      ])
-      setProspectos(prospectosData)
-      setContactos(contactosData)
-      setValoresUVA(uvaData)
-      setCuentas(cuentasData)
+      // - allSettled: que una request que pinche (token refrescándose, red)
+      //   no tumbe a las otras tres.
+      // - conTimeout: si el cliente de Supabase se cuelga en un refresh de
+      //   token (pasa al volver a esta pantalla tras navegar), la tanda no
+      //   se queda esperando para siempre y el spinner no queda infinito.
+      // - reintentar: un 2º intento suele salir bien porque el request
+      //   colgado ya terminó de fallar.
+      const resultados = await reintentar(
+        () => conTimeout(
+          Promise.allSettled([
+            getProspectos({ estadoExacto: '6A - En producción' }),
+            getContactos(),
+            getValoresUVA(),
+            getCuentasBancarias()
+          ]),
+          8000,
+          'La carga de prospectos tardó demasiado'
+        ).then(res => {
+          // Si TODAS fallaron, tratamos la tanda como fallida para reintentar.
+          if (res.every(r => r.status === 'rejected')) throw res[0].reason
+          return res
+        }),
+        { intentos: 2, esperaMs: 1000 }
+      )
 
-      if (esNueva && uvaData.length > 0) {
-        // Asignar valor UVA más reciente por defecto
-        setFactura(prev => ({ ...prev, valor_uva_dia: uvaData[0].valor }))
+      if (!control.vivo) return
+      const [prospectosR, contactosR, uvaR, cuentasR] = resultados
+
+      if (prospectosR.status === 'fulfilled') setProspectos(prospectosR.value)
+      if (contactosR.status === 'fulfilled') setContactos(contactosR.value)
+      if (cuentasR.status === 'fulfilled') setCuentas(cuentasR.value)
+      if (uvaR.status === 'fulfilled') {
+        setValoresUVA(uvaR.value)
+        if (esNueva && uvaR.value.length > 0) {
+          setFactura(prev => ({ ...prev, valor_uva_dia: uvaR.value[0].valor }))
+        }
+      }
+
+      // Los prospectos son el dato crítico de esta pantalla: si no llegaron,
+      // marcamos error para ofrecer "Reintentar" en vez de mostrar un
+      // engañoso "no se encontraron prospectos".
+      if (prospectosR.status === 'rejected') {
+        console.error('No se pudieron cargar los prospectos:', prospectosR.reason)
+        setErrorDatosPrevios(true)
       }
     } catch (err) {
-      console.error(err)
+      console.error('Falló la carga de datos previos de la factura:', err)
+      if (control.vivo) setErrorDatosPrevios(true)
+    } finally {
+      if (control.vivo) setCargandoDatosPrevios(false)
     }
   }
 
@@ -259,6 +333,9 @@ export default function FacturaDetalle() {
         comprobantes_adjuntos: data.comprobantes_adjuntos || [],
         documento_general: data.documento_general || '',
         leyenda: data.leyenda || '',
+        hs_facturadas: data.hs_facturadas ?? '',
+        incluir_horas_leyenda: data.incluir_horas_leyenda ?? false,
+        redondeo_multiplo: data.redondeo_multiplo ?? 0,
         cuenta_bancaria_id: data.cuenta_bancaria_id || '',
         razon_social_id: data.razon_social_id || '',
         porcentaje_descuento: data.porcentaje_descuento || 0,
@@ -396,29 +473,7 @@ export default function FacturaDetalle() {
     setSaving(true)
     setError('')
     try {
-      const dataToSave = { ...factura }
-      delete dataToSave.prospectos
-      delete dataToSave.contactos
-      delete dataToSave.contacto2
-      delete dataToSave.pagos
-
-      if (!dataToSave.prospecto_id) dataToSave.prospecto_id = null
-      if (!dataToSave.contacto_id) dataToSave.contacto_id = null
-      if (!dataToSave.contacto_cobro2_id) dataToSave.contacto_cobro2_id = null
-      if (!dataToSave.fecha_vencimiento) dataToSave.fecha_vencimiento = null
-      if (!dataToSave.periodo_desde) dataToSave.periodo_desde = null
-      if (!dataToSave.periodo_hasta) dataToSave.periodo_hasta = null
-      if (!dataToSave.razon_social_id) dataToSave.razon_social_id = null
-      if (!dataToSave.cuenta_bancaria_id) dataToSave.cuenta_bancaria_id = null
-      
-      // Auto-update status (nunca para facturas anuladas)
-      if (dataToSave.estado !== 'Anulada') {
-        if (dataToSave.saldo_pendiente <= 0 && pagos.length > 0) {
-          dataToSave.estado = 'Cobrada total'
-        } else if (pagos.length > 0) {
-          dataToSave.estado = 'Cobrada parcial'
-        }
-      }
+      const dataToSave = prepararFacturaParaGuardar(factura, pagos)
 
       const saved = await saveFactura(dataToSave)
 
@@ -742,7 +797,22 @@ export default function FacturaDetalle() {
                     </div>
                   ))
                 }
-                {prospectos.filter(p => p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || p.empresas?.nombre?.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
+                {cargandoDatosPrevios ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-muted)' }}>Cargando prospectos…</div>
+                ) : errorDatosPrevios ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                    <div style={{ marginBottom: '8px' }}>No se pudieron cargar los prospectos.</div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '4px 12px', fontSize: '13px' }}
+                      onClick={() => cargarDatosPrevios()}
+                    >
+                      Reintentar
+                    </button>
+                    <div style={{ marginTop: '8px', fontSize: '12px' }}>Si sigue sin aparecer, recargá la página.</div>
+                  </div>
+                ) : prospectos.filter(p => p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || p.empresas?.nombre?.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
                   <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-muted)' }}>No se encontraron prospectos en producción</div>
                 )}
               </div>
@@ -912,13 +982,32 @@ export default function FacturaDetalle() {
               </div>
               <div className="field">
                 <label>Fecha de Emisión *</label>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   required
-                  value={factura.fecha_emision} 
-                  onChange={e => setFactura({...factura, fecha_emision: e.target.value})} 
+                  value={factura.fecha_emision}
+                  onChange={e => setFactura({...factura, fecha_emision: e.target.value})}
                 />
               </div>
+              {!esNueva && (
+                <div className="field">
+                  <label>
+                    Próximo recordatorio de cobro{' '}
+                    <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(automático)</span>
+                  </label>
+                  <input
+                    type="date"
+                    disabled
+                    value={factura.proxima_notificacion ? String(factura.proxima_notificacion).split('T')[0] : ''}
+                    title="Emisión + días hábiles de espera de la empresa. Lo recalcula el flujo de recordatorios tras cada aviso."
+                  />
+                  {factura.ultima_notificacion && (
+                    <small style={{ color: 'var(--color-text-muted)' }}>
+                      Último aviso enviado: {String(factura.ultima_notificacion).split('T')[0]}
+                    </small>
+                  )}
+                </div>
+              )}
               <div className="field">
                 <label>Período (Desde)</label>
                 <input type="date" value={factura.periodo_desde} onChange={e => setFactura({...factura, periodo_desde: e.target.value})} />
@@ -984,6 +1073,50 @@ export default function FacturaDetalle() {
                 <label>Leyenda de la Factura</label>
                 <textarea rows="2" value={factura.leyenda} onChange={e => setFactura({...factura, leyenda: e.target.value})} placeholder="Mensaje para el cliente..." />
               </div>
+              <div className="field">
+                <label>Horas facturadas</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={factura.hs_facturadas}
+                  onChange={e => setFactura({...factura, hs_facturadas: e.target.value})}
+                  placeholder="Ej. 12"
+                />
+              </div>
+              <div className="field" style={{ display: 'flex', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!factura.incluir_horas_leyenda}
+                    onChange={e => setFactura({...factura, incluir_horas_leyenda: e.target.checked})}
+                    style={{ width: 'auto' }}
+                  />
+                  Incluir horas en la leyenda generada
+                </label>
+              </div>
+              <div className="field" style={{ gridColumn: '1 / -1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ marginBottom: 0 }}>
+                    Leyenda generada{' '}
+                    <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(no editable)</span>
+                  </label>
+                  <BotonCopiar
+                    texto={leyendaGenerada}
+                    className="btn btn-secondary"
+                    style={{ padding: '2px 10px', fontSize: '11px', height: 'auto' }}
+                  >
+                    Copiar
+                  </BotonCopiar>
+                </div>
+                <textarea
+                  readOnly
+                  rows="3"
+                  value={leyendaGenerada}
+                  placeholder="Se arma sola con la leyenda, las horas y el período."
+                  style={{ background: 'var(--color-surface2)', cursor: 'text' }}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1026,6 +1159,20 @@ export default function FacturaDetalle() {
               <div className="field">
                 <label>Descuento (%)</label>
                 <input type="number" min="0" max="100" value={factura.porcentaje_descuento} onChange={e => setFactura({...factura, porcentaje_descuento: e.target.value})} disabled={modoManualMonto} title={modoManualMonto ? 'No aplica con monto manual' : ''} />
+              </div>
+              <div className="field">
+                <label>
+                  Redondear a múltiplo de{' '}
+                  <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(0 = sin redondeo)</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1000"
+                  value={factura.redondeo_multiplo}
+                  onChange={e => setFactura({...factura, redondeo_multiplo: e.target.value})}
+                  title="El neto (bruto − descuento) se redondea hacia abajo a este múltiplo. Ej. 1000."
+                />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>

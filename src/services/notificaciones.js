@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase'
+
 const WEBHOOK_FACTURACION_URL = 'https://bots.apsol-consultora.com.ar/webhook/facturacion'
 
 /**
@@ -16,4 +18,70 @@ export async function notificarFacturacion(evento, factura) {
   if (!res.ok) {
     throw new Error(`Error al notificar al webhook de facturación (status ${res.status})`)
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Notificaciones internas (Fase 2). Las filas se crean únicamente por
+// triggers en la base (database/migration_notificaciones_fase2.sql) —
+// acá solo se leen y se marcan como leídas.
+// ──────────────────────────────────────────────────────────────
+
+export async function getNotificaciones(usuarioId, limite = 30) {
+  if (!usuarioId) return []
+  const { data, error } = await supabase
+    .from('apsol_notificaciones')
+    .select('*')
+    .eq('destinatario_id', usuarioId)
+    .order('creado_en', { ascending: false })
+    .limit(limite)
+
+  if (error) throw error
+  return data || []
+}
+
+export async function marcarNotificacionLeida(id) {
+  const { error } = await supabase
+    .from('apsol_notificaciones')
+    .update({ leido_en: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function marcarTodasLeidas(usuarioId) {
+  if (!usuarioId) return
+  const { error } = await supabase
+    .from('apsol_notificaciones')
+    .update({ leido_en: new Date().toISOString() })
+    .eq('destinatario_id', usuarioId)
+    .is('leido_en', null)
+  if (error) throw error
+}
+
+// Fase 3: qué tipos de notificación no querés ver. Vive en
+// apsol_usuarios.notif_tipos_desactivados (RLS ya permite a cada
+// usuario editar su propia fila).
+export async function actualizarPreferenciasNotificacion(usuarioId, tiposDesactivados) {
+  const { error } = await supabase
+    .from('apsol_usuarios')
+    .update({ notif_tipos_desactivados: tiposDesactivados || [] })
+    .eq('id', usuarioId)
+  if (error) throw error
+}
+
+/**
+ * Se suscribe en vivo a notificaciones nuevas del usuario (INSERT en
+ * apsol_notificaciones vía Realtime de Supabase). Devuelve una función
+ * para cancelar la suscripción.
+ */
+export function suscribirseANotificaciones(usuarioId, onNueva) {
+  if (!usuarioId) return () => {}
+  const canal = supabase
+    .channel(`notificaciones-${usuarioId}`)
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'apsol_notificaciones',
+      filter: `destinatario_id=eq.${usuarioId}`,
+    }, (payload) => onNueva(payload.new))
+    .subscribe()
+
+  return () => supabase.removeChannel(canal)
 }

@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Building2, MapPin, Briefcase, Trash2, CheckSquare, Square } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { deleteEmpresa } from '../services/empresas'
 import { getEstadoProspectoStyle } from '../utils/formateo'
+import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import EmpresaDrawer from '../components/EmpresaDrawer'
 
 export default function Empresas() {
@@ -72,9 +73,23 @@ export default function Empresas() {
   const conProspectosActivos = empresasFiltradas.filter(e => 
     e.prospectos?.some(p => estadosActivos.includes(p.estado))
   )
-  const sinProspectosActivos = empresasFiltradas.filter(e => 
+  const sinProspectosActivos = empresasFiltradas.filter(e =>
     !e.prospectos?.some(p => estadosActivos.includes(p.estado))
   )
+
+  // Navegación por teclado: las filas de las dos tablas forman una sola
+  // secuencia (↑↓ para moverse, Enter abre el drawer, Esc lo cierra).
+  const filasVisibles = [...conProspectosActivos, ...sinProspectosActivos]
+  const indicePorId = new Map(filasVisibles.map((e, i) => [e.id, i]))
+  const { activo: filaActiva } = useNavegacionLista({
+    total: filasVisibles.length,
+    onActivar: (i) => setEmpresaSeleccionadaId(filasVisibles[i]?.id ?? null),
+    global: !empresaSeleccionadaId,
+  })
+  const filaActivaRef = useRef(null)
+  useEffect(() => {
+    filaActivaRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [filaActiva])
 
   const renderTabla = (lista, titulo) => (
     <div style={{ marginBottom: '40px' }}>
@@ -99,8 +114,14 @@ export default function Empresas() {
             {lista.map((empresa) => {
               const activos = empresa.prospectos?.filter(p => estadosActivos.includes(p.estado)) || []
               const isSelected = seleccionados.includes(empresa.id)
+              const filaSeleccionada = indicePorId.get(empresa.id) === filaActiva
               return (
-                <tr key={empresa.id} style={{ background: isSelected ? 'rgba(99, 102, 241, 0.05)' : 'transparent' }}>
+                <tr
+                  key={empresa.id}
+                  ref={filaSeleccionada ? filaActivaRef : null}
+                  aria-selected={filaSeleccionada}
+                  style={{ background: filaSeleccionada ? 'var(--color-surface2, #eef2ff)' : isSelected ? 'rgba(99, 102, 241, 0.05)' : 'transparent' }}
+                >
                   <td>
                     <button 
                       type="button" 

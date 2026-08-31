@@ -1,7 +1,21 @@
 import { supabase } from '../lib/supabase'
 import { redondear2 } from '../utils/formateo'
-import { sumarMeses } from '../utils/fecha'
+import { sumarMeses, sumarDiasHabiles } from '../utils/fecha'
 import { notificarFacturacion } from './notificaciones'
+
+/**
+ * Días hábiles que espera APSOL, desde la emisión de una factura, antes de
+ * agendar el primer recordatorio de cobro cuando la empresa no tiene el
+ * dato cargado. Coincide con el DEFAULT de apsol_empresas.dias_espera_facturacion.
+ */
+export const DIAS_ESPERA_FACTURACION_DEFAULT = 4
+
+/**
+ * Múltiplo de redondeo por defecto para una factura nueva. El neto se
+ * redondea siempre hacia abajo a este múltiplo (ver calcularMontosFactura).
+ * Coincide con el DEFAULT de apsol_private.facturacion.redondeo_multiplo.
+ */
+export const REDONDEO_MULTIPLO_DEFAULT = 1000
 
 /**
  * Calcula monto bruto, descuento, monto neto y saldo pendiente de una factura.
@@ -21,7 +35,14 @@ export function calcularMontosFactura(factura, pagos = []) {
   const descuento = tieneTarifaUVA
     ? redondear2(monto_bruto * (Number(factura.porcentaje_descuento || 0) / 100))
     : 0
-  const monto_neto = redondear2(monto_bruto - descuento)
+  // Redondeo del NETO a un múltiplo (ej. 1000), siempre hacia abajo. Es
+  // opcional por factura y se arrastra a la próxima del mismo prospecto.
+  // redondeo_multiplo <= 0 (o ausente, facturas históricas) => sin redondeo.
+  const multiplo = Number(factura.redondeo_multiplo || 0)
+  const netoCrudo = redondear2(monto_bruto - descuento)
+  const monto_neto = multiplo > 0
+    ? Math.floor(netoCrudo / multiplo) * multiplo
+    : netoCrudo
   const totalPagos = redondear2((pagos || []).reduce((sum, p) => sum + Number(p.monto || 0), 0))
   const saldo_pendiente = redondear2(monto_neto - totalPagos)
 
@@ -31,6 +52,55 @@ export function calcularMontosFactura(factura, pagos = []) {
     monto_neto,
     saldo_pendiente: saldo_pendiente > 0 ? saldo_pendiente : 0
   }
+}
+
+/** 'YYYY-MM-DD' (o ISO con hora) -> 'DD/MM/YYYY'. Vacío si no matchea. */
+function fechaDDMMAAAA(valor) {
+  const s = String(valor || '').split('T')[0]
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
+}
+
+/**
+ * Arma el texto NO editable que la pantalla de la factura muestra debajo de
+ * la leyenda, con su botón de "Copiar". Es puro (sin I/O ni DOM).
+ *
+ *   <leyenda>
+ *   Horas facturadas: <N>        <- solo si incluir_horas_leyenda y hay horas > 0
+ *   Período: 01/08/2026 al 31/08/2026   <- fechas completas, las dos puntas
+ *
+ * Las líneas que no aplican se omiten (sin renglones en blanco). Con todo
+ * vacío devuelve ''.
+ */
+export function componerLeyendaFactura({
+  leyenda, hs_facturadas, incluir_horas_leyenda, periodo_desde, periodo_hasta
+} = {}) {
+  const lineas = []
+
+  const leyendaTxt = String(leyenda || '').trim()
+  if (leyendaTxt) lineas.push(leyendaTxt)
+
+  const horas = Number(hs_facturadas)
+  if (incluir_horas_leyenda && Number.isFinite(horas) && horas > 0) {
+    lineas.push(`Horas facturadas: ${horas}`)
+  }
+
+  const desde = fechaDDMMAAAA(periodo_desde)
+  const hasta = fechaDDMMAAAA(periodo_hasta)
+  if (desde && hasta) lineas.push(`Período: ${desde} al ${hasta}`)
+
+  return lineas.join('\n')
+}
+
+/**
+ * Qué fecha del período se usa para buscar el valor UVA de la factura.
+ * Por defecto la de INICIO (periodo_desde); si el prospecto está configurado
+ * con uva_referencia_periodo = 'fin', se usa la de FIN (periodo_hasta).
+ * Devuelve '' si la fecha elegida todavía no está cargada.
+ */
+export function fechaReferenciaUva({ uva_referencia_periodo, periodo_desde, periodo_hasta } = {}) {
+  const fecha = uva_referencia_periodo === 'fin' ? periodo_hasta : periodo_desde
+  return fecha || ''
 }
 
 /**
@@ -68,15 +138,39 @@ export function calcularPrefillFactura({ prospecto, ultimaFactura, contactosEmpr
       || ''
   }
 
-  // Cuenta para depósito y tipo de comprobante: se repiten casi siempre
-  if (esNueva && !facturaActual.cuenta_bancaria_id && ultimaFactura?.cuenta_bancaria_id) {
-    updates.cuenta_bancaria_id = ultimaFactura.cuenta_bancaria_id
+  // Cuenta para depósito: por defecto la configurada en el prospecto (a dónde
+  // se le dice en general que deposite). Si la última factura ya usó una,
+  // esa le gana (continuidad). El tipo de comprobante también se repite.
+  if (esNueva && !facturaActual.cuenta_bancaria_id) {
+    const cuenta = ultimaFactura?.cuenta_bancaria_id || prospecto.cuenta_bancaria_id
+    if (cuenta) updates.cuenta_bancaria_id = cuenta
   }
   if (esNueva && ultimaFactura?.solo_invoice != null) {
     updates.solo_invoice = ultimaFactura.solo_invoice
   }
   if (esNueva && !facturaActual.leyenda && ultimaFactura?.leyenda) {
     updates.leyenda = ultimaFactura.leyenda
+  }
+
+  // Config de leyenda generada y redondeo: se repiten mes a mes, así que
+  // la próxima factura del prospecto los hereda de la última.
+  // Redondeo: por defecto 1000 en toda factura nueva. Si la última factura
+  // del prospecto ya usó un múltiplo propio (> 0), ese le gana (continuidad).
+  if (esNueva && (facturaActual.redondeo_multiplo == null || facturaActual.redondeo_multiplo === '')) {
+    const prev = Number(ultimaFactura?.redondeo_multiplo)
+    updates.redondeo_multiplo = prev > 0 ? prev : REDONDEO_MULTIPLO_DEFAULT
+  }
+  if (esNueva && facturaActual.incluir_horas_leyenda == null && ultimaFactura?.incluir_horas_leyenda != null) {
+    updates.incluir_horas_leyenda = ultimaFactura.incluir_horas_leyenda
+  }
+  // Horas facturadas: por defecto, las horas mensuales contratadas del
+  // prospecto (hs_mensuales). Si la última factura ya traía un valor propio,
+  // ese le gana (continuidad mes a mes).
+  if (esNueva && (facturaActual.hs_facturadas == null || facturaActual.hs_facturadas === '')) {
+    const horas = ultimaFactura?.hs_facturadas ?? prospecto.hs_mensuales
+    if (horas != null && horas !== '' && Number(horas) > 0) {
+      updates.hs_facturadas = horas
+    }
   }
 
   // Próximo período a facturar y tarifa. Prioriza continuar desde el
@@ -98,6 +192,69 @@ export function calcularPrefillFactura({ prospecto, ultimaFactura, contactosEmpr
   }
 
   return updates
+}
+
+/**
+ * Días hábiles que se esperan, desde la emisión de una factura, antes de
+ * agendar el primer recordatorio de cobro. El dato vive en la empresa
+ * (apsol_empresas.dias_espera_facturacion). Si la empresa no lo tiene
+ * cargado, es 0 o vino inválido, se usa el estándar de la casa: 4.
+ * Función pura para poder testear la decisión sin tocar Supabase.
+ */
+export function resolverDiasEspera(empresa, fallback = DIAS_ESPERA_FACTURACION_DEFAULT) {
+  const dias = Number(empresa?.dias_espera_facturacion)
+  return Number.isFinite(dias) && dias > 0 ? dias : fallback
+}
+
+/**
+ * Limpia el objeto de factura que arma la pantalla de detalle antes de
+ * mandarlo a `saveFactura`:
+ *  - saca los campos que vienen de joins (no son columnas físicas)
+ *  - saca el bookkeeping del flujo de recordatorios de cobro
+ *    (proxima_notificacion / ultima_notificacion / recordatorios_enviados):
+ *    lo setea la app al crear la factura y n8n en cada aviso, la edición
+ *    manual NO debe pisarlo con el valor que tenía cargado la pantalla
+ *  - convierte a null los ids/fechas opcionales vacíos
+ *  - recalcula el estado a partir de los pagos reales (salvo 'Anulada')
+ * Función pura: se testea sin montar el componente ni mockear Supabase.
+ */
+export function prepararFacturaParaGuardar(factura, pagos = []) {
+  const {
+    prospectos, contactos, contacto2, pagos: _pagos,
+    proxima_notificacion, ultima_notificacion, recordatorios_enviados,
+    ...dataToSave
+  } = factura
+
+  for (const campo of [
+    'prospecto_id', 'contacto_id', 'contacto_cobro2_id', 'fecha_vencimiento',
+    'periodo_desde', 'periodo_hasta', 'razon_social_id', 'cuenta_bancaria_id'
+  ]) {
+    if (!dataToSave[campo]) dataToSave[campo] = null
+  }
+
+  // Campos nuevos: los <input> devuelven string; la columna es numeric/boolean.
+  if ('hs_facturadas' in dataToSave) {
+    dataToSave.hs_facturadas =
+      dataToSave.hs_facturadas === '' || dataToSave.hs_facturadas == null
+        ? null
+        : Number(dataToSave.hs_facturadas)
+  }
+  if ('redondeo_multiplo' in dataToSave) {
+    dataToSave.redondeo_multiplo = Number(dataToSave.redondeo_multiplo) || 0
+  }
+  if ('incluir_horas_leyenda' in dataToSave) {
+    dataToSave.incluir_horas_leyenda = !!dataToSave.incluir_horas_leyenda
+  }
+
+  if (dataToSave.estado !== 'Anulada') {
+    if (Number(dataToSave.saldo_pendiente) <= 0 && pagos.length > 0) {
+      dataToSave.estado = 'Cobrada total'
+    } else if (pagos.length > 0) {
+      dataToSave.estado = 'Cobrada parcial'
+    }
+  }
+
+  return dataToSave
 }
 
 export async function getFacturas() {
@@ -127,7 +284,7 @@ export async function getFacturaById(id) {
     .from('apsol_facturacion')
     .select(`
       *,
-      prospectos:apsol_prospectos(id, nombre, empresa_id, empresas:apsol_empresas(nombre)),
+      prospectos:apsol_prospectos(id, nombre, empresa_id, uva_referencia_periodo, empresas:apsol_empresas(nombre, dias_espera_facturacion)),
       contactos:apsol_contactos!facturacion_contacto_cobro_id_fkey(id, nombre, apellido, email, telefono),
       contacto2:apsol_contactos!facturacion_contacto_cobro2_id_fkey(id, nombre, apellido, email, telefono),
       cuenta_bancaria:apsol_cuentas_bancarias(id, nombre_interno, banco, titular, cbu, alias)
@@ -210,6 +367,27 @@ export async function saveFactura(factura) {
     } catch (notifError) {
       console.error('Error al notificar primera_vez al webhook de facturación:', notifError)
       notificacionEnviada = false
+    }
+
+    // Agendar el primer recordatorio de cobro: fecha de emisión + los días
+    // hábiles de espera de la empresa (sumarDiasHabiles: solo salta sáb/dom).
+    // Las siguientes fechas las recalcula el flujo de n8n tras cada envío,
+    // con la función SQL gemela apsol_sumar_dias_habiles. Un fallo acá nunca
+    // debe tirar abajo el alta, que ya está hecha.
+    const fechaEmision = (facturaCompleta?.fecha_emision || '').split('T')[0]
+    const fechaProxima = sumarDiasHabiles(
+      fechaEmision,
+      resolverDiasEspera(facturaCompleta?.prospectos?.empresas)
+    )
+    if (fechaProxima) {
+      try {
+        await supabase
+          .from('apsol_facturacion')
+          .update({ proxima_notificacion: fechaProxima })
+          .eq('id', data.id)
+      } catch (notifError) {
+        console.error('No se pudo agendar la próxima notificación de cobro:', notifError)
+      }
     }
 
     return {
@@ -369,7 +547,7 @@ export async function getUltimaFacturaProspecto(prospectoId) {
     .select(`
       periodo_desde, periodo_hasta, tarifa_base_uva, porcentaje_descuento,
       cuenta_bancaria_id, solo_invoice, contacto_cobro_id, contacto_cobro2_id,
-      razon_social_id, leyenda
+      razon_social_id, leyenda, redondeo_multiplo, incluir_horas_leyenda, hs_facturadas
     `)
     .eq('prospecto_id', prospectoId)
     .not('periodo_hasta', 'is', null)

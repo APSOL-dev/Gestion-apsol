@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Users, Building2, Phone, Mail } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import ContactoDrawer from '../components/ContactoDrawer'
 
 export default function Contactos() {
@@ -23,6 +24,17 @@ export default function Contactos() {
       (contacto.email && contacto.email.toLowerCase().includes(search.toLowerCase()))
     )
   })
+
+  // Navegación por teclado: ↑↓ entre filas, Enter abre el drawer, Esc lo cierra.
+  const { activo: filaActiva } = useNavegacionLista({
+    total: contactosFiltrados.length,
+    onActivar: (i) => setContactoSeleccionadoId(contactosFiltrados[i]?.id ?? null),
+    global: !contactoSeleccionadoId,
+  })
+  const filaActivaRef = useRef(null)
+  useEffect(() => {
+    filaActivaRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [filaActiva])
 
   return (
     <div className="page">
@@ -83,11 +95,15 @@ export default function Contactos() {
               </tr>
             </thead>
             <tbody>
-              {contactosFiltrados.map((contacto) => (
+              {contactosFiltrados.map((contacto, idxFila) => {
+                const filaSeleccionada = idxFila === filaActiva
+                return (
                 <tr
                   key={contacto.id}
+                  ref={filaSeleccionada ? filaActivaRef : null}
+                  aria-selected={filaSeleccionada}
                   onClick={() => setContactoSeleccionadoId(contacto.id)}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', background: filaSeleccionada ? 'var(--color-surface2, #eef2ff)' : undefined }}
                 >
                   <td>
                     <div style={{ color: contacto.activo === false ? 'var(--color-text-muted)' : 'inherit', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500' }}>
@@ -135,7 +151,8 @@ export default function Contactos() {
                     </span>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

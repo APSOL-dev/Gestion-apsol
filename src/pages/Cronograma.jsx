@@ -10,11 +10,14 @@ import {
   Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { useAuth } from '../context/AuthContext'
 import {
   saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde,
   resolverProspectoParaGuardar, resolverActividades,
   getActividadesEnRango, getActividadesDelMes, getUltimasReunionesPorProspecto
 } from '../services/cronograma'
+import { getColaboradoresLista } from '../services/colaboradores'
+import { esActividadOcupada, normalizarResponsableEInvitados } from '../utils/cronogramaVisibilidad'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
 
 moment.locale('es')
@@ -77,14 +80,23 @@ const FORM_VACÍO = {
   responsable_id: '',
   reunion_cliente: false,
   link_reunion: '',
-  comentarios_reunion: ''
+  comentarios_reunion: '',
+  participantes_ids: []
 }
 
 export default function Cronograma() {
   const {
-    prospectos, loadingProspectos, refreshProspectos,
-    colaboradores, loadingColaboradores, refreshColaboradores
+    prospectos, loadingProspectos, refreshProspectos
   } = useData()
+  const { user, esColaborador } = useAuth()
+  // Lista mínima de colaboradores (id + nombre), NO la ficha completa: un
+  // Colaborador por RLS solo ve su propia ficha en apsol_colaboradores, pero
+  // necesita la lista para el filtro "Personal" y el selector de invitados.
+  const [colaboradores, setColaboradores] = useState([])
+  const miColaborador = useMemo(
+    () => colaboradores.find(c => c.usuario_id === user?.id) || null,
+    [colaboradores, user?.id]
+  )
   const [view, setView] = useState(Views.WEEK)
   const [date, setDate] = useState(new Date())
 
@@ -105,6 +117,20 @@ export default function Cronograma() {
 
   const [selectedColab, setSelectedColab] = useState([])
   const [selectedProspectos, setSelectedProspectos] = useState([])
+
+  // Por defecto, el filtro "Personal" arranca con el usuario logueado ya
+  // tildado (lo más común es que cada uno quiera ver su propia agenda al
+  // entrar) - una sola vez, apenas están disponibles los colaboradores y
+  // la sesión. `colabDefaultAplicado` evita que esto se reimponga si el
+  // usuario después destilda manualmente el filtro.
+  const [colabDefaultAplicado, setColabDefaultAplicado] = useState(false)
+  useEffect(() => {
+    if (colabDefaultAplicado) return
+    if (!user || colaboradores.length === 0) return
+    const miColaborador = colaboradores.find(c => c.usuario_id === user.id)
+    if (miColaborador) setSelectedColab([miColaborador.id])
+    setColabDefaultAplicado(true)
+  }, [user, colaboradores, colabDefaultAplicado])
 
   const [showModal, setShowModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
@@ -169,9 +195,10 @@ export default function Cronograma() {
   }
 
   useEffect(() => {
-    const esSilencioso = prospectos.length > 0 && colaboradores.length > 0
-    refreshProspectos(esSilencioso)
-    refreshColaboradores(esSilencioso)
+    refreshProspectos(prospectos.length > 0)
+    getColaboradoresLista()
+      .then(setColaboradores)
+      .catch(err => console.error('Error al cargar la lista de colaboradores:', err))
   }, [])
 
   // Recarga las 3 consultas acotadas. `silencioso` no cambia nada visible
@@ -222,6 +249,43 @@ export default function Cronograma() {
     [actividadesMes, prospectos]
   )
 
+  // Orden del panel "Saldo de Horas": se puede ordenar por Saldo o por Días
+  // haciendo clic en el encabezado correspondiente. Cada columna arranca,
+  // la primera vez que se clickea, mostrando arriba lo que más urge
+  // revisar: saldo más negativo primero (ascendente), días desde la
+  // última reunión más alto primero (descendente, "hace más que no lo
+  // vemos"). Clics siguientes sobre la misma columna invierten el orden.
+  // Los valores null (sin saldo/sin reuniones registradas) quedan siempre
+  // al final, sin importar la columna o el sentido elegido.
+  const [ordenColumna, setOrdenColumna] = useState('saldo')
+  const [ordenAsc, setOrdenAsc] = useState(true)
+
+  function ordenarPor(campo, ascendentePorDefecto) {
+    if (ordenColumna === campo) {
+      setOrdenAsc(prev => !prev)
+    } else {
+      setOrdenColumna(campo)
+      setOrdenAsc(ascendentePorDefecto)
+    }
+  }
+
+  const prospectosConSaldo = useMemo(() => {
+    return prospectosProduccion
+      .map(p => ({
+        prospecto: p,
+        saldo: calcularSaldoHoras(p, actividadesMesResueltas),
+        dias: calcularDiasDesde(reunionesPorProspecto.get(p.id))
+      }))
+      .sort((a, b) => {
+        const va = a[ordenColumna]
+        const vb = b[ordenColumna]
+        if (va == null && vb == null) return 0
+        if (va == null) return 1
+        if (vb == null) return -1
+        return ordenAsc ? va - vb : vb - va
+      })
+  }, [prospectosProduccion, actividadesMesResueltas, reunionesPorProspecto, ordenColumna, ordenAsc])
+
   const getColor = (name) => {
     const colors = {
       'Consultora': '#ef4444',
@@ -255,21 +319,27 @@ export default function Cronograma() {
     })
     .map(act => {
       const respName = act.responsable_nombre || (act.responsable?.usuarios?.nombre ? `${act.responsable.usuarios.nombre} ${act.responsable.usuarios.apellido || ''}` : '')
+      // Bloque "Ocupado": reunión de un admin que este usuario no puede ver
+      // en detalle (la RPC ya la redactó). Solo muestra que la franja está tomada.
+      const ocupado = esActividadOcupada(act)
       return {
         id: act.id,
-        title: `${act.prospecto_nombre}${respName ? ' - ' + respName : ''}`,
+        title: ocupado ? 'Ocupado' : `${act.prospecto_nombre}${respName ? ' - ' + respName : ''}`,
         start: new Date(act.inicio),
         end: new Date(act.fin),
-        resource: act
+        resource: act,
+        ocupado
       }
     })
 
   const eventPropGetter = (event) => ({
-    className: 'rbc-event-premium',
-    style: {
-      backgroundColor: getColor(event.resource.prospecto_nombre),
-      borderLeft: `4px solid rgba(0,0,0,0.2)`
-    }
+    className: `rbc-event-premium${event.ocupado ? ' rbc-event-ocupado' : ''}`,
+    style: event.ocupado
+      ? { backgroundColor: '#94a3b8', borderLeft: '4px solid rgba(0,0,0,0.2)', opacity: 0.85, cursor: 'default' }
+      : {
+          backgroundColor: getColor(event.resource.prospecto_nombre),
+          borderLeft: `4px solid rgba(0,0,0,0.2)`
+        }
   })
 
   // FIX Bug #5: Navegación respeta la vista activa
@@ -291,7 +361,9 @@ export default function Cronograma() {
     setFormData({
       ...FORM_VACÍO,
       inicio: moment(start).format('YYYY-MM-DDTHH:mm'),
-      fin: moment(end).format('YYYY-MM-DDTHH:mm')
+      fin: moment(end).format('YYYY-MM-DDTHH:mm'),
+      // Un colaborador siempre se agenda a sí mismo.
+      responsable_id: esColaborador && miColaborador ? miColaborador.id : ''
     })
     setSelectedEvent(null)
     setShowModal(true)
@@ -299,6 +371,12 @@ export default function Cronograma() {
 
   const handleSelectEvent = (event) => {
     const act = event.resource
+    // Un bloque "Ocupado" (reunión de un admin sin permiso de ver detalle) no
+    // se abre: no hay nada que mostrar ni editar.
+    if (esActividadOcupada(act)) {
+      mostrarToast('Esa franja está ocupada. No tenés permiso para ver el detalle.', 'info')
+      return
+    }
     setFormData({
       id: act.id,
       prospecto_nombre: act.prospecto_nombre,
@@ -308,7 +386,8 @@ export default function Cronograma() {
       responsable_id: act.responsable_id || '',
       reunion_cliente: act.reunion_cliente || false,
       link_reunion: act.link_reunion || '',
-      comentarios_reunion: act.comentarios_reunion || ''
+      comentarios_reunion: act.comentarios_reunion || '',
+      participantes_ids: Array.isArray(act.participantes_ids) ? act.participantes_ids : []
     })
     setSelectedEvent(event)
     setShowModal(true)
@@ -369,7 +448,12 @@ export default function Cronograma() {
 
     const { prospecto_nombre, descripcion, ...resto } = formData
     const resuelto = resolverProspectoParaGuardar(prospecto_nombre, descripcion, prospectos)
-    const payload = { ...resto, ...resuelto }
+    // Un colaborador siempre queda de responsable y con 1 invitado como máximo.
+    const { responsable_id, participantes_ids } = normalizarResponsableEInvitados(
+      { responsable_id: resto.responsable_id, participantes_ids: resto.participantes_ids },
+      { esColaborador, miColaboradorId: miColaborador?.id }
+    )
+    const payload = { ...resto, ...resuelto, responsable_id, participantes_ids }
     const idOptimista = payload.id || `optimista-${Date.now()}`
 
     setShowModal(false)
@@ -403,6 +487,7 @@ export default function Cronograma() {
   }
 
   const moveEvent = async ({ event, start, end }) => {
+    if (event.ocupado) return
     const anterior = event.resource
     const resuelto = resolverProspectoParaGuardar(anterior.prospecto_nombre, anterior.descripcion, prospectos)
     const updatedAct = {
@@ -425,6 +510,7 @@ export default function Cronograma() {
   }
 
   const resizeEvent = async ({ event, start, end }) => {
+    if (event.ocupado) return
     const anterior = event.resource
     const resuelto = resolverProspectoParaGuardar(anterior.prospecto_nombre, anterior.descripcion, prospectos)
     const updatedAct = {
@@ -577,6 +663,8 @@ export default function Cronograma() {
               onSelectSlot={handleSelectSlot}
               onSelectEvent={handleSelectEvent}
               eventPropGetter={eventPropGetter}
+              draggableAccessor={(event) => !event.ocupado}
+              resizableAccessor={(event) => !event.ocupado}
               onEventDrop={moveEvent}
               onEventResize={resizeEvent}
               min={new Date(0, 0, 0, 5, 0, 0)}
@@ -603,15 +691,27 @@ export default function Cronograma() {
             />
             <div className="list-header">
               <span>Prospecto</span>
-              <span>Saldo</span>
-              <span>Días</span>
+              <button
+                type="button"
+                className="th-sortable"
+                onClick={() => ordenarPor('saldo', true)}
+                title={ordenColumna === 'saldo' && !ordenAsc ? 'Ordenando por saldo, de mayor a menor. Clic para invertir.' : 'Ordenando por saldo, de más negativo a más alto. Clic para invertir.'}
+              >
+                Saldo {ordenColumna === 'saldo' && (ordenAsc ? '▲' : '▼')}
+              </button>
+              <button
+                type="button"
+                className="th-sortable"
+                onClick={() => ordenarPor('dias', false)}
+                title={ordenColumna === 'dias' && ordenAsc ? 'Ordenando por días, de menor a mayor. Clic para invertir.' : 'Ordenando por días desde la última reunión, de más a menos. Clic para invertir.'}
+              >
+                Días {ordenColumna === 'dias' && (ordenAsc ? '▲' : '▼')}
+              </button>
             </div>
-            {prospectosProduccion.length === 0 && (
+            {prospectosConSaldo.length === 0 && (
               <div className="picker-empty">No hay prospectos en producción</div>
             )}
-            {prospectosProduccion.map(p => {
-              const saldo = calcularSaldoHoras(p, actividadesMesResueltas)
-              const dias = calcularDiasDesde(reunionesPorProspecto.get(p.id))
+            {prospectosConSaldo.map(({ prospecto: p, saldo, dias }) => {
               return (
                 <div key={p.id} className="compliance-item">
                   <span className="p-name">{p.nombre}</span>
@@ -686,13 +786,65 @@ export default function Cronograma() {
                 <label>Responsable Asignado</label>
                 <div className="input-with-icon">
                   <Users size={16} />
-                  <select value={formData.responsable_id} onChange={e => setFormData({ ...formData, responsable_id: e.target.value })} required>
-                    <option value="">Seleccionar responsable...</option>
-                    {colaboradores.map(c => (
-                      <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
-                    ))}
-                  </select>
+                  {esColaborador ? (
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${miColaborador?.nombre || ''} ${miColaborador?.apellido || ''}`.trim() || 'Vos'}
+                      title="Un colaborador solo puede agendarse a sí mismo"
+                    />
+                  ) : (
+                    <select value={formData.responsable_id} onChange={e => setFormData({ ...formData, responsable_id: e.target.value })} required>
+                      <option value="">Seleccionar responsable...</option>
+                      {colaboradores.map(c => (
+                        <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
+              </div>
+
+              {/* Invitados: un colaborador puede sumar como mucho a 1; un admin, varios */}
+              <div className="form-group">
+                <label>{esColaborador ? 'Invitado (opcional)' : 'Invitados (opcional)'}</label>
+                {esColaborador ? (
+                  <div className="input-with-icon">
+                    <Users size={16} />
+                    <select
+                      value={formData.participantes_ids[0] || ''}
+                      onChange={e => setFormData({ ...formData, participantes_ids: e.target.value ? [e.target.value] : [] })}
+                    >
+                      <option value="">(sin invitado)</option>
+                      {colaboradores.filter(c => c.id !== formData.responsable_id).map(c => (
+                        <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '120px', overflowY: 'auto' }}>
+                    {colaboradores.filter(c => c.id !== formData.responsable_id).map(c => {
+                      const marcado = formData.participantes_ids.includes(c.id)
+                      return (
+                        <label
+                          key={c.id}
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '4px 8px', background: marcado ? 'var(--color-surface2)' : 'transparent' }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={marcado}
+                            onChange={() => setFormData({
+                              ...formData,
+                              participantes_ids: marcado
+                                ? formData.participantes_ids.filter(id => id !== c.id)
+                                : [...formData.participantes_ids, c.id]
+                            })}
+                          />
+                          {c.nombre} {c.apellido}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* FIX Bug #8: Campos de reunión que existían en formData pero nunca se mostraban */}

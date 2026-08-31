@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -71,6 +71,29 @@ describe('Drawers laterales: montaje vía portal fuera de .page', () => {
     // Debe estar portalizado directamente en <body>.
     expect(panel.parentElement).toBe(document.body)
     expect(backdrop.parentElement).toBe(document.body)
+  })
+})
+
+/**
+ * Manejo por teclado (hook useDrawerTeclado): al abrir un drawer el foco entra
+ * al panel, Escape lo cierra, y Tab queda atrapado adentro.
+ */
+describe('Drawers laterales: teclado (Escape cierra, foco atrapado)', () => {
+  it.each(CASOS)('%s: Escape dispara onClose y el foco arranca en el panel', async (_nombre, Drawer, props) => {
+    const onClose = vi.fn()
+    render(
+      <MemoryRouter>
+        <div className="page">
+          <Drawer {...props} onClose={onClose} />
+        </div>
+      </MemoryRouter>
+    )
+
+    const panel = await screen.findByTestId('drawer-panel')
+    expect(document.activeElement).toBe(panel)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
 

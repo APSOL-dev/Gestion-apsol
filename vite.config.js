@@ -8,7 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
-      includeAssets: ['favicon.svg', 'icons/*.png'],
+      includeAssets: ['favicon.png', 'icons/*.png'],
       manifest: {
         name: 'Gestión APSOL',
         short_name: 'APSOL',
@@ -61,6 +61,6 @@ export default defineConfig({
     })
   ],
   server: {
-    port: 5173
+    port: Number(process.env.PORT) || 5173
   }
 })
