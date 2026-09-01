@@ -849,13 +849,19 @@ describe('savePago', () => {
     const updateProximaEq = vi.fn().mockResolvedValueOnce({ error: null })
 
     supabase.from
-      // 1. INSERT del pago
+      // 1. SELECT del estado previo de la factura (antes de tocar los pagos)
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValueOnce({ data: { estado: 'Pendiente' }, error: null })
+      })
+      // 2. INSERT del pago
       .mockReturnValueOnce({
         insert: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValueOnce({ data: { id: 'pago-1', monto: 100 }, error: null })
       })
-      // 2. getFacturaById -> SELECT de la factura (estado ANTES del pago: Pendiente)
+      // 3. getFacturaById -> SELECT de la factura
       .mockReturnValueOnce({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -867,21 +873,21 @@ describe('savePago', () => {
           error: null
         })
       })
-      // 3. getFacturaById -> SELECT de los pagos (ya incluye el recién insertado)
+      // 4. getFacturaById -> SELECT de los pagos (ya incluye el recién insertado)
       .mockReturnValueOnce({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         order: vi.fn().mockResolvedValueOnce({ data: [{ id: 'pago-1', monto: 100 }], error: null })
       })
-      // 4. UPDATE del estado de la factura
+      // 5. UPDATE del estado de la factura (fallback del trigger)
       .mockReturnValueOnce({ update: updateEstado, eq: updateEstadoEq })
-      // 5. SELECT de la próxima_factura del prospecto
+      // 6. SELECT de la próxima_factura del prospecto
       .mockReturnValueOnce({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         maybeSingle: vi.fn().mockResolvedValueOnce({ data: { proxima_factura: '2026-08-10' }, error: null })
       })
-      // 6. UPDATE de la próxima_factura del prospecto
+      // 7. UPDATE de la próxima_factura del prospecto
       .mockReturnValueOnce({ update: updateProxima, eq: updateProximaEq })
 
     await savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 100 })
@@ -903,6 +909,12 @@ describe('savePago', () => {
     const updateEstadoEq = vi.fn().mockResolvedValueOnce({ error: null })
 
     supabase.from
+      // 1. SELECT del estado previo
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValueOnce({ data: { estado: 'Pendiente' }, error: null })
+      })
       .mockReturnValueOnce({
         insert: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
@@ -929,9 +941,9 @@ describe('savePago', () => {
     await savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 50 })
 
     expect(updateEstado).toHaveBeenCalledWith({ estado: 'Cobrada parcial' })
-    // Solo 4 llamadas a from(): insert pago + 2 de getFacturaById + update estado.
+    // 5 llamadas a from(): estado previo + insert pago + 2 de getFacturaById + update estado.
     // Nunca debería tocar apsol_prospectos.
-    expect(supabase.from).toHaveBeenCalledTimes(4)
+    expect(supabase.from).toHaveBeenCalledTimes(5)
 
     const { notificarFacturacion } = await import('../notificaciones.js')
     expect(notificarFacturacion).not.toHaveBeenCalled()
