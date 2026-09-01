@@ -1,13 +1,30 @@
 import { describe, test, expect } from 'vitest'
 import { TIPOS_TAREA, componerProximaTarea, descomponerProximaTarea } from '../tareas'
 
+describe('TIPOS_TAREA', () => {
+  // Los tipos de tarea son los del CRM real (AppSheet), no una lista
+  // inventada: Contactar / Enviar Formulario / Enviar presupuesto / 1ra y
+  // 2da consulta presupuesto / Ultimátum, más "Otro" para texto libre.
+  test('es la lista de acciones comerciales de AppSheet + "Otro"', () => {
+    expect(TIPOS_TAREA).toEqual([
+      'Contactar',
+      'Enviar Formulario',
+      'Enviar presupuesto',
+      '1ra consulta presupuesto',
+      '2da consulta presupuesto',
+      'Ultimátum',
+      'Otro'
+    ])
+  })
+})
+
 describe('componerProximaTarea', () => {
   test('combina tipo y comentario con guion', () => {
-    expect(componerProximaTarea('Llamada Comercial', 'Preguntar por presupuesto')).toBe('Llamada Comercial - Preguntar por presupuesto')
+    expect(componerProximaTarea('Contactar', 'Preguntar por presupuesto')).toBe('Contactar - Preguntar por presupuesto')
   })
 
   test('solo tipo, sin comentario', () => {
-    expect(componerProximaTarea('Llamada Comercial', '')).toBe('Llamada Comercial')
+    expect(componerProximaTarea('Contactar', '')).toBe('Contactar')
   })
 
   test('solo comentario, sin tipo', () => {
@@ -21,12 +38,12 @@ describe('componerProximaTarea', () => {
 
 describe('descomponerProximaTarea', () => {
   test('separa un texto "Tipo - comentario" en sus dos partes', () => {
-    expect(descomponerProximaTarea('Llamada Comercial - Preguntar por presupuesto'))
-      .toEqual({ tipo: 'Llamada Comercial', comentario: 'Preguntar por presupuesto' })
+    expect(descomponerProximaTarea('Enviar presupuesto - Preguntar por el número de cuenta'))
+      .toEqual({ tipo: 'Enviar presupuesto', comentario: 'Preguntar por el número de cuenta' })
   })
 
   test('un texto que es exactamente un tipo, sin comentario', () => {
-    expect(descomponerProximaTarea('Llamada Comercial')).toEqual({ tipo: 'Llamada Comercial', comentario: '' })
+    expect(descomponerProximaTarea('2da consulta presupuesto')).toEqual({ tipo: '2da consulta presupuesto', comentario: '' })
   })
 
   test('un texto libre que no matchea ningún tipo conocido queda todo como comentario', () => {

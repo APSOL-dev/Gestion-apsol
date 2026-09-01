@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Building2, Plus, ChevronRight, Globe, FileText, Calendar, Users, Target } from 'lucide-react'
 import { getEmpresaById, saveEmpresa, deleteEmpresa, getEmpresas, saveRazonSocial, deleteRazonSocial } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
+import { useData } from '../context/DataContext'
 
 const PAISES_LATAM = [
   'Argentina', 'Bolivia', 'Brasil', 'Chile', 'Colombia', 'Costa Rica', 'Cuba', 
@@ -21,13 +22,27 @@ export default function EmpresaDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
   const esNueva = id === 'nueva'
+  const { refreshEmpresas, refreshContactos, refreshProspectos, refreshProyectos } = useData()
+
+  // Tras guardar/borrar, invalidamos la caché global (DataContext, TTL 90s) y
+  // refetcheamos en segundo plano, así las listas no quedan con datos viejos
+  // al volver sin apretar F5. `cascada` = true al borrar la empresa, que
+  // arrastra contactos, prospectos y proyectos.
+  function invalidarCacheEmpresas({ tambienContactos = false, cascada = false } = {}) {
+    refreshEmpresas?.({ silencioso: true, forzar: true })
+    if (tambienContactos || cascada) refreshContactos?.({ silencioso: true, forzar: true })
+    if (cascada) {
+      refreshProspectos?.({ silencioso: true, forzar: true })
+      refreshProyectos?.({ silencioso: true, forzar: true })
+    }
+  }
 
   const [empresa, setEmpresa] = useState({
     nombre: '',
     pais: 'Argentina',
     provincia: '',
     industria: '',
-    tamaño_personas: '',
+    tamanio: '',
     dias_espera_facturacion: 4
   })
 
@@ -82,7 +97,7 @@ export default function EmpresaDetalle() {
         pais: data.pais || 'Argentina',
         provincia: data.provincia || '',
         industria: data.industria || '',
-        tamaño_personas: data.tamaño_personas || '',
+        tamanio: data.tamanio || '',
         dias_espera_facturacion: data.dias_espera_facturacion ?? 4
       })
       setContactos(data.contactos || [])
@@ -115,7 +130,7 @@ export default function EmpresaDetalle() {
     setError('')
     try {
       const datosAEnviar = { ...empresa }
-      if (datosAEnviar.tamaño_personas === '') delete datosAEnviar.tamaño_personas
+      if (datosAEnviar.tamanio === '') delete datosAEnviar.tamanio
       
       const saved = await saveEmpresa(datosAEnviar)
       
@@ -132,8 +147,10 @@ export default function EmpresaDetalle() {
           // (enviamos solo id y empresa_id para no romper con los datos relacionados)
           await saveContacto({ id: contactoSeleccionadoId, empresa_id: saved.id })
         }
+        invalidarCacheEmpresas({ tambienContactos: true })
         navigate(`/empresas/${saved.id}`, { replace: true })
       } else {
+        invalidarCacheEmpresas()
         alert('Datos guardados correctamente')
       }
     } catch (err) {
@@ -149,6 +166,7 @@ export default function EmpresaDetalle() {
     try {
       const contacto = todosLosContactos.find(c => c.id === contactoId)
       await saveContacto({ ...contacto, empresa_id: id })
+      refreshContactos?.({ silencioso: true, forzar: true })
       cargarDatos() // Recargamos para ver el nuevo contacto
     } catch (err) {
       alert('Error al asociar contacto')
@@ -197,6 +215,7 @@ export default function EmpresaDetalle() {
     setSaving(true)
     try {
       await deleteEmpresa(id)
+      invalidarCacheEmpresas({ cascada: true })
       navigate('/empresas')
     } catch (err) {
       console.error(err)
@@ -283,7 +302,7 @@ export default function EmpresaDetalle() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="field">
                   <label>Tamaño (empleados)</label>
-                  <input type="number" value={empresa.tamaño_personas} onChange={e => setEmpresa({...empresa, tamaño_personas: e.target.value})} />
+                  <input type="number" value={empresa.tamanio} onChange={e => setEmpresa({...empresa, tamanio: e.target.value})} />
                 </div>
                 <div className="field">
                   <label>Días espera facturación</label>

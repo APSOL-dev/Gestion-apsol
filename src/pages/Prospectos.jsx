@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, FolderKanban, Building2, User, ChevronRight, ChevronDown } from 'lucide-react'
 import { useData } from '../context/DataContext'
-import { getEstadoProspectoStyle } from '../utils/formateo'
+import { getEstadoProspectoStyle, ordenarEstadosProspecto, tareaVencida, debeFacturarse } from '../utils/formateo'
 import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import ProspectoDrawer from '../components/ProspectoDrawer'
 
 export default function Prospectos() {
-  const { prospectos, loadingProspectos, refreshProspectos } = useData()
+  const { prospectos, loadingProspectos, refreshProspectos, facturas } = useData()
   const [search, setSearch] = useState('')
   const [filtroActivos, setFiltroActivos] = useState(true) // true = activos, false = historicos
   const [expandidos, setExpandidos] = useState({}) // { [estado]: boolean }
@@ -22,18 +22,31 @@ export default function Prospectos() {
     setExpandidos({})
   }, [filtroActivos])
 
+  // Por defecto, toda sección arranca DESPLEGADA (no colapsada): un estado sin
+  // entrada en `expandidos` (undefined) cuenta como expandido.
+  const estaExpandido = (estado) => expandidos[estado] ?? true
+
   const toggleExpandir = (estado) => {
     setExpandidos(prev => ({
       ...prev,
-      [estado]: !prev[estado]
+      [estado]: !estaExpandido(estado)
     }))
   }
 
-  const prospectosFiltrados = prospectos.filter(prospecto => 
+  const prospectosFiltrados = prospectos.filter(prospecto =>
     prospecto.nombre.toLowerCase().includes(search.toLowerCase()) ||
     (prospecto.empresas?.nombre && prospecto.empresas.nombre.toLowerCase().includes(search.toLowerCase())) ||
     (prospecto.estado && prospecto.estado.toLowerCase().includes(search.toLowerCase()))
   )
+
+  // Facturas agrupadas por prospecto, para saber si a un prospecto "en
+  // producción" ya se le facturó desde su "Próxima Factura" o no.
+  const facturasPorProspecto = (facturas || []).reduce((acc, f) => {
+    if (!f.prospecto_id) return acc
+    if (!acc[f.prospecto_id]) acc[f.prospecto_id] = []
+    acc[f.prospecto_id].push(f)
+    return acc
+  }, {})
 
   // Agrupar prospectos por estado real
   const prospectosPorEstado = prospectosFiltrados.reduce((acc, p) => {
@@ -43,27 +56,12 @@ export default function Prospectos() {
     return acc
   }, {})
 
-  // Orden lógico de los estados
-  const ORDEN_ESTADOS = [
-    'nuevo',
-    '3a - seguimiento',
-    '6a - en producción',
-    '1h - caido previo reunión',
-    '2h - caido en reunión',
-    '3h - caido luego del presupuesto',
-    '4h - no califica',
-    '5h - finalizados'
-  ]
+  // Orden lógico de los estados: 1A, 2A, ... 6A y después 1H...5H (ver
+  // ordenarEstadosProspecto). BUG real: la lista hardcodeada de acá no tenía
+  // "1A - Pendiente de contactar" (ni 2A/4A/5A), así que ese estado caía al
+  // final en vez de ir arriba de todo.
+  const todosLosEstados = ordenarEstadosProspecto(Object.keys(prospectosPorEstado))
 
-  const todosLosEstados = Object.keys(prospectosPorEstado).sort((a, b) => {
-    const indexA = ORDEN_ESTADOS.findIndex(e => a.toLowerCase().includes(e))
-    const indexB = ORDEN_ESTADOS.findIndex(e => b.toLowerCase().includes(e))
-    if (indexA === -1 && indexB === -1) return a.localeCompare(b)
-    if (indexA === -1) return 1
-    if (indexB === -1) return -1
-    return indexA - indexB
-  })
-  
   const estadosAMostrar = todosLosEstados.filter(estado => {
     const e = estado.toLowerCase()
     const esHistorico = e.includes('h -') || e.includes('finalizado')
@@ -74,7 +72,7 @@ export default function Prospectos() {
   // Solo son "navegables" las filas de las secciones expandidas, en el orden
   // en que se ven.
   const filasVisibles = estadosAMostrar.flatMap(estado =>
-    expandidos[estado] ? (prospectosPorEstado[estado] || []) : []
+    estaExpandido(estado) ? (prospectosPorEstado[estado] || []) : []
   )
   const indicePorId = new Map(filasVisibles.map((p, i) => [p.id, i]))
 
@@ -143,7 +141,7 @@ export default function Prospectos() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {estadosAMostrar.map(estado => {
             const items = prospectosPorEstado[estado] || []
-            const esExpandido = expandidos[estado] || false
+            const esExpandido = estaExpandido(estado)
             if (items.length === 0 && search) return null // No mostrar estados vacíos si hay búsqueda
             
             return (
@@ -211,6 +209,13 @@ export default function Prospectos() {
                         {items.map((prospecto) => {
                           const idxFila = indicePorId.get(prospecto.id)
                           const filaSeleccionada = idxFila === filaActiva
+                          // Alerta: la próxima tarea (contactar, enviar presupuesto,
+                          // facturar, lo que sea) ya venció -> se remarca en rojo.
+                          const vencida = tareaVencida(prospecto.fecha_proxima_tarea)
+                          // Alerta de facturación: solo aplica a "en producción" —
+                          // próxima factura hoy o vencida y todavía no facturada.
+                          const enProduccion = (prospecto.estado || '').toLowerCase().includes('6a')
+                          const hayQueFacturar = enProduccion && debeFacturarse(prospecto, facturasPorProspecto[prospecto.id])
                           return (
                           <tr
                             key={prospecto.id}
@@ -220,8 +225,22 @@ export default function Prospectos() {
                             style={{ cursor: 'pointer', background: filaSeleccionada ? 'var(--color-surface2, #eef2ff)' : undefined }}
                           >
                             <td style={{ paddingLeft: '20px' }}>
-                              <div style={{ fontWeight: '600', color: 'var(--color-text)', fontSize: '14px' }}>
-                                {prospecto.nombre}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div style={{ fontWeight: '600', color: 'var(--color-text)', fontSize: '14px' }}>
+                                  {prospecto.nombre}
+                                </div>
+                                {hayQueFacturar && (
+                                  <span
+                                    title="La próxima factura de este prospecto es hoy o ya venció y todavía no se emitió"
+                                    style={{
+                                      fontSize: '10px', fontWeight: '700', textTransform: 'uppercase',
+                                      padding: '2px 8px', borderRadius: '10px',
+                                      background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca'
+                                    }}
+                                  >
+                                    Facturar
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td>
@@ -253,25 +272,21 @@ export default function Prospectos() {
                               </span>
                             </td>
                             <td>
-                              <span style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>
+                              <span style={{ color: vencida ? '#b91c1c' : 'var(--color-text-muted)', fontSize: '13px', fontWeight: vencida ? '600' : 'normal' }}>
                                 {prospecto.proxima_tarea || '-'}
                               </span>
                             </td>
                             <td>
                               <div style={{ fontSize: '13px' }}>
                                 {prospecto.fecha_proxima_tarea ? (
-                                  <span style={{ 
+                                  <span style={{
                                     padding: '2px 8px',
                                     borderRadius: '4px',
-                                    background: new Date(prospecto.fecha_proxima_tarea) < new Date() && !['ganado', 'perdido'].includes(prospecto.estado?.toLowerCase()) 
-                                      ? '#fee2e2' 
-                                      : 'transparent',
-                                    color: new Date(prospecto.fecha_proxima_tarea) < new Date() && !['ganado', 'perdido'].includes(prospecto.estado?.toLowerCase()) 
-                                      ? '#b91c1c' 
-                                      : 'inherit',
-                                    fontWeight: new Date(prospecto.fecha_proxima_tarea) < new Date() ? '600' : 'normal'
+                                    background: vencida ? '#fee2e2' : 'transparent',
+                                    color: vencida ? '#b91c1c' : 'inherit',
+                                    fontWeight: vencida ? '600' : 'normal'
                                   }}>
-                                    {new Date(prospecto.fecha_proxima_tarea).toLocaleDateString('es-AR')}
+                                    {String(prospecto.fecha_proxima_tarea).split('T')[0].split('-').reverse().join('/')}
                                   </span>
                                 ) : '-'}
                               </div>

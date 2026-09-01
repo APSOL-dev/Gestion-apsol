@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, UserMinus, UserPlus, User, FolderKanban, ChevronRight, Building2, Plus, X } from 'lucide-react'
 import { getContactoById, saveContacto, desactivarContacto, activarContacto, getContactos } from '../services/contactos'
-import { getEmpresas, saveEmpresa } from '../services/empresas'
+import { getEmpresas, saveEmpresa, construirPayloadEmpresa } from '../services/empresas'
+import { useData } from '../context/DataContext'
 
 const PAISES_LATAM = [
   'Argentina', 'Bolivia', 'Brasil', 'Chile', 'Colombia', 'Costa Rica', 'Cuba',
@@ -21,6 +22,14 @@ export default function ContactoDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
   const esNuevo = id === 'nuevo'
+  const { refreshContactos, refreshEmpresas } = useData()
+
+  // Tras guardar/borrar, invalidamos la caché global (DataContext, TTL 90s) y
+  // refetcheamos en segundo plano, así /contactos (y /empresas al crear una)
+  // no quedan con datos viejos al volver sin apretar F5.
+  function invalidarCacheContactos() {
+    refreshContactos?.({ silencioso: true, forzar: true })
+  }
 
   const [contacto, setContacto] = useState({
     nombre: '',
@@ -46,7 +55,7 @@ export default function ContactoDetalle() {
     pais: 'Argentina',
     provincia: '',
     industria: '',
-    tamaño_personas: '',
+    tamanio: '',
     dias_espera_facturacion: 4
   })
 
@@ -102,23 +111,18 @@ export default function ContactoDetalle() {
     if (!nuevaEmpresa.nombre.trim()) { alert('El nombre de la empresa es obligatorio.'); return }
     if (!nuevaEmpresa.provincia.trim()) { alert('La provincia es obligatoria.'); return }
     if (!nuevaEmpresa.industria.trim()) { alert('La industria/sector es obligatoria.'); return }
-    if (!nuevaEmpresa.tamaño_personas) { alert('El tamaño (empleados) es obligatorio.'); return }
+    if (!nuevaEmpresa.tamanio) { alert('El tamaño (empleados) es obligatorio.'); return }
 
     setCreandoEmpresa(true)
     try {
-      const saved = await saveEmpresa({
-        nombre: nuevaEmpresa.nombre.trim(),
-        pais: nuevaEmpresa.pais,
-        provincia: nuevaEmpresa.provincia,
-        industria: nuevaEmpresa.industria,
-        tamaño_personas: Number(nuevaEmpresa.tamaño_personas),
-        dias_espera_facturacion: Number(nuevaEmpresa.dias_espera_facturacion) || 4
-      })
+      const saved = await saveEmpresa(construirPayloadEmpresa(nuevaEmpresa))
       setEmpresas(prev => [...prev, saved].sort((a, b) => a.nombre.localeCompare(b.nombre)))
       setContacto(prev => ({ ...prev, empresa_id: saved.id }))
+      refreshEmpresas?.({ silencioso: true, forzar: true })
       setShowNuevaEmpresa(false)
-      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 4 })
+      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamanio: '', dias_espera_facturacion: 4 })
     } catch (err) {
+      console.error('Error al crear la empresa:', err)
       alert('Error al crear la empresa. Intente nuevamente.')
     } finally {
       setCreandoEmpresa(false)
@@ -154,6 +158,7 @@ export default function ContactoDetalle() {
     setSaving(true)
     try {
       const saved = await saveContacto({ ...contacto })
+      invalidarCacheContactos()
       if (esNuevo) {
         navigate(`/contactos/${saved.id}`, { replace: true })
       }
@@ -176,6 +181,7 @@ export default function ContactoDetalle() {
         await activarContacto(id)
         setContacto(prev => ({ ...prev, activo: true }))
       }
+      invalidarCacheContactos()
     } catch (err) {
       alert(`Error al ${accion} el contacto`)
     }
@@ -325,7 +331,7 @@ export default function ContactoDetalle() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <div className="field">
                       <label>Tamaño (empleados) *</label>
-                      <input type="number" min="1" placeholder="Ej: 50" value={nuevaEmpresa.tamaño_personas} onChange={e => setNuevaEmpresa({...nuevaEmpresa, tamaño_personas: e.target.value})} />
+                      <input type="number" min="1" placeholder="Ej: 50" value={nuevaEmpresa.tamanio} onChange={e => setNuevaEmpresa({...nuevaEmpresa, tamanio: e.target.value})} />
                     </div>
                     <div className="field">
                       <label>Días espera facturación *</label>

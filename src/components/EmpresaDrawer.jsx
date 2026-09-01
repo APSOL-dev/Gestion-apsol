@@ -155,7 +155,7 @@ export default function EmpresaDrawer({ id, onClose, onChanged }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                   <span style={{ color: '#777', display: 'flex', alignItems: 'center', gap: '6px' }}><Briefcase size={13} /> Tamaño</span>
                   <span style={{ fontWeight: '500', color: '#333' }}>
-                    {empresa.tamaño_personas ? `${empresa.tamaño_personas} empleados` : '-'}
+                    {empresa.tamanio ? `${empresa.tamanio} empleados` : '-'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>

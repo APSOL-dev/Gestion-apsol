@@ -29,6 +29,23 @@ export async function getEmpresaById(id) {
   return data
 }
 
+// Payload para crear/actualizar una empresa a través de la vista
+// public.apsol_empresas. La columna de tamaño en la base es `tamanio`
+// (no `tamaño_personas`, que es como la nombra el form): mandar el nombre
+// equivocado hace que PostgREST rechace todo el statement con
+// "Could not find the 'tamaño_personas' column" -> "Error al crear la
+// empresa". Este helper normaliza los nombres y descarta claves de más.
+export function construirPayloadEmpresa(form = {}) {
+  return {
+    nombre: (form.nombre || '').trim(),
+    pais: form.pais,
+    provincia: form.provincia,
+    industria: form.industria,
+    tamanio: Number(form.tamanio ?? form.tamaño_personas) || 0,
+    dias_espera_facturacion: Number(form.dias_espera_facturacion) || 4
+  }
+}
+
 export async function saveEmpresa(empresa) {
   if (empresa.id) {
     const { data, error } = await supabase
