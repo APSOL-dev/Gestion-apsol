@@ -464,11 +464,16 @@ export async function deleteFactura(id) {
  * Factura" del prospecto asociado, para que el ciclo de facturación
  * continúe solo.
  */
-async function recalcularEstadoFactura(facturacionId) {
+async function recalcularEstadoFactura(facturacionId, estadoPrevio = null) {
   const factura = await getFacturaById(facturacionId)
   if (!factura || factura.estado === 'Anulada') return
 
-  const estadoAnterior = factura.estado
+  // El estado ANTES de esta operación. Hay un trigger en la DB
+  // (apsol_private.pagos -> fn_recalc_estado_factura) que ya recalcula el
+  // estado, así que `factura.estado` puede venir YA actualizado. Para decidir
+  // si esta operación es la que dejó la factura saldada (y avisar una sola
+  // vez) usamos el estado previo real si nos lo pasaron.
+  const estadoAnterior = estadoPrevio ?? factura.estado
   let nuevoEstado
   if (factura.pagos.length === 0) {
     nuevoEstado = 'Pendiente'
@@ -478,7 +483,9 @@ async function recalcularEstadoFactura(facturacionId) {
     nuevoEstado = 'Cobrada total'
   }
 
-  if (nuevoEstado !== estadoAnterior) {
+  // Fallback: si el trigger no está (build viejo / entorno sin migrar) o no
+  // corrió, persistimos el estado desde acá igual que antes.
+  if (nuevoEstado !== factura.estado) {
     const { error } = await supabase
       .from('apsol_facturacion')
       .update({ estado: nuevoEstado })
@@ -521,6 +528,23 @@ export async function savePago(pago) {
   // Limpiar campos de joins
   const { cuentas_bancarias, ...dataToSave } = pago
 
+  // Estado de la factura ANTES de tocar los pagos. Sirve para saber si esta
+  // operación es la que la deja saldada y disparar el webhook 'pago_recibido'
+  // una sola vez (el estado en sí lo recalcula el trigger de la DB).
+  let estadoPrevio = null
+  if (dataToSave.facturacion_id) {
+    try {
+      const { data } = await supabase
+        .from('apsol_facturacion')
+        .select('estado')
+        .eq('id', dataToSave.facturacion_id)
+        .maybeSingle()
+      estadoPrevio = data?.estado ?? null
+    } catch (e) {
+      console.error('No se pudo leer el estado previo de la factura:', e)
+    }
+  }
+
   let saved
   if (dataToSave.id) {
     const { data, error } = await supabase
@@ -541,7 +565,7 @@ export async function savePago(pago) {
     saved = data
   }
 
-  await recalcularEstadoFactura(dataToSave.facturacion_id)
+  await recalcularEstadoFactura(dataToSave.facturacion_id, estadoPrevio)
   return saved
 }
 
