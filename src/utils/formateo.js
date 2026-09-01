@@ -1,4 +1,6 @@
-﻿/**
+﻿import { diasDesde } from './fecha'
+
+/**
  * Formatea un número como monto monetario en locale argentino (es-AR)
  * con exactamente 2 decimales. Acepta null/undefined y devuelve '0,00'.
  * @param {number|null|undefined} valor
@@ -68,4 +70,77 @@ export function getEstadoProspectoStyle(estado) {
   if (e.includes('h -') || e.includes('caido') || e.includes('no califica')) return { bg: '#fee2e2', text: '#991b1b' }
   if (e.includes('finalizado')) return { bg: '#f3e8ff', text: '#6b21a8' }
   return { bg: '#f3f4f6', text: '#374151' }
+}
+
+/**
+ * Posición de un estado de prospecto en el pipeline, a partir de su prefijo
+ * ("Nuevo", "1A", "2A", ..., "6A", "1H", ..., "5H"). No depende de que el
+ * texto después del prefijo coincida exactamente con ESTADOS_PROSPECTO — en
+ * la práctica hay variantes (ej. "1A - Pendiente de contactar" en vez de
+ * "1A - Contactado"), y lo único estable es el número + letra. Los activos
+ * (A) van siempre antes que los históricos/cerrados (H); "Nuevo" primero
+ * de todos; un estado que no matchea ningún patrón va al final.
+ * @param {string} [estado]
+ * @returns {number}
+ */
+export function ordenEstadoProspecto(estado) {
+  const s = String(estado || '').trim()
+  if (/^nuevo\b/i.test(s)) return 0
+  const m = /^(\d+)\s*([ah])\b/i.exec(s)
+  if (!m) return 999
+  const n = parseInt(m[1], 10)
+  return m[2].toLowerCase() === 'a' ? n : 100 + n
+}
+
+/**
+ * Ordena una lista de estados de prospecto según el orden del pipeline
+ * (ver ordenEstadoProspecto). No muta el array recibido.
+ * @param {string[]} estados
+ * @returns {string[]}
+ */
+export function ordenarEstadosProspecto(estados) {
+  return [...(estados || [])].sort((a, b) => {
+    const diff = ordenEstadoProspecto(a) - ordenEstadoProspecto(b)
+    return diff !== 0 ? diff : String(a).localeCompare(String(b))
+  })
+}
+
+/**
+ * ¿La próxima tarea de un prospecto está vencida? Es decir, su fecha ya pasó
+ * (estrictamente antes de hoy — el día de hoy todavía no cuenta como
+ * vencido). Usa diasDesde() para parsear la fecha en hora LOCAL: comparar
+ * con `new Date(fecha) < new Date()` corre el día en husos horarios
+ * negativos como Argentina.
+ * @param {string} [fechaProximaTarea]  'YYYY-MM-DD'
+ * @returns {boolean}
+ */
+export function tareaVencida(fechaProximaTarea) {
+  const dias = diasDesde(fechaProximaTarea)
+  return dias != null && dias > 0
+}
+
+/**
+ * ¿Hay que facturarle a este prospecto? True cuando su "Próxima Factura"
+ * (prospecto.proxima_factura) es HOY, o ya pasó, y todavía no se emitió
+ * ninguna factura desde esa fecha (fecha_emision >= proxima_factura). Se usa
+ * para marcar en rojo a los prospectos "en producción" a los que hay que
+ * facturarles.
+ * @param {{proxima_factura?: string}} [prospecto]
+ * @param {Array<{fecha_emision?: string}>} [facturasDelProspecto] - solo las
+ *   facturas DE ESE prospecto (el caller filtra por prospecto_id)
+ * @param {Date} [hoy]
+ * @returns {boolean}
+ */
+export function debeFacturarse(prospecto, facturasDelProspecto = [], hoy = new Date()) {
+  const proximaFactura = prospecto?.proxima_factura
+  if (!proximaFactura) return false
+
+  const dias = diasDesde(proximaFactura, hoy)
+  if (dias == null || dias < 0) return false // fecha inválida o todavía futura
+
+  const yaFacturado = (facturasDelProspecto || []).some(f => {
+    const fechaEmision = String(f?.fecha_emision || '').split('T')[0]
+    return fechaEmision && fechaEmision >= proximaFactura
+  })
+  return !yaFacturado
 }

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { X, Pencil, Trash2, Building2, Users, Mail, Phone, Clock, Receipt, MessageSquare, ChevronDown, Briefcase, Paperclip, Copy, Check } from 'lucide-react'
-import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion } from '../services/prospectos'
+import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, construirCambioEstado } from '../services/prospectos'
 import { getContactosPorEmpresa } from '../services/contactos'
 import { getEstadoProspectoStyle, ESTADOS_PROSPECTO } from '../utils/formateo'
 import { TIPOS_TAREA, componerProximaTarea, descomponerProximaTarea } from '../utils/tareas'
@@ -140,8 +140,7 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
     try {
       const saved = await saveProspecto({
         id,
-        estado: nuevoEstado,
-        fecha_ultimo_cambio_estado: new Date().toISOString()
+        ...construirCambioEstado(nuevoEstado)
       })
       setProspecto(prev => ({ ...prev, ...saved }))
       await saveObservacion({ prospecto_id: id, observacion: `Cambio de estado: ${saved.estado}` })

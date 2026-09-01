@@ -154,7 +154,7 @@ export default function Empresas() {
                       </span>
                     ) : '-'}
                   </td>
-                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>{empresa.tamaño_personas ? `${empresa.tamaño_personas} emp.` : '-'}</td>
+                  <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>{empresa.tamanio ? `${empresa.tamanio} emp.` : '-'}</td>
                   <td onClick={() => setEmpresaSeleccionadaId(empresa.id)} style={{ cursor: 'pointer' }}>
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                       {activos.length > 0 ? (

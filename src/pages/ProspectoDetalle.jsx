@@ -3,10 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, FolderKanban, Star, Plus, Clock, User, Building2, X, Link, Upload, DownloadCloud, ChevronDown, Calendar, DollarSign, RefreshCw, Users, CreditCard, Activity, Mail, ExternalLink } from 'lucide-react'
 import CreatableSelect from 'react-select/creatable'
 
-import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, uploadFile, normalizarContactoId } from '../services/prospectos'
-import { getEmpresas, saveEmpresa } from '../services/empresas'
+import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, uploadFile, normalizarContactoId, construirCambioEstado, construirPayloadProspecto, guardarServiciosProspecto, normalizarServicios } from '../services/prospectos'
+import { getEmpresas, saveEmpresa, construirPayloadEmpresa } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
+import { useData } from '../context/DataContext'
 import { sumarMeses } from '../utils/fecha'
 import { ESTADOS_PROSPECTO, getEstadoProspectoStyle } from '../utils/formateo'
 import { TIPOS_TAREA, componerProximaTarea, descomponerProximaTarea } from '../utils/tareas'
@@ -56,6 +57,14 @@ export default function ProspectoDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
   const esNuevo = id === 'nuevo'
+  const { refreshProspectos, refreshEmpresas, refreshContactos } = useData()
+
+  // Tras guardar/borrar, invalidamos la caché global (DataContext, TTL 90s) y
+  // refetcheamos en segundo plano, así la lista /prospectos no queda con datos
+  // viejos al volver sin tener que apretar F5.
+  function invalidarCacheProspectos() {
+    refreshProspectos?.({ silencioso: true, forzar: true })
+  }
 
   const [prospecto, setProspecto] = useState({
     nombre: '',
@@ -86,9 +95,6 @@ export default function ProspectoDetalle() {
     ultima_actualizacion_tarifa: '',
     dias_entre_reuniones: '15',
     frecuencia_actualizacion: 1,
-    // Marketing y Tracking
-    fecha_ultimo_cambio_estado: null,
-    estado_repetido: ''
   })
 
   // Estado para el modal de cambio de estado
@@ -125,7 +131,7 @@ export default function ProspectoDetalle() {
   const [showNuevaEmpresa, setShowNuevaEmpresa] = useState(false)
   const [creandoEmpresa, setCreandoEmpresa] = useState(false)
   const [nuevaEmpresa, setNuevaEmpresa] = useState({
-    nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 4
+    nombre: '', pais: 'Argentina', provincia: '', industria: '', tamanio: '', dias_espera_facturacion: 4
   })
 
   const [showNuevoContacto, setShowNuevoContacto] = useState(false)
@@ -293,23 +299,18 @@ export default function ProspectoDetalle() {
     if (!nuevaEmpresa.nombre.trim()) { alert('El nombre de la empresa es obligatorio.'); return }
     if (!nuevaEmpresa.provincia.trim()) { alert('La provincia es obligatoria.'); return }
     if (!nuevaEmpresa.industria.trim()) { alert('La industria/sector es obligatoria.'); return }
-    if (!nuevaEmpresa.tamaño_personas) { alert('El tamaño (empleados) es obligatorio.'); return }
+    if (!nuevaEmpresa.tamanio) { alert('El tamaño (empleados) es obligatorio.'); return }
 
     setCreandoEmpresa(true)
     try {
-      const saved = await saveEmpresa({
-        nombre: nuevaEmpresa.nombre.trim(),
-        pais: nuevaEmpresa.pais,
-        provincia: nuevaEmpresa.provincia,
-        industria: nuevaEmpresa.industria,
-        tamaño_personas: Number(nuevaEmpresa.tamaño_personas),
-        dias_espera_facturacion: Number(nuevaEmpresa.dias_espera_facturacion) || 4
-      })
+      const saved = await saveEmpresa(construirPayloadEmpresa(nuevaEmpresa))
       setEmpresas(prev => [...prev, saved].sort((a, b) => a.nombre.localeCompare(b.nombre)))
       setProspecto(prev => ({ ...prev, empresa_id: saved.id }))
+      refreshEmpresas?.({ silencioso: true, forzar: true })
       setShowNuevaEmpresa(false)
-      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamaño_personas: '', dias_espera_facturacion: 4 })
+      setNuevaEmpresa({ nombre: '', pais: 'Argentina', provincia: '', industria: '', tamanio: '', dias_espera_facturacion: 4 })
     } catch (err) {
+      console.error('Error al crear la empresa:', err)
       alert('Error al crear la empresa. Intente nuevamente.')
     } finally {
       setCreandoEmpresa(false)
@@ -328,6 +329,7 @@ export default function ProspectoDetalle() {
         activo: true
       })
       setTodosLosContactos(prev => [...prev, saved])
+      refreshContactos?.({ silencioso: true, forzar: true })
       setShowNuevoContacto(false)
       setNuevoContacto({ nombre: '', apellido: '', telefono: '', email: '', cargo: '', area: '' })
     } catch (err) {
@@ -349,26 +351,28 @@ export default function ProspectoDetalle() {
     try {
       const p_tarea = componerProximaTarea(prospecto.proxima_tarea_tipo, prospecto.proxima_tarea_comentario)
 
-      // Limpieza exhaustiva mediante desestructuración
-      const { 
-        empresas, contactos, observaciones, facturacion, proyectos,
-        created_at, proxima_tarea_tipo, proxima_tarea_comentario,
-        ...datosBase 
-      } = prospecto
+      const serviciosSeleccionados = selectedServicios.map(s => s.value)
 
-      const dataToSave = {
-        ...datosBase,
+      // construirPayloadProspecto filtra a solo las columnas que la vista
+      // apsol_prospectos acepta escribir: deja afuera relaciones anidadas,
+      // campos auxiliares del form y, sobre todo, servicios_requeridos
+      // (columna calculada de la vista -> 400 "cannot update column").
+      const dataToSave = construirPayloadProspecto({
+        ...prospecto,
         contacto_id: normalizarContactoId(prospecto.contacto_id),
         proxima_tarea: p_tarea,
-        servicios_requeridos: selectedServicios.map(s => s.value),
         canal_contacto: selectedCanal ? selectedCanal.value : '',
         adjuntos: typeof prospecto.adjuntos === 'string' ? prospecto.adjuntos : JSON.stringify(prospecto.adjuntos),
         fecha_proxima_tarea: prospecto.fecha_proxima_tarea || null
-      }
+      })
+      if (!esNuevo) dataToSave.id = prospecto.id
 
       const saved = await saveProspecto(dataToSave)
-      setProspecto(saved)
-      
+      // Los servicios se persisten aparte, en apsol_private.prospectos_servicios.
+      await guardarServiciosProspecto(saved.id, serviciosSeleccionados)
+      setProspecto({ ...saved, servicios_requeridos: normalizarServicios(serviciosSeleccionados) })
+      invalidarCacheProspectos()
+
       if (!esNuevo) {
         setSaving(false)
         return // Fin, guardado exitoso y no mostramos modal
@@ -405,6 +409,7 @@ export default function ProspectoDetalle() {
       
       const saved = await saveProspecto(toSave)
       setProspecto(prev => ({ ...prev, ...saved }))
+      invalidarCacheProspectos()
     } catch (err) {
       console.error(err)
       setError('Error al actualizar la tarea.')
@@ -425,7 +430,8 @@ export default function ProspectoDetalle() {
         fecha_proxima_tarea: planningData.fecha_proxima_tarea || null
       }
       
-      const saved = await saveProspecto(toSave)
+      await saveProspecto(toSave)
+      invalidarCacheProspectos()
       setShowPlanningModal(false)
       navigate('/prospectos')
     } catch (err) {
@@ -439,6 +445,7 @@ export default function ProspectoDetalle() {
     if (!window.confirm('¿Estás seguro de eliminar este prospecto?')) return
     try {
       await deleteProspecto(id)
+      invalidarCacheProspectos()
       navigate('/prospectos')
     } catch (err) {
       console.error(err)
@@ -469,6 +476,7 @@ export default function ProspectoDetalle() {
 
       const saved = await saveProspecto(dataToSave)
       setProspecto(prev => ({ ...prev, ...saved }))
+      invalidarCacheProspectos()
       alert('Datos operativos guardados correctamente')
     } catch (err) {
       console.error(err)
@@ -481,34 +489,15 @@ export default function ProspectoDetalle() {
   async function handleStatusUpdate() {
     setSaving(true)
     try {
-      // Definimos solo los campos básicos de actualización
       const dataToSave = {
         id: prospecto.id,
-        estado: newStatusData.estado,
-        fecha_ultimo_cambio_estado: new Date().toISOString()
-      }
-
-      // Si es producción, adjuntar campos extra desde el modal
-      if (newStatusData.estado.includes('6A')) {
-        dataToSave.inicio_servicio = newStatusData.inicio_servicio || null
-        dataToSave.proxima_factura = newStatusData.proxima_factura || null
-        dataToSave.hs_mensuales = parseFloat(newStatusData.hs_mensuales) || 0
-        dataToSave.moneda_cobro = newStatusData.moneda_cobro
-        dataToSave.indice_cobro = newStatusData.indice_cobro
-        dataToSave.uva_referencia_periodo = newStatusData.uva_referencia_periodo || 'inicio'
-        dataToSave.cuenta_bancaria_id = newStatusData.cuenta_bancaria_id || null
-        dataToSave.tarifa_base = parseFloat(newStatusData.tarifa_base) || 0
-        dataToSave.base_indice_valor = parseFloat(newStatusData.base_indice_valor) || 0
-        dataToSave.mensualidad_vigente_actual = parseFloat(newStatusData.mensualidad_vigente_actual) || 0
-        dataToSave.proxima_actualizacion_tarifa = newStatusData.proxima_actualizacion_tarifa || null
-        dataToSave.ultima_actualizacion_tarifa = newStatusData.ultima_actualizacion_tarifa || null
-        dataToSave.dias_entre_reuniones = parseInt(newStatusData.dias_entre_reuniones) || 0
-        dataToSave.frecuencia_actualizacion = parseInt(newStatusData.frecuencia_actualizacion) || 1
+        ...construirCambioEstado(newStatusData.estado, newStatusData)
       }
 
       const saved = await saveProspecto(dataToSave)
       // Actualizamos el estado local con la respuesta limpia
       setProspecto(prev => ({ ...prev, ...saved }))
+      invalidarCacheProspectos()
       setShowStatusModal(false)
       
       // Añadir una observación automática del cambio de estado
@@ -758,7 +747,7 @@ export default function ProspectoDetalle() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <div className="field">
                       <label>Tamaño (empleados) *</label>
-                      <input type="number" min="1" placeholder="Ej: 50" value={nuevaEmpresa.tamaño_personas} onChange={e => setNuevaEmpresa({...nuevaEmpresa, tamaño_personas: e.target.value})} />
+                      <input type="number" min="1" placeholder="Ej: 50" value={nuevaEmpresa.tamanio} onChange={e => setNuevaEmpresa({...nuevaEmpresa, tamanio: e.target.value})} />
                     </div>
                     <div className="field">
                       <label>Días espera facturación</label>
