@@ -76,6 +76,33 @@ describe('saveColaborador', () => {
     expect(payloadDe(colabBuilder, 'update')).toMatchObject({ es_team_lead: true })
   })
 
+  // email_personal vive en apsol_usuarios (mismo lugar que nombre/apellido/email).
+  // Es adónde n8n avisa los pagos; el admin lo carga desde la ficha.
+  test('propaga email_personal al UPDATE de apsol_usuarios cuando viene', async () => {
+    results.push({ error: null })                        // update apsol_usuarios
+    results.push({ data: { id: 'c-9' }, error: null })   // update apsol_colaboradores ... single
+    const { saveColaborador } = await import('../colaboradores')
+
+    await saveColaborador({
+      id: 'c-9', usuario_id: 'u-9', nombre: 'Test', apellido: 'X', email: 't@a.com',
+      puesto: 'Colaborador', email_personal: 'personal@gmail.com',
+    })
+
+    const userBuilder = builders.find(b => b.tabla === 'apsol_usuarios')
+    expect(payloadDe(userBuilder, 'update')).toMatchObject({ email_personal: 'personal@gmail.com' })
+  })
+
+  test('no toca email_personal en apsol_usuarios si el caller no lo maneja', async () => {
+    results.push({ error: null })
+    results.push({ data: { id: 'c-9' }, error: null })
+    const { saveColaborador } = await import('../colaboradores')
+
+    await saveColaborador({ id: 'c-9', usuario_id: 'u-9', nombre: 'Test', puesto: 'Colaborador' })
+
+    const userBuilder = builders.find(b => b.tabla === 'apsol_usuarios')
+    expect(payloadDe(userBuilder, 'update')).not.toHaveProperty('email_personal')
+  })
+
   test('no incluye prospectos_asignados en el UPDATE de un colaborador existente', async () => {
     results.push({ data: [{ prospecto_id: 'p1' }], error: null }) // select actuales (saveColaboradorProspectos)
     results.push({ error: null })                                  // insert enlaces nuevos

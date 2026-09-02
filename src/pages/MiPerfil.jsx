@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { validarNuevaPassword } from '../utils/perfil'
 import { getMiFichaColaborador, saveFacturaColaborador, uploadFile } from '../services/colaboradores'
+import { notificarFacturaColaborador } from '../services/notificaciones'
 import { calcularDiasDescanso, finDeContrato, tasaDiasLibres, contratoVigente } from '../utils/colaboradores'
 import { ventanaFacturaAbierta, DIAS_HABILES_VENTANA } from '../utils/facturasColaborador'
 
@@ -158,13 +159,30 @@ export default function MiPerfil() {
     }
     try {
       setSubiendo(true)
-      await saveFacturaColaborador({
+      const facturaGuardada = await saveFacturaColaborador({
         colaborador_id: ficha.id,
         fecha_factura: nuevaFactura.fecha_factura,
         numero_factura: nuevaFactura.numero_factura.trim() || null,
         monto: Number(nuevaFactura.monto),
         archivo_factura: nuevaFactura.archivo_factura,
       })
+      // Aviso por email al admin (vía n8n). Un fallo del webhook no debe
+      // tirar abajo la carga de la factura, que ya está hecha.
+      try {
+        await notificarFacturaColaborador('colaborador_subio_factura', {
+          colaborador: {
+            id: ficha.id,
+            nombre: ficha.nombre,
+            apellido: ficha.apellido,
+            email: ficha.email,
+            email_personal: datos.email_personal || ficha.email_personal || '',
+            whatsapp: ficha.telefono,
+          },
+          factura: facturaGuardada,
+        })
+      } catch (notifError) {
+        console.error('Error al notificar colaborador_subio_factura al webhook:', notifError)
+      }
       await cargarFicha()
       setModalFactura(false)
       setNuevaFactura(FACTURA_VACIA)

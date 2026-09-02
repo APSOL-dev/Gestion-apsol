@@ -2,8 +2,52 @@ import { describe, it, expect } from 'vitest'
 import {
   clasificarActividadCronograma, esReunionCronograma, redactarActividadOcupada,
   esActividadOcupada, filtrarCronogramaVisible, esCargoAdmin,
-  normalizarResponsableEInvitados
+  normalizarResponsableEInvitados,
+  diasHabilesEntre, colaboradorPuedeEditarActividad
 } from '../cronogramaVisibilidad'
+
+describe('colaboradorPuedeEditarActividad', () => {
+  it('puede editar una actividad que todavía no terminó', () => {
+    const ahora = new Date('2026-09-02T10:00:00')
+    expect(colaboradorPuedeEditarActividad('2026-09-02T18:00:00', ahora)).toBe(true)
+  })
+
+  it('puede editar una actividad de hoy que ya terminó (0 días hábiles)', () => {
+    const ahora = new Date('2026-09-02T20:00:00')
+    expect(colaboradorPuedeEditarActividad('2026-09-02T18:00:00', ahora)).toBe(true)
+  })
+
+  it('puede editar hasta 2 días hábiles después de que terminó', () => {
+    // terminó el miércoles 2026-09-02; "ahora" viernes 2026-09-04 -> 2 días hábiles
+    expect(colaboradorPuedeEditarActividad('2026-09-02T18:00:00', new Date('2026-09-04T09:00:00'))).toBe(true)
+  })
+
+  it('NO puede editar pasados más de 2 días hábiles', () => {
+    // terminó miércoles 2026-09-02; "ahora" lunes 2026-09-08 -> jue, vie, lun = 3 días hábiles
+    expect(colaboradorPuedeEditarActividad('2026-09-02T18:00:00', new Date('2026-09-08T09:00:00'))).toBe(false)
+  })
+
+  it('el fin de semana no cuenta como días hábiles', () => {
+    // terminó viernes 2026-09-04; "ahora" lunes 2026-09-07 -> solo el lunes = 1 día hábil
+    expect(colaboradorPuedeEditarActividad('2026-09-04T18:00:00', new Date('2026-09-07T09:00:00'))).toBe(true)
+  })
+
+  it('fin inválido -> no bloquea', () => {
+    expect(colaboradorPuedeEditarActividad('', new Date())).toBe(true)
+  })
+})
+
+describe('diasHabilesEntre', () => {
+  it('mismo día -> 0', () => {
+    expect(diasHabilesEntre(new Date('2026-09-02T08:00'), new Date('2026-09-02T23:00'))).toBe(0)
+  })
+  it('miércoles a viernes -> 2', () => {
+    expect(diasHabilesEntre(new Date('2026-09-02'), new Date('2026-09-04'))).toBe(2)
+  })
+  it('viernes a lunes -> 1 (salta sáb/dom)', () => {
+    expect(diasHabilesEntre(new Date('2026-09-04'), new Date('2026-09-07'))).toBe(1)
+  })
+})
 
 const ADMIN = 'colab-admin'
 const YO = 'colab-mateo'

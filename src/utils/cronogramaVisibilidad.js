@@ -106,6 +106,42 @@ export function normalizarResponsableEInvitados(form = {}, ctx = {}) {
 }
 
 /**
+ * Días hábiles (lunes a viernes, sin feriados) transcurridos ENTRE dos
+ * instantes: cuenta cada día hábil del calendario posterior al día de `a`
+ * y hasta el día de `b` inclusive. `a` y `b` el mismo día -> 0.
+ * @param {Date} a
+ * @param {Date} b  (debe ser >= a)
+ * @returns {number}
+ */
+export function diasHabilesEntre(a, b) {
+  const d = new Date(a.getFullYear(), a.getMonth(), a.getDate())
+  const fin = new Date(b.getFullYear(), b.getMonth(), b.getDate())
+  let habiles = 0
+  while (d < fin) {
+    d.setDate(d.getDate() + 1)
+    const dow = d.getDay() // 0 domingo, 6 sábado
+    if (dow !== 0 && dow !== 6) habiles++
+  }
+  return habiles
+}
+
+/**
+ * ¿Un COLABORADOR puede todavía editar/borrar esta actividad? Puede
+ * mientras la actividad no haya terminado, o haya terminado hace 2 días
+ * hábiles o menos. Pasado ese plazo queda en solo lectura para él (un
+ * admin siempre puede — esta función no aplica a admins).
+ * @param {string|Date} finActividad  fin de la actividad
+ * @param {Date} [ahora]
+ * @returns {boolean}
+ */
+export function colaboradorPuedeEditarActividad(finActividad, ahora = new Date()) {
+  const fin = finActividad instanceof Date ? finActividad : new Date(finActividad)
+  if (isNaN(fin.getTime())) return true
+  if (fin >= ahora) return true // todavía no pasó
+  return diasHabilesEntre(fin, ahora) <= 2
+}
+
+/**
  * Aplica la regla a una lista: descarta las 'oculta' y redacta las 'ocupado'.
  * Las 'completa' pasan tal cual.
  */

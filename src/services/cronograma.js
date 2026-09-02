@@ -62,7 +62,9 @@ export function calcularSaldoHoras(prospecto, horasDedicadas, fechaReferencia = 
   if (!prospecto.inicio_servicio) return null
   const hsTeoricas = calcularHorasTeoricas(prospecto.hs_mensuales, prospecto.inicio_servicio, fechaReferencia)
   const dedicadas = Number(horasDedicadas) || 0
-  return Math.round((dedicadas - hsTeoricas) * 10) / 10
+  // 2 decimales: es la precisión con la que Adrian compara el saldo contra
+  // el histórico de AppSheet (ej. -85.79, no -85.8).
+  return Math.round((dedicadas - hsTeoricas) * 100) / 100
 }
 
 /**
@@ -97,6 +99,186 @@ export function calcularDiasDesde(fechaUltimaReunion, fechaInicioServicio, fecha
 
   const horas = hoyMedianocheUTC.diff(moment.utc(fechaUltimaReunion), 'hours', true)
   return Math.round(horas / 24)
+}
+
+/** Mínimo de caracteres exigido en "Descripción del Trabajo" del modal. */
+export const DESCRIPCION_MIN_CARACTERES = 60
+
+/**
+ * ¿La descripción del trabajo llega al mínimo de caracteres? Cuenta el
+ * texto ya recortado (trim), así "60 espacios" no cuenta como válido.
+ * @param {string} texto
+ * @param {number} [min]
+ * @returns {boolean}
+ */
+export function descripcionCumpleMinimo(texto, min = DESCRIPCION_MIN_CARACTERES) {
+  return (texto || '').trim().length >= min
+}
+
+/**
+ * Nueva "Hasta" para el modal del cronograma: el mismo "Desde" + `horas`.
+ * Devuelve un string 'YYYY-MM-DDTHH:mm' para un <input type="datetime-local">.
+ * Si `desde` no es una fecha-hora válida, lo devuelve sin tocar.
+ * @param {string} desde  'YYYY-MM-DDTHH:mm'
+ * @param {number} horas
+ * @returns {string}
+ */
+export function calcularHastaConDuracion(desde, horas) {
+  const m = moment(desde, 'YYYY-MM-DDTHH:mm', true)
+  if (!m.isValid()) return desde
+  return m.add(Number(horas) || 0, 'hours').format('YYYY-MM-DDTHH:mm')
+}
+
+/** Opciones de duración rápida (en horas) que muestra el modal bajo Desde/Hasta. */
+export const DURACIONES_RAPIDAS = [1, 2, 3, 4, 5, 6]
+
+/** Zona horaria de la operación (todo lo que se ve/usa es UTC-3). */
+export const ZONA_HORARIA = 'America/Argentina/Buenos_Aires'
+
+/**
+ * Toma los eventos crudos del Google Calendar (ver listarEventosCalendar) y
+ * los deja listos para mostrar en el calendario del cronograma como bloques
+ * de SOLO LECTURA. Descarta:
+ *  - los que ya están representados por una actividad del cronograma (mismo
+ *    google_calendar_id) para no duplicar,
+ *  - los de día completo y los que no tienen inicio/fin con hora.
+ * @param {Array} eventosGcal
+ * @param {Array} actividades  actividades ya cargadas (con google_calendar_id)
+ * @returns {Array} objetos con { id, gcalId, prospecto_nombre, descripcion, inicio, fin, origenCalendar, htmlLink }
+ */
+export function fusionarEventosCalendar(eventosGcal, actividades) {
+  const yaEnApp = new Set(
+    (actividades || []).map(a => a && a.google_calendar_id).filter(Boolean)
+  )
+  return (eventosGcal || [])
+    .filter(ev => ev && ev.id && ev.start && ev.end && !ev.allDay && !yaEnApp.has(ev.id))
+    .map(ev => ({
+      id: `gcal-${ev.id}`,
+      gcalId: ev.id,
+      prospecto_nombre: ev.summary || '(sin título)',
+      descripcion: ev.description || '',
+      inicio: ev.start,
+      fin: ev.end,
+      responsable_id: null,
+      responsable_nombre: '',
+      participantes_ids: [],
+      origenCalendar: true,
+      htmlLink: ev.htmlLink || null
+    }))
+}
+
+/**
+ * Arma el body de un evento de Google Calendar a partir de una actividad
+ * marcada como reunión con cliente: el título es la descripción del trabajo
+ * y los horarios son los de "Desde"/"Hasta".
+ * @param {{descripcion?: string, inicio: string, fin: string, comentarios_reunion?: string, link_reunion?: string}} act
+ * @param {string[]} [emails]  invitados (colaboradores + contactos del cliente)
+ * @returns {{summary: string, start: object, end: object, attendees: Array<{email:string}>, description: string}}
+ */
+export function construirEventoReunion(act, emails = []) {
+  const inicio = moment(act.inicio, 'YYYY-MM-DDTHH:mm', true)
+  const fin = moment(act.fin, 'YYYY-MM-DDTHH:mm', true)
+  const invitados = [...new Set((emails || [])
+    .map(e => (e || '').trim().toLowerCase())
+    .filter(Boolean))]
+  const partesDesc = [act.comentarios_reunion, act.link_reunion].filter(Boolean)
+  return {
+    summary: (act.descripcion || '').trim() || 'Reunión con cliente',
+    start: { dateTime: inicio.isValid() ? inicio.format('YYYY-MM-DDTHH:mm:ss') : act.inicio, timeZone: ZONA_HORARIA },
+    end: { dateTime: fin.isValid() ? fin.format('YYYY-MM-DDTHH:mm:ss') : act.fin, timeZone: ZONA_HORARIA },
+    attendees: invitados.map(email => ({ email })),
+    description: partesDesc.join('\n\n')
+  }
+}
+
+/**
+ * Rango de fechas por defecto del Cronograma: una ventana MÓVIL de los
+ * últimos 3 meses (de hoy hacia atrás), no el mes calendario en curso. Se
+ * recalcula en cada carga de la pantalla, así el "estándar" siempre
+ * acompaña la fecha actual ("estándar móvil"). Si el día de hoy no existe
+ * 3 meses atrás (ej. 31 de mayo -> febrero), moment lo clampea al último
+ * día de ese mes.
+ * @param {Date} [fechaReferencia]
+ * @returns {{desde: string, hasta: string}}  fechas 'YYYY-MM-DD'
+ */
+export function rangoCronogramaPorDefecto(fechaReferencia = new Date()) {
+  const hoy = moment(fechaReferencia)
+  return {
+    desde: hoy.clone().subtract(3, 'months').format('YYYY-MM-DD'),
+    hasta: hoy.format('YYYY-MM-DD')
+  }
+}
+
+/**
+ * Categorías internas fijas del cronograma: opciones estándar que NO son
+ * clientes (un día libre, una capacitación, etc.) y que el selector
+ * "Prospecto / Cliente" ofrece junto con los prospectos en producción. Se
+ * guardan con prospecto_id NULL y el prefijo "[Categoría]" en la
+ * descripción — ver resolverProspectoParaGuardar. "Día Libre" va con tilde
+ * a propósito: así lo cuenta el tablero de días tomados de cada
+ * colaborador (services/colaboradores.js, `ilike '[Día Libre]%'`).
+ */
+export const CATEGORIAS_CRONOGRAMA = [
+  'Consultora', 'Capacitación', 'Investigación', 'Día Libre', 'otros', 'Acción de venta'
+]
+
+// Herramientas que se pueden marcar como usadas en una actividad (selección
+// múltiple). El orden y los nombres salen del Excel fuente de verdad
+// (hoja "Cronograma Local", columna "Herramienta utilizada").
+export const HERRAMIENTAS_CRONOGRAMA = [
+  'Antigravity', 'N8N', 'Appsheet', 'Power Bi', 'Otros', 'Herramientas No utilizadas'
+]
+
+// El multiplicador ajusta cuántas horas "valen" las de la actividad para el
+// saldo (duracion_horas * multiplicador). Por defecto es 1 (sin ajuste).
+// Solo el administrador lo edita. Acepta decimales y negativos (el Excel
+// tiene desde -14 hasta 11), pero nunca queda vacío ni NaN.
+export function normalizarMultiplicador(valor, porDefecto = 1) {
+  if (valor === '' || valor === null || valor === undefined) return porDefecto
+  const n = Number(valor)
+  return Number.isFinite(n) ? n : porDefecto
+}
+
+// Color semántico para las categorías fijas internas (no son clientes).
+// El resto de los prospectos toma un color derivado del nombre.
+export const COLORES_CATEGORIA = {
+  'Consultora': '#ef4444',
+  'Capacitación': '#f59e0b',
+  'Investigación': '#0ea5e9',
+  'Día Libre': '#22c55e',
+  'otros': '#64748b',
+  'Acción de venta': '#a855f7'
+}
+
+function hashTexto(texto) {
+  const s = String(texto == null ? '' : texto)
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i)
+    h |= 0 // fuerza int32
+  }
+  return Math.abs(h)
+}
+
+/**
+ * Color estable y visualmente distinto por nombre de prospecto, para que en
+ * el calendario se note el corte entre un bloque y el siguiente. Las
+ * categorías fijas (Consultora, Día Libre, …) conservan su color semántico;
+ * cualquier otro nombre deriva su tono del hash del texto, separando los
+ * tonos con el ángulo áureo (137.5°) para que aun nombres parecidos —
+ * "Norte 2025" / "Norte 2026" — caigan en colores claramente diferentes.
+ * Saturación/luminosidad acotadas para que el texto blanco encima se lea.
+ * @param {string} nombre
+ * @returns {string} color CSS (`#rrggbb` para categorías, `hsl(...)` para el resto)
+ */
+export function colorDeProspecto(nombre) {
+  const fijo = COLORES_CATEGORIA[nombre]
+  if (fijo) return fijo
+  const h = hashTexto(nombre)
+  const hue = Math.round((h * 137.508) % 360)
+  const sat = 58 + (h % 22)  // 58–79 %
+  const light = 40 + (h % 10) // 40–49 %
+  return `hsl(${hue}, ${sat}%, ${light}%)`
 }
 
 /**
@@ -246,7 +428,9 @@ export async function getActividadById(id) {
 const CAMPOS_EDITABLES_CRONOGRAMA = [
   'prospecto_id', 'inicio', 'fin', 'duracion_horas', 'descripcion',
   'responsable_id', 'reunion_cliente', 'link_reunion', 'comentarios_reunion',
-  'multiplicador', 'notas_multiplicador', 'herramientas', 'participantes_ids'
+  'multiplicador', 'notas_multiplicador', 'herramientas', 'participantes_ids',
+  // ID del evento en Google Calendar (lo setea el flujo de "reunión con cliente").
+  'google_calendar_id'
 ]
 
 function limpiarPayloadCronograma(actividad) {

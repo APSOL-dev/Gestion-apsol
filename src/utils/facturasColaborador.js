@@ -4,6 +4,50 @@ import { fechaLocalISO, restarDiasHabiles } from './fecha'
 // subir su factura.
 export const DIAS_HABILES_VENTANA = 2
 
+const soloFecha = (v) => String(v || '').split('T')[0]
+
+/**
+ * ¿Esta factura del colaborador todavía está pendiente de pago? Lo está
+ * mientras no tenga `fecha_pago` registrada. Se usa para mostrar la acción
+ * rápida "Registrar pago" en la fila.
+ * @param {{fecha_pago?: string|null}} factura
+ * @returns {boolean}
+ */
+export function facturaPendientePago(factura) {
+  return !soloFecha(factura?.fecha_pago)
+}
+
+/**
+ * Arma el formulario para la acción "Registrar pago" de una factura:
+ * propone HOY como fecha de pago (editable) cuando la factura no tiene una,
+ * y normaliza las fechas a 'YYYY-MM-DD'. Si la factura ya trae `fecha_pago`
+ * (reapertura), se respeta.
+ * @param {object} factura
+ * @param {string} [hoyISO]  Fecha local de hoy, 'YYYY-MM-DD'
+ * @returns {object}
+ */
+export function prepararPagoFactura(factura = {}, hoyISO = fechaLocalISO()) {
+  return {
+    ...factura,
+    fecha_factura: soloFecha(factura.fecha_factura) || hoyISO,
+    fecha_pago: soloFecha(factura.fecha_pago) || hoyISO,
+  }
+}
+
+/**
+ * ¿Este guardado de factura es el que registró el pago? Es decir: antes
+ * estaba pendiente (sin `fecha_pago`) y ahora ya tiene una. Se usa para
+ * disparar el aviso al colaborador una sola vez, sin volver a mandarlo
+ * si después se edita cualquier otro dato de una factura ya pagada.
+ * @param {{fecha_pago?: string|null}|undefined} antes  Estado previo (o undefined si es un alta)
+ * @param {{fecha_pago?: string|null}} despues  Estado ya guardado
+ * @returns {boolean}
+ */
+export function debeNotificarPagoColaborador(antes, despues) {
+  if (!antes) return false
+  return facturaPendientePago(antes) && !facturaPendientePago(despues)
+}
+
 /**
  * ¿El colaborador puede subir su factura ahora?
  *

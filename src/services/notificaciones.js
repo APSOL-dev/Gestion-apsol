@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase'
 
 const WEBHOOK_FACTURACION_URL = 'https://bots.apsol-consultora.com.ar/webhook/facturacion'
+const WEBHOOK_COLABORADOR_URL = 'https://bots.apsol-consultora.com.ar/webhook/Colaborador'
 
 /**
  * Notifica al webhook único de n8n que centraliza los avisos de
@@ -17,6 +18,32 @@ export async function notificarFacturacion(evento, factura) {
   })
   if (!res.ok) {
     throw new Error(`Error al notificar al webhook de facturación (status ${res.status})`)
+  }
+}
+
+/**
+ * Notifica al webhook de n8n dedicado a los pagos que SALEN a
+ * colaboradores. Dos eventos:
+ *  - 'colaborador_subio_factura': el colaborador adjuntó su factura del
+ *    período -> n8n avisa por email al admin para que registre el pago.
+ *  - 'pago_colaborador_registrado': el admin cargó el comprobante y la
+ *    fecha de pago -> n8n avisa por email al colaborador.
+ *
+ * Endpoint aparte del de facturación a clientes (otro workflow, otra
+ * plantilla, otro destinatario). Se manda `colaborador` + `factura`
+ * completos para que n8n no tenga que volver a consultar la base.
+ *
+ * @param {'colaborador_subio_factura'|'pago_colaborador_registrado'} evento
+ * @param {{colaborador: object, factura: object}} datos
+ */
+export async function notificarFacturaColaborador(evento, { colaborador, factura }) {
+  const res = await fetch(WEBHOOK_COLABORADOR_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ evento, colaborador, factura }),
+  })
+  if (!res.ok) {
+    throw new Error(`Error al notificar al webhook de colaboradores (status ${res.status})`)
   }
 }
 

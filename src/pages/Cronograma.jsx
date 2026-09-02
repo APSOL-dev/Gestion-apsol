@@ -11,13 +11,23 @@ import {
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
+import Select from 'react-select'
+import CreatableSelect from 'react-select/creatable'
 import {
   saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde,
   resolverProspectoParaGuardar, resolverActividades,
-  getActividadesEnRango, getHorasDedicadasPorProspecto, getUltimasReunionesPorProspecto
+  getActividadesEnRango, getHorasDedicadasPorProspecto, getUltimasReunionesPorProspecto,
+  rangoCronogramaPorDefecto, CATEGORIAS_CRONOGRAMA,
+  calcularHastaConDuracion, descripcionCumpleMinimo, DESCRIPCION_MIN_CARACTERES, DURACIONES_RAPIDAS,
+  construirEventoReunion, fusionarEventosCalendar, colorDeProspecto,
+  HERRAMIENTAS_CRONOGRAMA, normalizarMultiplicador
 } from '../services/cronograma'
 import { getColaboradoresLista } from '../services/colaboradores'
-import { esActividadOcupada, normalizarResponsableEInvitados } from '../utils/cronogramaVisibilidad'
+import { getContactosPorEmpresa } from '../services/contactos'
+import { sincronizarEventoReunion, listarEventosCalendar } from '../services/calendario'
+import {
+  esActividadOcupada, normalizarResponsableEInvitados, colaboradorPuedeEditarActividad
+} from '../utils/cronogramaVisibilidad'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
 
 moment.locale('es')
@@ -81,7 +91,17 @@ const FORM_VACÍO = {
   reunion_cliente: false,
   link_reunion: '',
   comentarios_reunion: '',
-  participantes_ids: []
+  participantes_ids: [],
+  // Herramientas usadas en la actividad (selección múltiple).
+  herramientas: [],
+  // Multiplicador de horas para el saldo (solo lo edita el administrador).
+  // Por defecto 1 = sin ajuste.
+  multiplicador: 1,
+  notas_multiplicador: '',
+  // Emails de contactos del cliente a invitar a la reunión (Google Calendar).
+  invitados_externos: [],
+  // ID del evento ya creado en Google Calendar (para actualizar/borrar).
+  google_calendar_id: null
 }
 
 export default function Cronograma() {
@@ -100,9 +120,11 @@ export default function Cronograma() {
   const [view, setView] = useState(Views.WEEK)
   const [date, setDate] = useState(new Date())
 
-  // FIX Bug #1: Estados para los filtros de fecha
-  const [fechaDesde, setFechaDesde] = useState(moment().startOf('month').format('YYYY-MM-DD'))
-  const [fechaHasta, setFechaHasta] = useState(moment().endOf('month').format('YYYY-MM-DD'))
+  // FIX Bug #1: Estados para los filtros de fecha.
+  // El estándar es una ventana MÓVIL de los últimos 3 meses (de hoy hacia
+  // atrás), no el mes calendario en curso — ver rangoCronogramaPorDefecto.
+  const [fechaDesde, setFechaDesde] = useState(() => rangoCronogramaPorDefecto().desde)
+  const [fechaHasta, setFechaHasta] = useState(() => rangoCronogramaPorDefecto().hasta)
 
   // El Cronograma maneja su propio estado de actividades (no el global de
   // DataContext): antes se precargaban TODAS las filas de la tabla (4400+
@@ -116,6 +138,13 @@ export default function Cronograma() {
   const [actividadesRango, setActividadesRango] = useState([])
   const [horasDedicadasPorProspecto, setHorasDedicadasPorProspecto] = useState(new Map())
   const [reunionesPorProspecto, setReunionesPorProspecto] = useState(new Map())
+  // Eventos leídos del Google Calendar de APSOL (Calendly, agendados a mano
+  // desde cualquier lado, etc.) — se muestran como bloques de solo lectura.
+  const [eventosCalendar, setEventosCalendar] = useState([])
+  // Toggle (solo administrador) para mostrar/ocultar en el calendario los
+  // agendamientos que vienen de afuera (Google Calendar de APSOL: Calendly,
+  // eventos cargados a mano desde otro dispositivo, etc.).
+  const [verAgendaExterna, setVerAgendaExterna] = useState(true)
 
   const [selectedColab, setSelectedColab] = useState([])
   const [selectedProspectos, setSelectedProspectos] = useState([])
@@ -137,6 +166,40 @@ export default function Cronograma() {
   const [showModal, setShowModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [formData, setFormData] = useState(FORM_VACÍO)
+  // Un Colaborador que abre un evento pasado hace más de 2 días hábiles lo
+  // ve en SOLO LECTURA (no puede editar ni borrar). Un admin nunca.
+  const [soloLectura, setSoloLectura] = useState(false)
+  // Contactos de la empresa del prospecto elegido, para invitar a la reunión.
+  const [contactosEmpresa, setContactosEmpresa] = useState([])
+
+  // Invitados posibles: solo usuarios REALES del sistema que estén activos
+  // (tienen cuenta de login = usuario_id), nunca el propio responsable.
+  const opcionesInvitados = useMemo(
+    () => colaboradores
+      .filter(c => c.usuario_id && c.activo && c.id !== formData.responsable_id)
+      .map(c => ({ value: c.id, label: `${c.nombre} ${c.apellido || ''}`.trim() })),
+    [colaboradores, formData.responsable_id]
+  )
+
+  // Opciones del selector de responsable (cualquier colaborador; un
+  // colaborador no lo elige, siempre es él mismo — ver más abajo).
+  const opcionesResponsable = useMemo(
+    () => colaboradores.map(c => ({ value: c.id, label: `${c.nombre} ${c.apellido || ''}`.trim() })),
+    [colaboradores]
+  )
+
+  const opcionesHerramientas = useMemo(
+    () => HERRAMIENTAS_CRONOGRAMA.map(h => ({ value: h, label: h })),
+    []
+  )
+
+  // Estilos compartidos por los 3 react-select del modal (portal por
+  // encima del overlay del modal).
+  const rsProps = {
+    classNamePrefix: 'rs',
+    menuPortalTarget: typeof document !== 'undefined' ? document.body : undefined,
+    styles: { menuPortal: base => ({ ...base, zIndex: 10000 }) }
+  }
 
   // FIX Bug #10: Sistema de notificaciones (reemplaza alert)
   const [toast, setToast] = useState(null)
@@ -208,9 +271,9 @@ export default function Cronograma() {
   // para no bloquear la UI durante la reconciliación en segundo plano tras
   // guardar/borrar/mover una actividad.
   async function cargarCronograma() {
+    const desde = moment(fechaDesde).startOf('day').toISOString()
+    const hasta = moment(fechaHasta).endOf('day').toISOString()
     try {
-      const desde = moment(fechaDesde).startOf('day').toISOString()
-      const hasta = moment(fechaHasta).endOf('day').toISOString()
       const [rango, horasDedicadas, reuniones] = await Promise.all([
         getActividadesEnRango(desde, hasta),
         getHorasDedicadasPorProspecto(),
@@ -222,12 +285,44 @@ export default function Cronograma() {
     } catch (err) {
       console.error('Error al cargar el cronograma:', err)
     }
+    // Eventos del Google Calendar de APSOL en el mismo rango — best-effort:
+    // si la función/Calendar no responde, el cronograma se ve igual.
+    // Solo el administrador ve la agenda externa; para un colaborador ni
+    // siquiera se pide.
+    if (esColaborador) {
+      setEventosCalendar([])
+    } else {
+      try {
+        setEventosCalendar(await listarEventosCalendar(desde, hasta))
+      } catch (err) {
+        console.error('Error al leer el Google Calendar:', err)
+      }
+    }
   }
 
   useEffect(() => {
     cargarCronograma()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fechaDesde, fechaHasta])
+
+  // Prospecto elegido en el modal (por nombre) y su empresa, para traer los
+  // contactos que se pueden invitar a la reunión.
+  const prospectoSeleccionado = prospectos.find(p => p.nombre === formData.prospecto_nombre) || null
+  const empresaIdReunion = prospectoSeleccionado?.empresa_id || null
+
+  // Trae los contactos de la empresa del prospecto solo cuando el modal está
+  // en modo "reunión con cliente" y hay empresa; si no, limpia la lista.
+  useEffect(() => {
+    if (!showModal || !formData.reunion_cliente || !empresaIdReunion) {
+      setContactosEmpresa([])
+      return
+    }
+    let vigente = true
+    getContactosPorEmpresa(empresaIdReunion)
+      .then(cs => { if (vigente) setContactosEmpresa(cs || []) })
+      .catch(err => console.error('Error al cargar contactos de la empresa:', err))
+    return () => { vigente = false }
+  }, [showModal, formData.reunion_cliente, empresaIdReunion])
 
   function mostrarToast(mensaje, tipo = 'error') {
     setToast({ mensaje, tipo })
@@ -236,6 +331,25 @@ export default function Cronograma() {
 
   // Filtrar prospectos en producción
   const prospectosProduccion = prospectos.filter(p => p.estado === '6A - En producción')
+
+  // Opciones del selector "Prospecto / Cliente": prospectos EN PRODUCCIÓN +
+  // categorías internas fijas, deduplicadas (por si un prospecto se llama
+  // igual que una categoría).
+  const opcionesProspecto = [...new Set([
+    ...prospectosProduccion.map(p => p.nombre),
+    ...CATEGORIAS_CRONOGRAMA
+  ])].map(nombre => ({ value: nombre, label: nombre }))
+
+  // Opciones de invitados externos = contactos con email de esa empresa.
+  const opcionesContactosCliente = useMemo(
+    () => (contactosEmpresa || [])
+      .filter(c => c.email)
+      .map(c => ({
+        value: c.email.trim().toLowerCase(),
+        label: `${`${c.nombre || ''} ${c.apellido || ''}`.trim() || c.email} — ${c.email}`
+      })),
+    [contactosEmpresa]
+  )
 
   // `cronograma.prospecto_id` es la columna real (FK); acá se resuelve a un
   // `prospecto_nombre` de solo lectura para el resto del componente (título
@@ -283,24 +397,15 @@ export default function Cronograma() {
       })
   }, [prospectosProduccion, horasDedicadasPorProspecto, reunionesPorProspecto, ordenColumna, ordenAsc])
 
-  const getColor = (name) => {
-    const colors = {
-      'Consultora': '#ef4444',
-      'Mantenimiento': '#f59e0b',
-      'Conexion Market': '#06b6d4',
-      'Escobar': '#ec4899',
-      'Norte 2025': '#3b82f6',
-      'DG 2026': '#8b5cf6',
-      'Dia Libre': '#22c55e',
-      'Open Pack': '#f43f5e'
-    }
-    return colors[name] || '#6366f1'
-  }
+  // Color por prospecto: estable y distinto para cada nombre, así se nota
+  // el corte entre un bloque y el siguiente en el calendario (ver
+  // colorDeProspecto en services/cronograma).
+  const getColor = colorDeProspecto
 
   // FIX Bug #2 + #3: Los filtros de personal/prospecto conectados a los
   // eventos del calendario. El rango de fechas ya lo acota el servidor
   // (actividadesRango), no hace falta re-filtrarlo acá.
-  const events = actividadesRangoResueltas
+  const eventsApp = actividadesRangoResueltas
     .filter(act => {
       if (selectedColab.length > 0) {
         if (!act.responsable_id) return false
@@ -329,15 +434,47 @@ export default function Cronograma() {
       }
     })
 
-  const eventPropGetter = (event) => ({
-    className: `rbc-event-premium${event.ocupado ? ' rbc-event-ocupado' : ''}`,
-    style: event.ocupado
-      ? { backgroundColor: '#94a3b8', borderLeft: '4px solid rgba(0,0,0,0.2)', opacity: 0.85, cursor: 'default' }
-      : {
-          backgroundColor: getColor(event.resource.prospecto_nombre),
-          borderLeft: `4px solid rgba(0,0,0,0.2)`
+  // Eventos del Google Calendar (Calendly, agendados a mano) — solo lectura.
+  // Solo el administrador los ve, y solo con el toggle "Agenda externa"
+  // activo. No tienen prospecto: se ocultan también si hay filtro de
+  // prospectos aplicado.
+  const mostrarAgendaExterna = !esColaborador && verAgendaExterna
+  const eventosDeCalendar = (mostrarAgendaExterna
+    ? fusionarEventosCalendar(eventosCalendar, actividadesRangoResueltas)
+    : [])
+    .filter(() => selectedProspectos.length === 0)
+    .map(ev => ({
+      id: ev.id,
+      title: `📅 ${ev.prospecto_nombre}`,
+      start: new Date(ev.inicio),
+      end: new Date(ev.fin),
+      resource: ev,
+      origenCalendar: true
+    }))
+
+  const events = [...eventsApp, ...eventosDeCalendar]
+
+  const eventPropGetter = (event) => {
+    if (event.origenCalendar) {
+      return {
+        className: 'rbc-event-premium rbc-event-gcal',
+        style: {
+          backgroundColor: '#475569',
+          borderLeft: '4px solid #1e293b',
+          opacity: 0.92,
         }
-  })
+      }
+    }
+    return {
+      className: `rbc-event-premium${event.ocupado ? ' rbc-event-ocupado' : ''}`,
+      style: event.ocupado
+        ? { backgroundColor: '#94a3b8', borderLeft: '4px solid rgba(0,0,0,0.2)', opacity: 0.85, cursor: 'default' }
+        : {
+            backgroundColor: getColor(event.resource.prospecto_nombre),
+            borderLeft: `4px solid rgba(0,0,0,0.2)`
+          }
+    }
+  }
 
   // FIX Bug #5: Navegación respeta la vista activa
   const unidadNavegacion = view === Views.DAY ? 'day' : view === Views.MONTH ? 'month' : 'week'
@@ -363,11 +500,24 @@ export default function Cronograma() {
       responsable_id: esColaborador && miColaborador ? miColaborador.id : ''
     })
     setSelectedEvent(null)
+    setSoloLectura(false)
+    setShowModal(true)
+  }
+
+  function abrirModalNuevo() {
+    setFormData(FORM_VACÍO)
+    setSelectedEvent(null)
+    setSoloLectura(false)
     setShowModal(true)
   }
 
   const handleSelectEvent = (event) => {
     const act = event.resource
+    // Evento traído del Google Calendar: solo lectura, se abre en Google.
+    if (event.origenCalendar) {
+      if (act?.htmlLink) window.open(act.htmlLink, '_blank', 'noopener')
+      return
+    }
     // Un bloque "Ocupado" (reunión de un admin sin permiso de ver detalle) no
     // se abre: no hay nada que mostrar ni editar.
     if (esActividadOcupada(act)) {
@@ -384,8 +534,20 @@ export default function Cronograma() {
       reunion_cliente: act.reunion_cliente || false,
       link_reunion: act.link_reunion || '',
       comentarios_reunion: act.comentarios_reunion || '',
-      participantes_ids: Array.isArray(act.participantes_ids) ? act.participantes_ids : []
+      participantes_ids: Array.isArray(act.participantes_ids) ? act.participantes_ids : [],
+      herramientas: Array.isArray(act.herramientas) ? act.herramientas : [],
+      multiplicador: act.multiplicador ?? 1,
+      notas_multiplicador: act.notas_multiplicador || '',
+      invitados_externos: Array.isArray(act.invitados_externos) ? act.invitados_externos : [],
+      google_calendar_id: act.google_calendar_id || null
     })
+    // Un Colaborador no puede tocar un evento que terminó hace más de 2 días
+    // hábiles: se abre igual pero en solo lectura.
+    const bloqueado = esColaborador && !colaboradorPuedeEditarActividad(act.fin)
+    if (bloqueado) {
+      mostrarToast('Ese evento terminó hace más de 2 días hábiles. Solo un admin puede editarlo.', 'info')
+    }
+    setSoloLectura(bloqueado)
     setSelectedEvent(event)
     setShowModal(true)
   }
@@ -439,8 +601,17 @@ export default function Cronograma() {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    if (soloLectura) return
+    if (!(formData.prospecto_nombre || '').trim()) {
+      mostrarToast('Elegí un prospecto o una categoría.')
+      return
+    }
     if (moment(formData.fin).isBefore(moment(formData.inicio))) {
       mostrarToast('La fecha y hora de fin no puede ser anterior a la de inicio.')
+      return
+    }
+    if (!descripcionCumpleMinimo(formData.descripcion)) {
+      mostrarToast(`La descripción del trabajo necesita al menos ${DESCRIPCION_MIN_CARACTERES} caracteres.`)
       return
     }
 
@@ -452,13 +623,35 @@ export default function Cronograma() {
       { esColaborador, miColaboradorId: miColaborador?.id }
     )
     const payload = { ...resto, ...resuelto, responsable_id, participantes_ids }
+
+    // Herramientas: lista de strings (o null si no se marcó ninguna).
+    payload.herramientas = Array.isArray(payload.herramientas) && payload.herramientas.length
+      ? payload.herramientas
+      : null
+
+    // Multiplicador y sus notas son SOLO del administrador. Un colaborador
+    // que crea deja el default (1); si edita, no se tocan los que ya están.
+    if (esColaborador) {
+      if (payload.id) {
+        delete payload.multiplicador
+        delete payload.notas_multiplicador
+      } else {
+        payload.multiplicador = 1
+        payload.notas_multiplicador = null
+      }
+    } else {
+      payload.multiplicador = normalizarMultiplicador(payload.multiplicador)
+      payload.notas_multiplicador = (payload.notas_multiplicador || '').trim() || null
+    }
+
     const idOptimista = payload.id || `optimista-${Date.now()}`
 
     setShowModal(false)
     aplicarOptimista({ ...payload, id: idOptimista }, idOptimista)
 
     try {
-      await saveActividad(payload)
+      const guardada = await saveActividad(payload)
+      await sincronizarCalendario(payload, guardada)
     } catch (err) {
       // FIX Bug #10: Toast en lugar de alert()
       mostrarToast('No se pudo guardar la actividad. Intentá de nuevo.')
@@ -467,16 +660,54 @@ export default function Cronograma() {
     }
   }
 
+  // Crea / actualiza / borra el evento de Google Calendar de una "reunión con
+  // cliente". Es best-effort: si falla (o la Edge Function no está deployada
+  // todavía) avisa con un toast pero NO tira abajo el guardado de la actividad.
+  async function sincronizarCalendario(payload, guardada) {
+    const idFila = guardada?.id
+    const teniaEvento = !!payload.google_calendar_id
+    if (!payload.reunion_cliente && !teniaEvento) return
+    try {
+      if (!payload.reunion_cliente) {
+        await sincronizarEventoReunion('borrar', { googleCalendarId: payload.google_calendar_id })
+        if (idFila) await saveActividad({ id: idFila, google_calendar_id: null })
+        return
+      }
+      const evento = construirEventoReunion(payload, payload.invitados_externos || [])
+      const res = await sincronizarEventoReunion(
+        teniaEvento ? 'actualizar' : 'crear',
+        { googleCalendarId: payload.google_calendar_id, evento }
+      )
+      if (res?.id && res.id !== payload.google_calendar_id && idFila) {
+        await saveActividad({ id: idFila, google_calendar_id: res.id })
+      }
+      if (res?.attendeesOmitted) {
+        mostrarToast('El evento quedó en el calendario de APSOL, pero Google no dejó agregar a los invitados automáticamente. Los emails quedaron en la descripción del evento — compartiles el link vos.', 'info')
+      }
+    } catch (err) {
+      mostrarToast('La actividad se guardó, pero no se pudo sincronizar el evento en Google Calendar.', 'info')
+    }
+  }
+
   // FIX Bug #7: Nueva función para eliminar la actividad
   async function handleDelete() {
+    if (soloLectura) return
     if (!confirm('¿Seguro que querés eliminar esta actividad?')) return
     const idBorrado = formData.id
+    const eventoCalendar = formData.google_calendar_id
 
     setShowModal(false)
     quitarOptimista(idBorrado)
 
     try {
       await deleteActividad(idBorrado)
+      if (eventoCalendar) {
+        try {
+          await sincronizarEventoReunion('borrar', { googleCalendarId: eventoCalendar })
+        } catch (err) {
+          mostrarToast('Se borró la actividad, pero no el evento en Google Calendar.', 'info')
+        }
+      }
     } catch (err) {
       mostrarToast('No se pudo eliminar la actividad. Intentá de nuevo.')
     } finally {
@@ -485,7 +716,7 @@ export default function Cronograma() {
   }
 
   const moveEvent = async ({ event, start, end }) => {
-    if (event.ocupado) return
+    if (event.ocupado || event.origenCalendar) return
     const anterior = event.resource
     const resuelto = resolverProspectoParaGuardar(anterior.prospecto_nombre, anterior.descripcion, prospectos)
     const updatedAct = {
@@ -508,7 +739,7 @@ export default function Cronograma() {
   }
 
   const resizeEvent = async ({ event, start, end }) => {
-    if (event.ocupado) return
+    if (event.ocupado || event.origenCalendar) return
     const anterior = event.resource
     const resuelto = resolverProspectoParaGuardar(anterior.prospecto_nombre, anterior.descripcion, prospectos)
     const updatedAct = {
@@ -584,25 +815,42 @@ export default function Cronograma() {
             </div>
           </div>
 
-          <FiltroMultiSelect
-            icon={<Users size={14} />}
-            label="Personal"
-            options={colaboradores}
-            selectedIds={selectedColab}
-            onChange={setSelectedColab}
-            getLabel={c => `${c.nombre} ${c.apellido || ''}`.trim()}
-            emptyMessage="No hay colaboradores para asignar"
-          />
+          <div className="filtro-multi-group">
+            <FiltroMultiSelect
+              icon={<Users size={14} />}
+              label="Personal"
+              options={colaboradores}
+              selectedIds={selectedColab}
+              onChange={setSelectedColab}
+              getLabel={c => `${c.nombre} ${c.apellido || ''}`.trim()}
+              emptyMessage="No hay colaboradores para asignar"
+            />
 
-          {/* FIX Bug #2: El picker de prospectos existía pero no conectaba al filtro — ahora sí */}
-          <FiltroMultiSelect
-            icon={<Target size={14} />}
-            label="Prospectos"
-            options={prospectosProduccion}
-            selectedIds={selectedProspectos}
-            onChange={setSelectedProspectos}
-            emptyMessage="No hay prospectos en producción"
-          />
+            {/* FIX Bug #2: El picker de prospectos existía pero no conectaba al filtro — ahora sí */}
+            <FiltroMultiSelect
+              icon={<Target size={14} />}
+              label="Prospectos"
+              options={prospectosProduccion}
+              selectedIds={selectedProspectos}
+              onChange={setSelectedProspectos}
+              emptyMessage="No hay prospectos en producción"
+            />
+
+            {/* Solo administrador: mostrar/ocultar los agendamientos externos
+                (Google Calendar de APSOL: Calendly, cargados desde otro
+                dispositivo, etc.). */}
+            {!esColaborador && (
+              <button
+                type="button"
+                className={`filtro-trigger ${verAgendaExterna ? 'active' : ''}`}
+                onClick={() => setVerAgendaExterna(v => !v)}
+                title="Mostrar u ocultar los eventos que vienen del Google Calendar de APSOL"
+              >
+                {verAgendaExterna ? <CheckSquare size={14} /> : <Square size={14} />}
+                Agenda externa
+              </button>
+            )}
+          </div>
         </header>
 
         <div className="calendar-container giant">
@@ -638,7 +886,7 @@ export default function Cronograma() {
               {/* FIX Bug #6: Botón + limpia el formulario antes de abrir el modal */}
               <button
                 className="btn-add-event"
-                onClick={() => { setFormData(FORM_VACÍO); setSelectedEvent(null); setShowModal(true) }}
+                onClick={abrirModalNuevo}
                 title="Nueva Actividad"
               >
                 <Plus size={18} />
@@ -661,8 +909,8 @@ export default function Cronograma() {
               onSelectSlot={handleSelectSlot}
               onSelectEvent={handleSelectEvent}
               eventPropGetter={eventPropGetter}
-              draggableAccessor={(event) => !event.ocupado}
-              resizableAccessor={(event) => !event.ocupado}
+              draggableAccessor={(event) => !event.ocupado && !event.origenCalendar}
+              resizableAccessor={(event) => !event.ocupado && !event.origenCalendar}
               onEventDrop={moveEvent}
               onEventResize={resizeEvent}
               min={new Date(0, 0, 0, 5, 0, 0)}
@@ -714,7 +962,7 @@ export default function Cronograma() {
                 <div key={p.id} className="compliance-item">
                   <span className="p-name">{p.nombre}</span>
                   <span className={`p-saldo ${saldo != null && saldo < 0 ? 'negative' : ''}`}>
-                    {saldo != null ? `${saldo}h` : '—'}
+                    {saldo != null ? `${saldo.toFixed(2)}h` : '—'}
                   </span>
                   <span className="p-days" title={dias == null ? 'Sin reuniones registradas' : `Hace ${dias} día(s)`}>
                     {dias != null ? `${dias}d` : '—'}
@@ -740,26 +988,35 @@ export default function Cronograma() {
             <div className="modal-header">
               <div>
                 <h2>{selectedEvent ? 'Editar Actividad' : 'Nueva Actividad'}</h2>
-                <p className="modal-subtitle">Completá los datos para agendar en el cronograma</p>
+                <p className="modal-subtitle">
+                  {soloLectura
+                    ? 'Solo lectura — este evento terminó hace más de 2 días hábiles'
+                    : 'Completá los datos para agendar en el cronograma'}
+                </p>
               </div>
               <button className="btn-close" onClick={() => setShowModal(false)}><X size={20} /></button>
             </div>
             <form onSubmit={handleSubmit} className="modal-body">
+              <fieldset className="modal-fieldset" disabled={soloLectura}>
               <div className="form-group">
-                <label>Prospecto / Cliente</label>
-                <div className="input-with-icon">
-                  <Target size={16} />
-                  <input
-                    list="pros-list"
-                    value={formData.prospecto_nombre}
-                    onChange={e => setFormData({ ...formData, prospecto_nombre: e.target.value })}
-                    placeholder="Escribí para buscar..."
-                    required
-                  />
-                </div>
-                <datalist id="pros-list">
-                  {prospectosProduccion.map(p => <option key={p.id} value={p.nombre} />)}
-                </datalist>
+                <label htmlFor="sel-prospecto">Prospecto / Cliente</label>
+                {/* Mismo estilo que Responsable e Invitados. Es "creatable":
+                    además de los prospectos en producción y las categorías
+                    fijas, se puede tipear una categoría suelta. */}
+                <CreatableSelect
+                  {...rsProps}
+                  inputId="sel-prospecto"
+                  isClearable
+                  isDisabled={soloLectura}
+                  placeholder="Elegí o escribí un prospecto / categoría…"
+                  formatCreateLabel={v => `Usar "${v}"`}
+                  noOptionsMessage={() => 'Sin coincidencias'}
+                  options={opcionesProspecto}
+                  value={formData.prospecto_nombre
+                    ? { value: formData.prospecto_nombre, label: formData.prospecto_nombre }
+                    : null}
+                  onChange={sel => setFormData({ ...formData, prospecto_nombre: sel ? sel.value : '' })}
+                />
               </div>
               <div className="form-grid">
                 <div className="form-group">
@@ -771,6 +1028,20 @@ export default function Cronograma() {
                   <input id="modal-hasta" type="datetime-local" value={formData.fin} onChange={e => setFormData({ ...formData, fin: e.target.value })} />
                 </div>
               </div>
+              {/* Duración rápida: fija "Hasta" = "Desde" + N horas. */}
+              <div className="dur-chips" role="group" aria-label="Duración rápida">
+                <span className="dur-chips-label">Duración</span>
+                {DURACIONES_RAPIDAS.map(h => (
+                  <button
+                    key={h}
+                    type="button"
+                    className="dur-chip"
+                    onClick={() => setFormData({ ...formData, fin: calcularHastaConDuracion(formData.inicio, h) })}
+                  >
+                    {h}h
+                  </button>
+                ))}
+              </div>
               <div className="form-group">
                 <label>Descripción del Trabajo</label>
                 <textarea
@@ -779,70 +1050,104 @@ export default function Cronograma() {
                   rows="3"
                   placeholder="¿Qué se va a realizar?"
                 />
-              </div>
-              <div className="form-group">
-                <label>Responsable Asignado</label>
-                <div className="input-with-icon">
-                  <Users size={16} />
-                  {esColaborador ? (
-                    <input
-                      type="text"
-                      readOnly
-                      value={`${miColaborador?.nombre || ''} ${miColaborador?.apellido || ''}`.trim() || 'Vos'}
-                      title="Un colaborador solo puede agendarse a sí mismo"
-                    />
-                  ) : (
-                    <select value={formData.responsable_id} onChange={e => setFormData({ ...formData, responsable_id: e.target.value })} required>
-                      <option value="">Seleccionar responsable...</option>
-                      {colaboradores.map(c => (
-                        <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
-                      ))}
-                    </select>
-                  )}
+                <div className={`desc-counter ${descripcionCumpleMinimo(formData.descripcion) ? '' : 'short'}`}>
+                  {formData.descripcion.trim().length} / {DESCRIPCION_MIN_CARACTERES} caracteres · mínimo {DESCRIPCION_MIN_CARACTERES}
                 </div>
               </div>
 
-              {/* Invitados: un colaborador puede sumar como mucho a 1; un admin, varios */}
+              {/* Herramienta(s) utilizada(s): selección múltiple, mismo estilo
+                  que el resto de los selects del modal. */}
               <div className="form-group">
-                <label>{esColaborador ? 'Invitado (opcional)' : 'Invitados (opcional)'}</label>
+                <label htmlFor="sel-herramientas">Herramienta(s) utilizada(s)</label>
+                <Select
+                  {...rsProps}
+                  inputId="sel-herramientas"
+                  isMulti
+                  isClearable
+                  isDisabled={soloLectura}
+                  placeholder="Elegí una o más herramientas…"
+                  noOptionsMessage={() => 'Sin más herramientas'}
+                  options={opcionesHerramientas}
+                  value={opcionesHerramientas.filter(o => (formData.herramientas || []).includes(o.value))}
+                  onChange={sel => {
+                    const arr = Array.isArray(sel) ? sel : (sel ? [sel] : [])
+                    setFormData({ ...formData, herramientas: arr.map(o => o.value) })
+                  }}
+                />
+              </div>
+
+              {/* Multiplicador de horas para el saldo — SOLO administrador.
+                  Por defecto 1. Un colaborador ni lo ve. */}
+              {!esColaborador && (
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label htmlFor="modal-multiplicador">Multiplicador</label>
+                    <input
+                      id="modal-multiplicador"
+                      type="number"
+                      step="0.05"
+                      value={formData.multiplicador}
+                      onChange={e => setFormData({ ...formData, multiplicador: e.target.value })}
+                      onBlur={e => setFormData({ ...formData, multiplicador: normalizarMultiplicador(e.target.value) })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="modal-notas-multiplicador">Notas del multiplicador (opcional)</label>
+                    <input
+                      id="modal-notas-multiplicador"
+                      type="text"
+                      value={formData.notas_multiplicador}
+                      onChange={e => setFormData({ ...formData, notas_multiplicador: e.target.value })}
+                      placeholder="Por qué este multiplicador…"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label htmlFor="sel-responsable">Responsable Asignado</label>
                 {esColaborador ? (
-                  <div className="input-with-icon">
-                    <Users size={16} />
-                    <select
-                      value={formData.participantes_ids[0] || ''}
-                      onChange={e => setFormData({ ...formData, participantes_ids: e.target.value ? [e.target.value] : [] })}
-                    >
-                      <option value="">(sin invitado)</option>
-                      {colaboradores.filter(c => c.id !== formData.responsable_id).map(c => (
-                        <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
-                      ))}
-                    </select>
-                  </div>
+                  <input
+                    type="text"
+                    className="rs-readonly-input"
+                    readOnly
+                    value={`${miColaborador?.nombre || ''} ${miColaborador?.apellido || ''}`.trim() || 'Vos'}
+                    title="Un colaborador solo puede agendarse a sí mismo"
+                  />
                 ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '120px', overflowY: 'auto' }}>
-                    {colaboradores.filter(c => c.id !== formData.responsable_id).map(c => {
-                      const marcado = formData.participantes_ids.includes(c.id)
-                      return (
-                        <label
-                          key={c.id}
-                          style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '4px 8px', background: marcado ? 'var(--color-surface2)' : 'transparent' }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={marcado}
-                            onChange={() => setFormData({
-                              ...formData,
-                              participantes_ids: marcado
-                                ? formData.participantes_ids.filter(id => id !== c.id)
-                                : [...formData.participantes_ids, c.id]
-                            })}
-                          />
-                          {c.nombre} {c.apellido}
-                        </label>
-                      )
-                    })}
-                  </div>
+                  <Select
+                    {...rsProps}
+                    inputId="sel-responsable"
+                    isDisabled={soloLectura}
+                    placeholder="Seleccionar responsable…"
+                    noOptionsMessage={() => 'Sin colaboradores'}
+                    options={opcionesResponsable}
+                    value={opcionesResponsable.find(o => o.value === formData.responsable_id) || null}
+                    onChange={sel => setFormData({ ...formData, responsable_id: sel ? sel.value : '' })}
+                  />
                 )}
+              </div>
+
+              {/* Invitados: desplegable de búsqueda con SOLO usuarios activos del
+                  sistema. Un colaborador puede invitar a 1 (isMulti off); un
+                  admin, a varios. */}
+              <div className="form-group">
+                <label htmlFor="sel-invitados">{esColaborador ? 'Invitado (opcional)' : 'Invitados (opcional)'}</label>
+                <Select
+                  {...rsProps}
+                  inputId="sel-invitados"
+                  isMulti={!esColaborador}
+                  isClearable
+                  isDisabled={soloLectura}
+                  placeholder={esColaborador ? 'Elegí un invitado…' : 'Elegí uno o más invitados…'}
+                  noOptionsMessage={() => 'No hay usuarios activos para invitar'}
+                  options={opcionesInvitados}
+                  value={opcionesInvitados.filter(o => formData.participantes_ids.includes(o.value))}
+                  onChange={sel => {
+                    const arr = Array.isArray(sel) ? sel : (sel ? [sel] : [])
+                    setFormData({ ...formData, participantes_ids: arr.map(o => o.value) })
+                  }}
+                />
               </div>
 
               {/* FIX Bug #8: Campos de reunión que existían en formData pero nunca se mostraban */}
@@ -861,6 +1166,28 @@ export default function Cronograma() {
 
               {formData.reunion_cliente && (
                 <>
+                  <div className="form-group">
+                    <label htmlFor="sel-contactos-cliente">Invitados del cliente (para la reunión)</label>
+                    <Select
+                      {...rsProps}
+                      inputId="sel-contactos-cliente"
+                      isMulti
+                      isClearable
+                      isDisabled={soloLectura || !empresaIdReunion}
+                      placeholder={
+                        !formData.prospecto_nombre ? 'Elegí primero el prospecto…'
+                          : !empresaIdReunion ? 'El prospecto no tiene empresa asociada'
+                          : 'Elegí contactos del cliente…'
+                      }
+                      noOptionsMessage={() => 'Esa empresa no tiene contactos con email'}
+                      options={opcionesContactosCliente}
+                      value={opcionesContactosCliente.filter(o => formData.invitados_externos.includes(o.value))}
+                      onChange={sel => {
+                        const arr = Array.isArray(sel) ? sel : (sel ? [sel] : [])
+                        setFormData({ ...formData, invitados_externos: arr.map(o => o.value) })
+                      }}
+                    />
+                  </div>
                   <div className="form-group">
                     <label>Link de la Reunión</label>
                     <div className="input-with-icon">
@@ -885,24 +1212,21 @@ export default function Cronograma() {
                 </>
               )}
 
+              </fieldset>
+
               <div className="modal-footer">
-                {/* FIX Bug #7: Botón Eliminar en modal de edición */}
-                {selectedEvent && (
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    style={{
-                      color: '#ef4444', border: '1px solid #ef4444', background: 'transparent',
-                      borderRadius: '6px', padding: '8px 14px', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px',
-                      marginRight: 'auto'
-                    }}
-                  >
+                {/* Botón Eliminar solo en edición y si NO es solo lectura */}
+                {selectedEvent && !soloLectura && (
+                  <button type="button" className="btn-danger-ghost" onClick={handleDelete}>
                     <Trash2 size={15} /> Eliminar
                   </button>
                 )}
-                <button type="button" className="btn-sec" onClick={() => setShowModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-pri">Confirmar y Agendar</button>
+                <button type="button" className="btn-sec" onClick={() => setShowModal(false)}>
+                  {soloLectura ? 'Cerrar' : 'Cancelar'}
+                </button>
+                {!soloLectura && (
+                  <button type="submit" className="btn-pri">Confirmar</button>
+                )}
               </div>
             </form>
           </div>

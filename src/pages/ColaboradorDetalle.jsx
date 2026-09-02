@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Save, Trash2, FileSignature, Receipt, Plus, X, Target,
-  Briefcase, Wallet, CalendarClock, FolderKanban, Mail, FileText, ChevronRight
+  Briefcase, Wallet, CalendarClock, FolderKanban, Mail, FileText, ChevronRight,
+  CircleDollarSign
 } from 'lucide-react'
 import {
   getColaboradorById, saveColaborador, deleteColaborador,
@@ -12,6 +13,8 @@ import {
 } from '../services/colaboradores'
 import { useData } from '../context/DataContext'
 import { finDeContrato, calcularDiasDescanso, tasaDiasLibres, contratoVigente } from '../utils/colaboradores'
+import { facturaPendientePago, prepararPagoFactura, debeNotificarPagoColaborador } from '../utils/facturasColaborador'
+import { notificarFacturaColaborador } from '../services/notificaciones'
 
 const HOY_ISO = new Date().toISOString().split('T')[0]
 
@@ -51,7 +54,7 @@ export default function ColaboradorDetalle() {
   const { prospectos = [], proyectos = [] } = useData()
 
   const [colaborador, setColaborador] = useState({
-    nombre: '', apellido: '', email: '', puesto: 'Colaborador',
+    nombre: '', apellido: '', email: '', email_personal: '', puesto: 'Colaborador',
     activo: true, fecha_inicio: '', frecuencia_pago: 30,
     proxima_fecha_pago: '', renovacion_contrato: '',
     prospectos_asignados: [], dias_libres_tomados: 0,
@@ -67,6 +70,7 @@ export default function ColaboradorDetalle() {
 
   const [modalContrato, setModalContrato] = useState(false)
   const [modalFactura, setModalFactura] = useState(false)
+  const [modalPago, setModalPago] = useState(false)
   const [modalProspectos, setModalProspectos] = useState(false)
   const [nuevoContrato, setNuevoContrato] = useState(CONTRATO_VACIO)
   const [nuevaFactura, setNuevaFactura] = useState(FACTURA_VACIA)
@@ -83,6 +87,7 @@ export default function ColaboradorDetalle() {
         nombre: data.nombre || '',
         apellido: data.apellido || '',
         email: data.email || '',
+        email_personal: data.email_personal || '',
         puesto: data.puesto || 'Colaborador',
         activo: data.estado !== 'Inactivo',
         fecha_inicio: primerInicio(cts) || soloFecha(data.fecha_inicio),
@@ -197,11 +202,32 @@ export default function ColaboradorDetalle() {
         monto: Number(nuevaFactura.monto),
         fecha_pago: nuevaFactura.fecha_pago || null,
       }
+      const facturaPrevia = facturas.find(f => f.id === nuevaFactura.id)
       const saved = await saveFacturaColaborador(dataToSave)
       setFacturas(nuevaFactura.id
         ? facturas.map(f => (f.id === saved.id ? saved : f))
         : [...facturas, saved])
+      // Si este guardado es el que registró el pago, avisar al colaborador
+      // por email (vía n8n). Un fallo del webhook no debe tirar abajo el
+      // guardado, que ya está hecho.
+      if (debeNotificarPagoColaborador(facturaPrevia, saved)) {
+        try {
+          await notificarFacturaColaborador('pago_colaborador_registrado', {
+            colaborador: {
+              id,
+              nombre: colaborador.nombre,
+              apellido: colaborador.apellido,
+              email: colaborador.email,
+              email_personal: colaborador.email_personal,
+            },
+            factura: saved,
+          })
+        } catch (notifError) {
+          console.error('Error al notificar pago_colaborador_registrado al webhook:', notifError)
+        }
+      }
       setModalFactura(false)
+      setModalPago(false)
       setNuevaFactura(FACTURA_VACIA)
     } catch (err) {
       console.error(err)
@@ -215,6 +241,10 @@ export default function ColaboradorDetalle() {
       fecha_pago: soloFecha(f.fecha_pago),
     })
     setModalFactura(true)
+  }
+  function openPagarFactura(f) {
+    setNuevaFactura(prepararPagoFactura(f))
+    setModalPago(true)
   }
   async function handleDeleteFactura(factId) {
     if (!window.confirm('¿Eliminar esta factura?')) return
@@ -341,13 +371,19 @@ export default function ColaboradorDetalle() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Fecha factura</th><th>Monto</th><th>Fecha de Pago</th><th>Adjuntos</th><th style={{ width: 40 }}></th>
+                      <th>Fecha factura</th><th>Monto</th><th>Fecha de Pago</th><th>Adjuntos</th><th style={{ width: 76 }}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {facturasOrdenadas.map(f => (
-                      <tr key={f.id} onClick={() => openEditFactura(f)} style={{ cursor: 'pointer' }}>
-                        <td>{fmt(f.fecha_factura)}</td>
+                    {facturasOrdenadas.map(f => {
+                      const pendiente = facturaPendientePago(f)
+                      return (
+                      <tr key={f.id} onClick={() => openEditFactura(f)} style={{
+                        cursor: 'pointer',
+                        background: pendiente ? 'var(--color-warning-light)' : undefined,
+                        boxShadow: pendiente ? 'inset 3px 0 0 var(--color-warning)' : undefined,
+                      }}>
+                        <td style={{ fontWeight: pendiente ? 600 : undefined }}>{fmt(f.fecha_factura)}</td>
                         <td style={{ fontWeight: 500 }}>{fmtMonto(f.monto)}</td>
                         <td>{fmt(f.fecha_pago)}</td>
                         <td>
@@ -357,13 +393,23 @@ export default function ColaboradorDetalle() {
                           </span>
                         </td>
                         <td>
-                          <button type="button" className="btn btn-secondary" style={{ padding: 4, color: 'var(--color-danger)', border: 'none', background: 'transparent' }}
-                            onClick={e => { e.stopPropagation(); handleDeleteFactura(f.id) }}>
-                            <Trash2 size={15} />
-                          </button>
+                          <span style={{ display: 'flex', gap: 2 }}>
+                            {pendiente && (
+                              <button type="button" title="Registrar pago" className="btn btn-secondary"
+                                style={{ padding: 4, color: 'var(--color-success)', border: 'none', background: 'transparent' }}
+                                onClick={e => { e.stopPropagation(); openPagarFactura(f) }}>
+                                <CircleDollarSign size={15} />
+                              </button>
+                            )}
+                            <button type="button" title="Eliminar" className="btn btn-secondary" style={{ padding: 4, color: 'var(--color-danger)', border: 'none', background: 'transparent' }}
+                              onClick={e => { e.stopPropagation(); handleDeleteFactura(f.id) }}>
+                              <Trash2 size={15} />
+                            </button>
+                          </span>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -594,6 +640,20 @@ export default function ColaboradorDetalle() {
               <small style={{ color: 'var(--color-text-muted)' }}>Colaborador sin usuario vinculado.</small>
             )}
           </div>
+          {colaborador.usuario_id && (
+            <div className="field" style={{ margin: '16px 0 0' }}>
+              <label className="label-with-icon"><Mail size={14} /> email personal (avisos de pago)</label>
+              <input
+                type="email"
+                value={colaborador.email_personal}
+                placeholder="donde recibe los avisos de pago"
+                onChange={e => setColaborador({ ...colaborador, email_personal: e.target.value })}
+              />
+              <small style={{ color: 'var(--color-text-muted)' }}>
+                El colaborador también lo puede editar desde "Mi Perfil". Si está vacío, el aviso va al email de la app.
+              </small>
+            </div>
+          )}
         </div>
 
         </div>{/* ---- fin columna lateral ---- */}
@@ -694,6 +754,36 @@ export default function ColaboradorDetalle() {
               </div>
               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={uploadingFile}>
                 {uploadingFile ? 'Subiendo...' : 'Guardar'}
+              </button>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* MODAL PAGO */}
+      {modalPago && createPortal(
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '460px' }}>
+            <div className="modal-header">
+              <h3>Registrar pago</h3>
+              <button className="btn-close" onClick={() => setModalPago(false)}><X size={20} /></button>
+            </div>
+            <form onSubmit={handleSaveFactura} style={{ display: 'grid', gap: '16px', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'var(--color-surface2)', borderRadius: 'var(--radius-sm)', fontSize: 14 }}>
+                <span style={{ color: 'var(--color-text-muted)' }}>Factura del {fmt(nuevaFactura.fecha_factura)}</span>
+                <strong>{fmtMonto(nuevaFactura.monto)}</strong>
+              </div>
+              <div className="field">
+                <label>Fecha de Pago</label>
+                <input type="date" required value={nuevaFactura.fecha_pago || ''} onChange={e => setNuevaFactura({ ...nuevaFactura, fecha_pago: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>Comprobante de pago {nuevaFactura.comprobante_pago && <a href={nuevaFactura.comprobante_pago} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: 'var(--color-primary)' }}>(ver actual)</a>}</label>
+                <input type="file" onChange={e => handleFileUpload(e, setNuevaFactura, nuevaFactura, 'comprobante_pago')} disabled={uploadingFile} />
+              </div>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={uploadingFile}>
+                {uploadingFile ? 'Subiendo...' : 'Registrar pago'}
               </button>
             </form>
           </div>

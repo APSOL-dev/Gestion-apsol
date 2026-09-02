@@ -75,7 +75,7 @@ export async function getColaboradores() {
 
 const SELECT_FICHA = `
   *,
-  usuarios:apsol_usuarios(nombre, apellido, email),
+  usuarios:apsol_usuarios(nombre, apellido, email, email_personal),
   contratos:apsol_contratos(*),
   facturas_colaboradores:apsol_facturas_colaboradores(*),
   prospectos_trabajar:apsol_colaboradores_prospectos(prospecto_id, prospectos:apsol_prospectos(nombre))
@@ -89,6 +89,7 @@ async function mapearFichaCompleta(data) {
     nombre: data.usuarios?.nombre || data.nombre_manual || '',
     apellido: data.usuarios?.apellido || data.apellido_manual || '',
     email: data.usuarios?.email || '',
+    email_personal: data.usuarios?.email_personal || '',
     telefono: limpiarWhatsapp(data.whatsapp),
     prospectos_asignados: (data.prospectos_trabajar || []).map(p => p.prospecto_id),
     prospectos_trabajar_nombres: (data.prospectos_trabajar || [])
@@ -172,13 +173,19 @@ export async function saveColaborador(colaborador) {
 
   // Actualizar también la información en la tabla de usuarios
   if (colaborador.usuario_id) {
+    const datosUsuario = {
+      nombre: colaborador.nombre,
+      apellido: colaborador.apellido,
+      email: colaborador.email,
+    }
+    // email_personal (adónde n8n avisa los pagos) también vive en usuarios.
+    // Solo lo tocamos si el caller lo maneja, para no pisarlo con undefined.
+    if (colaborador.email_personal !== undefined) {
+      datosUsuario.email_personal = colaborador.email_personal || null
+    }
     const { error: userError } = await supabase
       .from('apsol_usuarios')
-      .update({
-        nombre: colaborador.nombre,
-        apellido: colaborador.apellido,
-        email: colaborador.email
-      })
+      .update(datosUsuario)
       .eq('id', colaborador.usuario_id)
     if (userError) {
       console.error('Error al actualizar datos de usuario:', userError)

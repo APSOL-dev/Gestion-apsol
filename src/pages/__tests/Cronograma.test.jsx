@@ -71,6 +71,18 @@ vi.mock('../../services/colaboradores', async () => {
   return { ...real, getColaboradoresLista: vi.fn() }
 })
 
+// Contactos de la empresa del prospecto (para invitar a la reunión).
+vi.mock('../../services/contactos', () => ({
+  getContactosPorEmpresa: vi.fn().mockResolvedValue([])
+}))
+import { getContactosPorEmpresa } from '../../services/contactos'
+
+// Sincronización con Google Calendar (Edge Function).
+vi.mock('../../services/calendario', () => ({
+  sincronizarEventoReunion: vi.fn().mockResolvedValue({ id: 'gcal-evt-1', htmlLink: 'http://cal/x' })
+}))
+import { sincronizarEventoReunion } from '../../services/calendario'
+
 // --- Datos de prueba ---
 // `cronograma.prospecto_id` es la columna real (FK a prospectos); el
 // componente deriva `prospecto_nombre` de acá (ver resolverActividades en
@@ -153,6 +165,22 @@ async function esperarCargaInicial() {
 function mockUseAuth(user = null) {
   useAuth.mockReturnValue({ user })
 }
+
+// Prospecto / Responsable / Invitados son react-select. Helper para elegir
+// una opción por su texto visible.
+async function elegirEnRS(inputEl, texto) {
+  fireEvent.focus(inputEl)
+  fireEvent.change(inputEl, { target: { value: texto } })
+  const opt = await screen.findByText(texto, { selector: '.rs__option' })
+  fireEvent.click(opt)
+}
+// Lista de opciones visibles de un react-select (abre el menú y lee los textos).
+function opcionesRS(inputEl) {
+  fireEvent.focus(inputEl)
+  fireEvent.keyDown(inputEl, { key: 'ArrowDown', code: 'ArrowDown' })
+  return [...document.querySelectorAll('.rs__option')].map(o => o.textContent)
+}
+const rsValor = () => document.querySelector('.rs__single-value')?.textContent ?? null
 
 describe('Cronograma', () => {
   beforeEach(() => {
@@ -273,7 +301,7 @@ describe('Cronograma', () => {
 
     fireEvent.click(screen.getByTitle('Nueva Actividad'))
 
-    expect(screen.getByPlaceholderText('Escribí para buscar...')).toHaveValue('')
+    expect(rsValor()).toBeNull() // Prospecto sin elegir
     expect(screen.getByPlaceholderText('¿Qué se va a realizar?')).toHaveValue('')
   })
 
@@ -284,7 +312,7 @@ describe('Cronograma', () => {
     fireEvent.click(screen.getByTestId('event-1'))
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Escobar')).toBeInTheDocument()
+      expect(screen.getByText('Escobar', { selector: '.rs__single-value' })).toBeInTheDocument()
       expect(screen.getByDisplayValue('Reunión de seguimiento')).toBeInTheDocument()
     })
   })
@@ -295,7 +323,7 @@ describe('Cronograma', () => {
 
     // Abrir un evento existente
     fireEvent.click(screen.getByTestId('event-1'))
-    await waitFor(() => expect(screen.getByDisplayValue('Escobar')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Escobar', { selector: '.rs__single-value' })).toBeInTheDocument())
 
     // Cerrar con Cancelar
     fireEvent.click(screen.getByText('Cancelar'))
@@ -304,7 +332,7 @@ describe('Cronograma', () => {
     fireEvent.click(screen.getByTitle('Nueva Actividad'))
 
     // El campo debe estar vacío
-    expect(screen.getByPlaceholderText('Escribí para buscar...')).toHaveValue('')
+    expect(rsValor()).toBeNull()
   })
 
   test('seleccionar un slot vacío del calendario abre el modal con las fechas del slot', async () => {
@@ -317,6 +345,178 @@ describe('Cronograma', () => {
     })
     // El campo de descripción debe estar vacío (es una nueva actividad)
     expect(screen.getByPlaceholderText('¿Qué se va a realizar?')).toHaveValue('')
+  })
+
+  // ─── Tests del selector "Prospecto / Cliente" del modal ────────────────────
+
+  test('el selector ofrece las categorías internas fijas además de los prospectos', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    const opciones = opcionesRS(screen.getByLabelText('Prospecto / Cliente'))
+    for (const cat of ['Consultora', 'Capacitación', 'Investigación', 'Día Libre', 'otros', 'Acción de venta']) {
+      expect(opciones).toContain(cat)
+    }
+  })
+
+  test('el selector solo lista prospectos en producción, no los que siguen en pipeline', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    const opciones = opcionesRS(screen.getByLabelText('Prospecto / Cliente'))
+    expect(opciones).toContain('Escobar')        // pros-1, 6A - En producción
+    expect(opciones).not.toContain('Norte 2025') // pros-3, 4 - Propuesta enviada
+  })
+
+  test('el selector no duplica una opción si un prospecto se llama igual que una categoría', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    // PROSPECTOS_MOCK tiene un prospecto "Consultora" (pros-2) y además
+    // existe la categoría fija "Consultora": debe aparecer una sola vez.
+    const opciones = opcionesRS(screen.getByLabelText('Prospecto / Cliente'))
+    expect(opciones.filter(v => v === 'Consultora')).toHaveLength(1)
+  })
+
+  // ─── Duración rápida, mínimo de descripción, solo lectura ──────────────────
+
+  test('los chips de duración fijan "Hasta" = "Desde" + N horas', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    fireEvent.change(screen.getByLabelText('Desde', { selector: '#modal-desde' }), { target: { value: '2026-09-02T17:00' } })
+    fireEvent.click(screen.getByRole('button', { name: '3h' }))
+    expect(screen.getByLabelText('Hasta', { selector: '#modal-hasta' })).toHaveValue('2026-09-02T20:00')
+  })
+
+  test('muestra el contador de caracteres y bloquea guardar con menos de 60', async () => {
+    cronogramaService.saveActividad.mockResolvedValue({})
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'corto' } })
+
+    expect(screen.getByText(/5 \/ 60 caracteres/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Confirmar'))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/al menos 60 caracteres/i)
+    })
+    expect(cronogramaService.saveActividad).not.toHaveBeenCalled()
+  })
+
+  test('al marcar "reunión con cliente", ofrece invitar a los contactos con email de la empresa del prospecto', async () => {
+    getContactosPorEmpresa.mockResolvedValue([
+      { id: 'c1', nombre: 'Juan', apellido: 'Pérez', email: 'juan@acme.com' },
+      { id: 'c2', nombre: 'Sin', apellido: 'Mail', email: null }
+    ])
+    mockUseData({ prospectos: [{ id: 'pros-1', nombre: 'Escobar', estado: '6A - En producción', empresa_id: 'emp-1' }] })
+
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    fireEvent.click(screen.getByText('¿Es reunión con el cliente?'))
+
+    await waitFor(() => expect(getContactosPorEmpresa).toHaveBeenCalledWith('emp-1'))
+
+    const opciones = opcionesRS(screen.getByLabelText('Invitados del cliente (para la reunión)'))
+    expect(opciones).toContain('Juan Pérez — juan@acme.com')
+    expect(opciones.some(o => o.includes('Sin Mail'))).toBe(false) // sin email -> no aparece
+  })
+
+  test('al guardar una "reunión con cliente" crea el evento en Google Calendar con esos datos', async () => {
+    cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })
+    getContactosPorEmpresa.mockResolvedValue([{ id: 'c1', nombre: 'Juan', apellido: 'Pérez', email: 'juan@acme.com' }])
+    mockUseData({ prospectos: [{ id: 'pros-1', nombre: 'Escobar', estado: '6A - En producción', empresa_id: 'emp-1' }] })
+
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'),
+      { target: { value: 'Reunión de arranque del proyecto con el equipo del cliente y APSOL' } })
+    fireEvent.click(screen.getByText('¿Es reunión con el cliente?'))
+    await waitFor(() => expect(getContactosPorEmpresa).toHaveBeenCalledWith('emp-1'))
+    await elegirEnRS(screen.getByLabelText('Invitados del cliente (para la reunión)'), 'Juan Pérez — juan@acme.com')
+
+    fireEvent.click(screen.getByText('Confirmar'))
+
+    await waitFor(() => {
+      expect(sincronizarEventoReunion).toHaveBeenCalledWith('crear', expect.objectContaining({
+        evento: expect.objectContaining({
+          summary: 'Reunión de arranque del proyecto con el equipo del cliente y APSOL',
+          attendees: [{ email: 'juan@acme.com' }]
+        })
+      }))
+    })
+  })
+
+  test('si NO es reunión con cliente, no toca Google Calendar', async () => {
+    cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+    fireEvent.click(screen.getByText('Confirmar'))
+
+    await waitFor(() => expect(cronogramaService.saveActividad).toHaveBeenCalled())
+    expect(sincronizarEventoReunion).not.toHaveBeenCalled()
+  })
+
+  test('permite elegir herramienta(s) utilizada(s) y las guarda como array', async () => {
+    cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+    await elegirEnRS(screen.getByLabelText('Herramienta(s) utilizada(s)'), 'Antigravity')
+    await elegirEnRS(screen.getByLabelText('Herramienta(s) utilizada(s)'), 'N8N')
+
+    fireEvent.click(screen.getByText('Confirmar'))
+
+    await waitFor(() => expect(cronogramaService.saveActividad).toHaveBeenCalled())
+    expect(cronogramaService.saveActividad).toHaveBeenCalledWith(
+      expect.objectContaining({ herramientas: ['Antigravity', 'N8N'] })
+    )
+  })
+
+  test('el administrador ve el multiplicador y por defecto se guarda 1', async () => {
+    cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    expect(screen.getByLabelText('Multiplicador')).toHaveValue(1)
+
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+    fireEvent.click(screen.getByText('Confirmar'))
+
+    await waitFor(() => expect(cronogramaService.saveActividad).toHaveBeenCalled())
+    expect(cronogramaService.saveActividad).toHaveBeenCalledWith(
+      expect.objectContaining({ multiplicador: 1 })
+    )
+  })
+
+  test('un colaborador no ve el campo multiplicador', async () => {
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esColaborador: true })
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    expect(screen.queryByLabelText('Multiplicador')).not.toBeInTheDocument()
+  })
+
+  test('un colaborador abre un evento pasado hace más de 2 días hábiles en SOLO LECTURA', async () => {
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esColaborador: true })
+    render(<Cronograma />)
+    // event-1: fin 2026-08-20 -> hace rato para cualquier "ahora" real del test
+    await waitFor(() => expect(screen.getByTestId('event-1')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('event-1'))
+
+    await waitFor(() => expect(screen.getByText(/Solo lectura/i)).toBeInTheDocument())
+    expect(screen.queryByText('Confirmar')).not.toBeInTheDocument()
+    expect(screen.queryByText('Eliminar')).not.toBeInTheDocument()
+    expect(screen.getByText('Cerrar')).toBeInTheDocument()
   })
 
   // ─── Tests de eliminación ───────────────────────────────────────────────────
@@ -378,11 +578,10 @@ describe('Cronograma', () => {
     render(<Cronograma />)
     fireEvent.click(screen.getByTitle('Nueva Actividad'))
 
-    fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
-    // Hay dos combobox en el modal: el input con datalist y el select. Tomamos el select (índice 1).
-    await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
-    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
-    fireEvent.click(screen.getByText('Confirmar y Agendar'))
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+    fireEvent.click(screen.getByText('Confirmar'))
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
@@ -450,11 +649,9 @@ describe('Cronograma', () => {
     render(<Cronograma />)
     fireEvent.click(screen.getByTitle('Nueva Actividad'))
 
-    // Rellenamos el prospecto
-    fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
-    // Seleccionamos responsable (el segundo combobox)
-    await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
-    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
+    // Rellenamos el prospecto y el responsable
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
 
     // Ponemos inicio = 2026-08-25T19:00 y fin = 2026-08-25T18:00
     const inputInicio = screen.getByLabelText('Desde', { selector: '#modal-desde' })
@@ -463,7 +660,7 @@ describe('Cronograma', () => {
     fireEvent.change(inputInicio, { target: { value: '2026-08-25T19:00' } })
     fireEvent.change(inputFin, { target: { value: '2026-08-25T18:00' } })
 
-    fireEvent.click(screen.getByText('Confirmar y Agendar'))
+    fireEvent.click(screen.getByText('Confirmar'))
 
     // Debe mostrar la alerta/toast de error de fecha
     await waitFor(() => {
@@ -527,7 +724,8 @@ describe('Cronograma', () => {
     const { container } = render(<Cronograma />)
     await waitFor(() => {
       const item = container.querySelector('.compliance-item')
-      expect(item).toHaveTextContent(`${esperado}h`)
+      // El panel siempre muestra 2 decimales (ej. "5.22h", "2.00h").
+      expect(item).toHaveTextContent(`${esperado.toFixed(2)}h`)
     })
   })
 
@@ -681,6 +879,12 @@ describe('Cronograma', () => {
     expect(screen.getByLabelText('Hasta')).toBeInTheDocument()
   })
 
+  test('el rango de fechas arranca en una ventana móvil de los últimos 3 meses (hoy - 3 meses .. hoy)', () => {
+    render(<Cronograma />)
+    expect(screen.getByLabelText('Desde')).toHaveValue(moment().subtract(3, 'months').format('YYYY-MM-DD'))
+    expect(screen.getByLabelText('Hasta')).toHaveValue(moment().format('YYYY-MM-DD'))
+  })
+
   // ─── Tests del ancho ajustable de la columna "Prospecto" ────────────────────
 
   describe('Ancho ajustable de la columna "Prospecto" del panel de saldo', () => {
@@ -830,10 +1034,10 @@ describe('Cronograma', () => {
       await esperarCargaInicial()
 
       fireEvent.click(screen.getByTitle('Nueva Actividad'))
-      fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
-      await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
-    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
-      fireEvent.click(screen.getByText('Confirmar y Agendar'))
+      await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+      await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+      fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+      fireEvent.click(screen.getByText('Confirmar'))
 
       // El modal se cierra y el evento nuevo ya aparece SIN que saveActividad
       // se haya resuelto todavía (la promesa sigue pendiente acá).
@@ -867,10 +1071,10 @@ describe('Cronograma', () => {
       await esperarCargaInicial()
 
       fireEvent.click(screen.getByTitle('Nueva Actividad'))
-      fireEvent.change(screen.getByPlaceholderText('Escribí para buscar...'), { target: { value: 'Escobar' } })
-      await screen.findByRole('option', { name: 'Ana López' }) // la lista de colaboradores carga async
-    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'col-1' } })
-      fireEvent.click(screen.getByText('Confirmar y Agendar'))
+      await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+      await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
+      fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+      fireEvent.click(screen.getByText('Confirmar'))
 
       await waitFor(() => {
         expect(screen.getAllByTestId(/^event-/)).toHaveLength(3)

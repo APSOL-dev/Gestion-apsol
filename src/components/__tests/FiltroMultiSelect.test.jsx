@@ -138,6 +138,58 @@ describe('FiltroMultiSelect', () => {
     expect(screen.getByText('Sin opciones')).toBeInTheDocument()
   })
 
+  // ─── Buscador (lupita) ─────────────────────────────────────────────────
+
+  test('el desplegable trae un buscador que filtra las opciones por texto', () => {
+    renderFiltro()
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: 'car' } })
+    expect(screen.getByText('Carlos Gómez')).toBeInTheDocument()
+    expect(screen.queryByText('Ana López')).not.toBeInTheDocument()
+    expect(screen.queryByText('Renata Morano')).not.toBeInTheDocument()
+  })
+
+  test('el buscador ignora mayúsculas y acentos', () => {
+    renderFiltro()
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: 'LOPEZ' } })
+    expect(screen.getByText('Ana López')).toBeInTheDocument()
+    expect(screen.queryByText('Carlos Gómez')).not.toBeInTheDocument()
+  })
+
+  test('"Seleccionar todos" opera solo sobre lo que el buscador deja visible', () => {
+    const { onChange } = renderFiltro({ selectedIds: [] })
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: 'ren' } })
+    fireEvent.click(screen.getByText('Seleccionar todos'))
+    const updater = onChange.mock.calls[0][0]
+    expect(updater([])).toEqual(['c'])
+  })
+
+  test('avisa cuando el buscador no encuentra coincidencias', () => {
+    renderFiltro()
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: 'zzz' } })
+    expect(screen.getByText(/Sin resultados/)).toBeInTheDocument()
+  })
+
+  test('reabrir el desplegable limpia lo que había en el buscador', () => {
+    renderFiltro()
+    const boton = screen.getByRole('button', { name: /Personal/ })
+    fireEvent.click(boton)
+    fireEvent.change(screen.getByPlaceholderText('Buscar…'), { target: { value: 'car' } })
+    fireEvent.click(boton) // cierra
+    fireEvent.click(boton) // reabre
+    expect(screen.getByPlaceholderText('Buscar…')).toHaveValue('')
+    expect(screen.getByText('Ana López')).toBeInTheDocument()
+  })
+
+  test('sin opciones no muestra el buscador', () => {
+    renderFiltro({ options: [] })
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    expect(screen.queryByPlaceholderText('Buscar…')).not.toBeInTheDocument()
+  })
+
   test('cierra el desplegable al clickear afuera del componente', () => {
     render(
       <div>

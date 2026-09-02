@@ -12,6 +12,247 @@ vi.mock('../../lib/supabase', () => ({
 
 const FECHA_REF = new Date('2026-08-26T12:00:00Z')
 
+// El rango por defecto del Cronograma es una ventana MÓVIL de los últimos
+// 3 meses (de hoy hacia atrás), no el mes calendario en curso: se
+// recalcula en cada carga, así el "estándar" siempre acompaña la fecha
+// actual.
+describe('rangoCronogramaPorDefecto', () => {
+  let rangoCronogramaPorDefecto
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    rangoCronogramaPorDefecto = mod.rangoCronogramaPorDefecto
+  })
+
+  test('va de hoy hacia 3 meses atrás (ventana móvil, no el mes calendario)', () => {
+    expect(rangoCronogramaPorDefecto(new Date('2026-09-02T12:00:00'))).toEqual({
+      desde: '2026-06-02',
+      hasta: '2026-09-02'
+    })
+  })
+
+  test('cuando el día no existe en el mes destino, lo clampea al último (31 may - 3 meses -> 28 feb)', () => {
+    expect(rangoCronogramaPorDefecto(new Date('2026-05-31T12:00:00'))).toEqual({
+      desde: '2026-02-28',
+      hasta: '2026-05-31'
+    })
+  })
+
+  test('cruza el fin de año hacia atrás', () => {
+    expect(rangoCronogramaPorDefecto(new Date('2026-01-15T12:00:00'))).toEqual({
+      desde: '2025-10-15',
+      hasta: '2026-01-15'
+    })
+  })
+})
+
+describe('descripcionCumpleMinimo', () => {
+  let descripcionCumpleMinimo, DESCRIPCION_MIN_CARACTERES
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    descripcionCumpleMinimo = mod.descripcionCumpleMinimo
+    DESCRIPCION_MIN_CARACTERES = mod.DESCRIPCION_MIN_CARACTERES
+  })
+
+  test('el mínimo es 60 caracteres', () => {
+    expect(DESCRIPCION_MIN_CARACTERES).toBe(60)
+  })
+
+  test('false si tiene menos de 60 caracteres reales', () => {
+    expect(descripcionCumpleMinimo('a'.repeat(59))).toBe(false)
+    expect(descripcionCumpleMinimo('')).toBe(false)
+    expect(descripcionCumpleMinimo(null)).toBe(false)
+  })
+
+  test('true con 60 o más', () => {
+    expect(descripcionCumpleMinimo('a'.repeat(60))).toBe(true)
+    expect(descripcionCumpleMinimo('a'.repeat(120))).toBe(true)
+  })
+
+  test('no cuenta espacios de sobra en los extremos', () => {
+    expect(descripcionCumpleMinimo('   ' + 'a'.repeat(58) + '   ')).toBe(false)
+  })
+})
+
+describe('fusionarEventosCalendar', () => {
+  let fusionarEventosCalendar
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    fusionarEventosCalendar = mod.fusionarEventosCalendar
+  })
+
+  const gcal = [
+    { id: 'g1', summary: 'Club de águilas', start: '2026-09-01T14:00:00-03:00', end: '2026-09-01T15:00:00-03:00' },
+    { id: 'g2', summary: 'Reunión ya cargada', start: '2026-09-02T11:00:00-03:00', end: '2026-09-02T12:00:00-03:00' },
+    { id: 'g3', summary: 'Feriado', start: '2026-09-03', end: '2026-09-04', allDay: true }
+  ]
+
+  test('mapea los eventos de Google como bloques de solo lectura', () => {
+    const r = fusionarEventosCalendar(gcal, [])
+    const club = r.find(e => e.gcalId === 'g1')
+    expect(club).toMatchObject({ id: 'gcal-g1', prospecto_nombre: 'Club de águilas', origenCalendar: true })
+    expect(club.inicio).toBe('2026-09-01T14:00:00-03:00')
+  })
+
+  test('no duplica un evento que ya tiene su actividad en el cronograma (mismo google_calendar_id)', () => {
+    const r = fusionarEventosCalendar(gcal, [{ id: 'act-1', google_calendar_id: 'g2' }])
+    expect(r.some(e => e.gcalId === 'g2')).toBe(false)
+  })
+
+  test('descarta los eventos de día completo', () => {
+    const r = fusionarEventosCalendar(gcal, [])
+    expect(r.some(e => e.gcalId === 'g3')).toBe(false)
+  })
+
+  test('tolera entradas vacías', () => {
+    expect(fusionarEventosCalendar(null, null)).toEqual([])
+  })
+})
+
+describe('construirEventoReunion', () => {
+  let construirEventoReunion
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    construirEventoReunion = mod.construirEventoReunion
+  })
+
+  test('el título es la descripción del trabajo y los horarios son Desde/Hasta', () => {
+    const ev = construirEventoReunion(
+      { descripcion: 'Revisión mensual del tablero', inicio: '2026-09-02T15:00', fin: '2026-09-02T16:00' },
+      ['ana@cliente.com', 'yo@apsol.com.ar']
+    )
+    expect(ev.summary).toBe('Revisión mensual del tablero')
+    expect(ev.start).toEqual({ dateTime: '2026-09-02T15:00:00', timeZone: 'America/Argentina/Buenos_Aires' })
+    expect(ev.end).toEqual({ dateTime: '2026-09-02T16:00:00', timeZone: 'America/Argentina/Buenos_Aires' })
+    expect(ev.attendees).toEqual([{ email: 'ana@cliente.com' }, { email: 'yo@apsol.com.ar' }])
+  })
+
+  test('normaliza y deduplica emails (trim + minúsculas)', () => {
+    const ev = construirEventoReunion(
+      { descripcion: 'x', inicio: '2026-09-02T15:00', fin: '2026-09-02T16:00' },
+      [' Ana@Cliente.com ', 'ana@cliente.com', '', null]
+    )
+    expect(ev.attendees).toEqual([{ email: 'ana@cliente.com' }])
+  })
+
+  test('sin descripción usa un título por defecto', () => {
+    const ev = construirEventoReunion({ inicio: '2026-09-02T15:00', fin: '2026-09-02T16:00' }, [])
+    expect(ev.summary).toBe('Reunión con cliente')
+  })
+
+  test('mete comentarios y link en la descripción del evento', () => {
+    const ev = construirEventoReunion({
+      descripcion: 'Kickoff', inicio: '2026-09-02T15:00', fin: '2026-09-02T16:00',
+      comentarios_reunion: 'Temas: alcance', link_reunion: 'https://teams.microsoft.com/x'
+    }, [])
+    expect(ev.description).toBe('Temas: alcance\n\nhttps://teams.microsoft.com/x')
+  })
+})
+
+describe('calcularHastaConDuracion', () => {
+  let calcularHastaConDuracion
+
+  beforeEach(async () => {
+    const mod = await import('../cronograma.js')
+    calcularHastaConDuracion = mod.calcularHastaConDuracion
+  })
+
+  test('suma N horas al "Desde" y devuelve formato datetime-local', () => {
+    expect(calcularHastaConDuracion('2026-09-02T17:00', 3)).toBe('2026-09-02T20:00')
+    expect(calcularHastaConDuracion('2026-09-02T17:30', 1)).toBe('2026-09-02T18:30')
+  })
+
+  test('cruza la medianoche', () => {
+    expect(calcularHastaConDuracion('2026-09-02T22:00', 4)).toBe('2026-09-03T02:00')
+  })
+
+  test('desde inválido lo devuelve sin tocar', () => {
+    expect(calcularHastaConDuracion('', 2)).toBe('')
+  })
+})
+
+// Categorías internas fijas (no son clientes): además de los prospectos en
+// producción, el selector "Prospecto / Cliente" del modal ofrece estas
+// opciones estándar. Se guardan con prospecto_id NULL y el prefijo
+// "[Categoría]" en la descripción (ver resolverProspectoParaGuardar).
+describe('CATEGORIAS_CRONOGRAMA', () => {
+  test('expone las categorías fijas internas en el orden acordado', async () => {
+    const { CATEGORIAS_CRONOGRAMA } = await import('../cronograma.js')
+    expect(CATEGORIAS_CRONOGRAMA).toEqual([
+      'Consultora', 'Capacitación', 'Investigación', 'Día Libre', 'otros', 'Acción de venta'
+    ])
+  })
+})
+
+describe('HERRAMIENTAS_CRONOGRAMA', () => {
+  test('expone las herramientas del Excel fuente de verdad', async () => {
+    const { HERRAMIENTAS_CRONOGRAMA } = await import('../cronograma.js')
+    expect(HERRAMIENTAS_CRONOGRAMA).toEqual([
+      'Antigravity', 'N8N', 'Appsheet', 'Power Bi', 'Otros', 'Herramientas No utilizadas'
+    ])
+  })
+})
+
+describe('normalizarMultiplicador', () => {
+  let normalizarMultiplicador
+  beforeEach(async () => {
+    ({ normalizarMultiplicador } = await import('../cronograma.js'))
+  })
+
+  test('vacío / null / undefined -> 1 por defecto', () => {
+    expect(normalizarMultiplicador('')).toBe(1)
+    expect(normalizarMultiplicador(null)).toBe(1)
+    expect(normalizarMultiplicador(undefined)).toBe(1)
+  })
+
+  test('deja pasar decimales y negativos (rango real del Excel)', () => {
+    expect(normalizarMultiplicador('1.35')).toBe(1.35)
+    expect(normalizarMultiplicador(0.3)).toBe(0.3)
+    expect(normalizarMultiplicador('-14')).toBe(-14)
+  })
+
+  test('texto no numérico -> vuelve al valor por defecto', () => {
+    expect(normalizarMultiplicador('abc')).toBe(1)
+    expect(normalizarMultiplicador('abc', 2)).toBe(2)
+  })
+})
+
+// Cada prospecto tiene que verse de un color propio en el calendario para
+// distinguir un bloque del siguiente. Antes había un mapa fijo de ~8
+// nombres y TODO lo demás caía en el mismo índigo -> no se notaba el
+// cambio. colorDeProspecto deriva un color estable del nombre.
+describe('colorDeProspecto', () => {
+  let colorDeProspecto, COLORES_CATEGORIA
+  beforeEach(async () => {
+    ({ colorDeProspecto, COLORES_CATEGORIA } = await import('../cronograma.js'))
+  })
+
+  test('es determinístico: mismo nombre -> mismo color', () => {
+    expect(colorDeProspecto('Amipack 2025')).toBe(colorDeProspecto('Amipack 2025'))
+  })
+
+  test('nombres distintos dan colores distintos', () => {
+    const a = colorDeProspecto('Amipack 2025')
+    const b = colorDeProspecto('Conexion Market 2026')
+    const c = colorDeProspecto('Estudio Gustavo Echarte')
+    expect(new Set([a, b, c]).size).toBe(3)
+  })
+
+  test('las categorías fijas usan su color semántico', () => {
+    expect(colorDeProspecto('Consultora')).toBe(COLORES_CATEGORIA['Consultora'])
+    expect(colorDeProspecto('Día Libre')).toBe(COLORES_CATEGORIA['Día Libre'])
+  })
+
+  test('devuelve un color CSS válido (hex o hsl) y tolera vacío', () => {
+    expect(colorDeProspecto('Cliente X')).toMatch(/^(#[0-9a-f]{6}|hsl\(\d+,\s*\d+%,\s*\d+%\))$/i)
+    expect(typeof colorDeProspecto('')).toBe('string')
+    expect(typeof colorDeProspecto(null)).toBe('string')
+  })
+})
+
 // El saldo de horas es ACUMULADO desde el inicio del servicio (no se
 // resetea cada mes) — misma fórmula que usaba AppSheet, reconstruida y
 // verificada a mano contra ~12 prospectos reales del histórico (ver
@@ -51,7 +292,15 @@ describe('calcularSaldoHoras', () => {
 
   test('resta las horas teóricas (desde el inicio del servicio) de las horas dedicadas en TODO el historial', () => {
     const prospecto = { hs_mensuales: 16, inicio_servicio: '2026-07-22' }
-    expect(calcularSaldoHoras(prospecto, 16.5, new Date('2026-08-30T12:00:00Z'))).toBe(-5.7)
+    expect(calcularSaldoHoras(prospecto, 16.5, new Date('2026-08-30T12:00:00Z'))).toBe(-5.67)
+  })
+
+  test('redondea a 2 decimales (la precisión con la que se compara contra el histórico de AppSheet)', () => {
+    const prospecto = { hs_mensuales: 16, inicio_servicio: '2026-07-22' }
+    // Con 1 decimal esto daría -5.7; con 2, -5.67.
+    const saldo = calcularSaldoHoras(prospecto, 16.5, new Date('2026-08-30T12:00:00Z'))
+    expect(saldo).toBe(-5.67)
+    expect(Number.isInteger(saldo * 100)).toBe(true)
   })
 
   test('devuelve null si el prospecto no tiene horas mensuales contratadas configuradas', () => {
@@ -66,7 +315,7 @@ describe('calcularSaldoHoras', () => {
 
   test('sin horas dedicadas registradas todavía (undefined), las trata como 0', () => {
     const prospecto = { hs_mensuales: 16, inicio_servicio: '2026-07-22' }
-    expect(calcularSaldoHoras(prospecto, undefined, new Date('2026-08-30T12:00:00Z'))).toBe(-22.2)
+    expect(calcularSaldoHoras(prospecto, undefined, new Date('2026-08-30T12:00:00Z'))).toBe(-22.17)
   })
 
   test('el saldo puede ser positivo si se dedicó más de lo teórico', () => {

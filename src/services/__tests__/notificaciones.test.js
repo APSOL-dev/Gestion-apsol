@@ -95,6 +95,54 @@ describe('notificarFacturacion', () => {
 })
 
 // ──────────────────────────────────────────────────────────────
+// notificarFacturaColaborador: POST al webhook de n8n dedicado a los
+// pagos que SALEN a colaboradores (factura subida / pago registrado).
+// Endpoint aparte del de facturación a clientes: otro workflow, otra
+// plantilla, otro destinatario. El payload lleva colaborador + factura
+// completa para que n8n no tenga que volver a consultar nada.
+// ──────────────────────────────────────────────────────────────
+describe('notificarFacturaColaborador', () => {
+  let notificarFacturaColaborador
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../notificaciones.js')
+    notificarFacturaColaborador = mod.notificarFacturaColaborador
+  })
+
+  test('hace POST al webhook de colaboradores con evento, colaborador y factura', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 })
+
+    await notificarFacturaColaborador('colaborador_subio_factura', {
+      colaborador: { id: 'colab-1', email: 'mateo@apsol.com' },
+      factura: { id: 'fc-1', monto: 560000 },
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://bots.apsol-consultora.com.ar/webhook/Colaborador',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evento: 'colaborador_subio_factura',
+          colaborador: { id: 'colab-1', email: 'mateo@apsol.com' },
+          factura: { id: 'fc-1', monto: 560000 },
+        }),
+      }
+    )
+  })
+
+  test('lanza error cuando el webhook responde con estado no-OK', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 })
+
+    await expect(
+      notificarFacturaColaborador('pago_colaborador_registrado', { colaborador: {}, factura: {} })
+    ).rejects.toThrow('Error al notificar al webhook de colaboradores')
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
 // Fase 2: lectura y marcado de apsol_notificaciones. Las filas las crea
 // un trigger en la base (database/migration_notificaciones_fase2.sql) —
 // acá solo se leen y se marcan como leídas, nunca se insertan a mano.

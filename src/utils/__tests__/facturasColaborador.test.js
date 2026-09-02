@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { restarDiasHabiles } from '../fecha'
-import { ventanaFacturaAbierta } from '../facturasColaborador'
+import {
+  ventanaFacturaAbierta, facturaPendientePago, prepararPagoFactura,
+  debeNotificarPagoColaborador,
+} from '../facturasColaborador'
 
 describe('restarDiasHabiles', () => {
   it('resta días hábiles salteando sábado y domingo', () => {
@@ -42,5 +45,76 @@ describe('ventanaFacturaAbierta', () => {
       hoy: '2026-08-31',
     })
     expect(r).toMatchObject({ abierta: false, motivo: 'pendiente' })
+  })
+})
+
+describe('facturaPendientePago', () => {
+  it('true cuando la factura todavía no tiene fecha de pago', () => {
+    expect(facturaPendientePago({ monto: 1000, fecha_pago: null })).toBe(true)
+    expect(facturaPendientePago({ monto: 1000 })).toBe(true)
+    expect(facturaPendientePago({ monto: 1000, fecha_pago: '' })).toBe(true)
+  })
+
+  it('false cuando ya tiene fecha de pago (con o sin sufijo horario)', () => {
+    expect(facturaPendientePago({ monto: 1000, fecha_pago: '2026-08-02' })).toBe(false)
+    expect(facturaPendientePago({ monto: 1000, fecha_pago: '2026-08-02T00:00:00' })).toBe(false)
+  })
+})
+
+describe('prepararPagoFactura', () => {
+  const factura = {
+    id: 'f1',
+    monto: 560000,
+    fecha_factura: '2026-07-30T00:00:00',
+    fecha_pago: null,
+    comprobante_pago: '',
+  }
+
+  it('propone la fecha de pago de HOY cuando la factura no tiene una', () => {
+    expect(prepararPagoFactura(factura, '2026-09-02').fecha_pago).toBe('2026-09-02')
+  })
+
+  it('normaliza la fecha de factura a YYYY-MM-DD y conserva id y monto', () => {
+    expect(prepararPagoFactura(factura, '2026-09-02')).toMatchObject({
+      id: 'f1',
+      monto: 560000,
+      fecha_factura: '2026-07-30',
+    })
+  })
+
+  it('respeta una fecha de pago ya cargada (no la pisa con hoy)', () => {
+    const form = prepararPagoFactura({ ...factura, fecha_pago: '2026-08-02' }, '2026-09-02')
+    expect(form.fecha_pago).toBe('2026-08-02')
+  })
+
+  it('usa la fecha local de hoy si no se pasa una fecha explícita', () => {
+    expect(prepararPagoFactura(factura).fecha_pago).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+})
+
+describe('debeNotificarPagoColaborador', () => {
+  it('true cuando la factura pasó de pendiente a tener fecha de pago', () => {
+    expect(debeNotificarPagoColaborador(
+      { id: 'f1', fecha_pago: null },
+      { id: 'f1', fecha_pago: '2026-09-02' },
+    )).toBe(true)
+  })
+
+  it('false si ya estaba pagada antes (no re-notifica al editar un dato)', () => {
+    expect(debeNotificarPagoColaborador(
+      { id: 'f1', fecha_pago: '2026-08-02' },
+      { id: 'f1', fecha_pago: '2026-08-02', comprobante_pago: 'x.pdf' },
+    )).toBe(false)
+  })
+
+  it('false si sigue sin fecha de pago después de guardar', () => {
+    expect(debeNotificarPagoColaborador(
+      { id: 'f1', fecha_pago: null },
+      { id: 'f1', fecha_pago: null, monto: 999 },
+    )).toBe(false)
+  })
+
+  it('false si no hay estado previo (alta de factura, no un pago)', () => {
+    expect(debeNotificarPagoColaborador(undefined, { id: 'f1', fecha_pago: '2026-09-02' })).toBe(false)
   })
 })

@@ -1,10 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, CheckSquare, Square } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, CheckSquare, Square, Search } from 'lucide-react'
+
+const normalizar = s =>
+  (s || '')
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
 
 /**
  * Filtro de selección múltiple compacto: un botón disparador que muestra la
  * cantidad de elementos elegidos ("Personal (3)") y un desplegable tipo
  * checklist para tildar/destildar opciones sin cerrarse en cada click.
+ *
+ * El desplegable trae un buscador (lupita) que filtra la lista por texto,
+ * insensible a mayúsculas y acentos. "Seleccionar todos" opera SOLO sobre
+ * lo que el buscador deja visible, así se puede seleccionar en tandas
+ * ("todos los de mantenimiento", etc.).
  *
  * Reemplaza el patrón anterior de renderizar un "chip" removible por cada
  * elemento seleccionado, que se volvía inmanejable con listas largas
@@ -27,7 +39,9 @@ export default function FiltroMultiSelect({
   emptyMessage = 'Sin opciones'
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const rootRef = useRef(null)
+  const searchRef = useRef(null)
 
   useEffect(() => {
     if (!open) return
@@ -40,6 +54,17 @@ export default function FiltroMultiSelect({
     return () => document.removeEventListener('mousedown', handleClickFuera)
   }, [open])
 
+  // Reabrir el desplegable arranca siempre con el buscador en blanco.
+  useEffect(() => {
+    if (!open) setQuery('')
+  }, [open])
+
+  const opcionesFiltradas = useMemo(() => {
+    const q = normalizar(query).trim()
+    if (!q) return options
+    return options.filter(o => normalizar(getLabel(o)).includes(q))
+  }, [options, query, getLabel])
+
   function toggleOpcion(id) {
     onChange(prevSelected => (
       prevSelected.includes(id)
@@ -48,13 +73,17 @@ export default function FiltroMultiSelect({
     ))
   }
 
-  const todosSeleccionados = options.length > 0 && options.every(opt => selectedIds.includes(getId(opt)))
+  // "Seleccionar/Deseleccionar todos" acota su acción a las opciones que el
+  // buscador está mostrando en este momento (no a la lista completa).
+  const idsVisibles = opcionesFiltradas.map(getId)
+  const todosVisiblesSeleccionados =
+    idsVisibles.length > 0 && idsVisibles.every(id => selectedIds.includes(id))
 
   function toggleTodos() {
-    if (todosSeleccionados) {
-      onChange(() => [])
+    if (todosVisiblesSeleccionados) {
+      onChange(prev => prev.filter(id => !idsVisibles.includes(id)))
     } else {
-      onChange(() => options.map(getId))
+      onChange(prev => [...new Set([...prev, ...idsVisibles])])
     }
   }
 
@@ -74,27 +103,46 @@ export default function FiltroMultiSelect({
             <div className="picker-empty">{emptyMessage}</div>
           ) : (
             <>
-              <div
-                className="picker-option checklist picker-option-todos"
-                onClick={toggleTodos}
-              >
-                {todosSeleccionados ? <CheckSquare size={14} /> : <Square size={14} />}
-                {todosSeleccionados ? 'Deseleccionar todos' : 'Seleccionar todos'}
+              <div className="picker-search">
+                <Search size={14} />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  placeholder="Buscar…"
+                  aria-label={`Buscar en ${label}`}
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  autoFocus
+                />
               </div>
-              {options.map(opt => {
-                const id = getId(opt)
-                const checked = selectedIds.includes(id)
-                return (
+
+              {opcionesFiltradas.length === 0 ? (
+                <div className="picker-no-results">Sin resultados para “{query}”</div>
+              ) : (
+                <>
                   <div
-                    key={id}
-                    className={`picker-option checklist ${checked ? 'checked' : ''}`}
-                    onClick={() => toggleOpcion(id)}
+                    className="picker-option checklist picker-option-todos"
+                    onClick={toggleTodos}
                   >
-                    {checked ? <CheckSquare size={14} /> : <Square size={14} />}
-                    {getLabel(opt)}
+                    {todosVisiblesSeleccionados ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {todosVisiblesSeleccionados ? 'Deseleccionar todos' : 'Seleccionar todos'}
                   </div>
-                )
-              })}
+                  {opcionesFiltradas.map(opt => {
+                    const id = getId(opt)
+                    const checked = selectedIds.includes(id)
+                    return (
+                      <div
+                        key={id}
+                        className={`picker-option checklist ${checked ? 'checked' : ''}`}
+                        onClick={() => toggleOpcion(id)}
+                      >
+                        {checked ? <CheckSquare size={14} /> : <Square size={14} />}
+                        {getLabel(opt)}
+                      </div>
+                    )
+                  })}
+                </>
+              )}
             </>
           )}
         </div>

@@ -1,0 +1,82 @@
+{
+  "name": "APSOL — Facturas de colaboradores (email)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Colaborador",
+        "responseMode": "onReceived",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "b1f0e2a0-0001-4a00-9000-000000000001",
+      "name": "Webhook Colaborador",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-4900, 2176],
+      "webhookId": "apsol-colaborador-facturas"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Prepara el email para el subflujo 'Enviador de emails'.\n// Entrada: item del Webhook (POST /Colaborador). El payload llega en .body:\n//   { evento, colaborador:{id,nombre,apellido,email,email_personal,whatsapp}, factura:{...} }\n// colaborador.email_personal viene de la app (apsol_usuarios.email_personal):\n// es adonde se le avisan los pagos. Si viene vacio, cae al email de la app.\n// Salida: { emails_to, email_asunto, email_html }\n\n// A quien se avisa cuando un colaborador sube una factura (quien registra los pagos).\nconst EMAIL_ADMIN = 'a_patriarca@hotmail.com';\n\nconst src = $input.first().json;\nconst p = src && src.body ? src.body : src;\nconst evento = p.evento;\nconst colaborador = p.colaborador || {};\nconst factura = p.factura || {};\n\nconst emailPersonal = String(colaborador.email_personal || '').trim() || colaborador.email || '';\n\nconst fmtMonto = (n) => '$ ' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 });\nconst fmtFecha = (f) => f ? String(f).split('T')[0].split('-').reverse().join('/') : '—';\nconst nombreColab = [colaborador.nombre, colaborador.apellido].filter(Boolean).join(' ') || 'El colaborador';\n\nlet emails_to, email_asunto, email_html;\n\nif (evento === 'colaborador_subio_factura') {\n  emails_to = EMAIL_ADMIN;\n  email_asunto = `🧾 ${nombreColab} subió una factura — ${fmtMonto(factura.monto)}`;\n  email_html = `\n<div style='font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a'>\n  <p><strong>${nombreColab}</strong> subió una factura para cobrar.</p>\n  <table style='border-collapse:collapse;margin:12px 0'>\n    <tr><td style='padding:4px 12px 4px 0;color:#475569'>Nº de factura</td><td style='padding:4px 0'>${factura.numero_factura || '—'}</td></tr>\n    <tr><td style='padding:4px 12px 4px 0;color:#475569'>Fecha de la factura</td><td style='padding:4px 0'>${fmtFecha(factura.fecha_factura)}</td></tr>\n    <tr><td style='padding:4px 12px 4px 0;color:#475569'>Monto</td><td style='padding:4px 0'><strong>${fmtMonto(factura.monto)}</strong></td></tr>\n  </table>\n  ${factura.archivo_factura ? `<p><a href='${factura.archivo_factura}' style='color:#e06200'>Ver PDF de la factura</a></p>` : ''}\n  <p style='margin-top:16px'>Entrá a la ficha del colaborador en Gestión APSOL para registrar el pago.</p>\n</div>`.trim();\n} else if (evento === 'pago_colaborador_registrado') {\n  emails_to = emailPersonal;\n  email_asunto = `✅ Te registramos el pago de tu factura — ${fmtMonto(factura.monto)}`;\n  email_html = `\n<div style='font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0f172a'>\n  <p>Hola ${colaborador.nombre || ''},</p>\n  <p>Registramos el pago de tu factura.</p>\n  <table style='border-collapse:collapse;margin:12px 0'>\n    <tr><td style='padding:4px 12px 4px 0;color:#475569'>Nº de factura</td><td style='padding:4px 0'>${factura.numero_factura || '—'}</td></tr>\n    <tr><td style='padding:4px 12px 4px 0;color:#475569'>Fecha de pago</td><td style='padding:4px 0'>${fmtFecha(factura.fecha_pago)}</td></tr>\n    <tr><td style='padding:4px 12px 4px 0;color:#475569'>Monto</td><td style='padding:4px 0'><strong>${fmtMonto(factura.monto)}</strong></td></tr>\n  </table>\n  ${factura.comprobante_pago ? `<p><a href='${factura.comprobante_pago}' style='color:#e06200'>Ver comprobante de pago</a></p>` : ''}\n  <p style='margin-top:16px'>Saludos,<br/>APSOL</p>\n</div>`.trim();\n} else {\n  return [];\n}\n\nif (!emails_to) {\n  throw new Error('Sin destinatario para el evento ' + evento + ' (colaborador sin email ni email_personal)');\n}\n\nreturn [{ json: { emails_to, email_asunto, email_html } }];\n"
+      },
+      "id": "b1f0e2a0-0002-4a00-9000-000000000002",
+      "name": "Armar email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-4680, 2176]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "oM8T5GV0IbElXiM8",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/oM8T5GV0IbElXiM8",
+          "cachedResultName": "Enviador de emails"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "from": "APSOL Facturación",
+            "to": "={{ $json.emails_to }}",
+            "Asunto": "={{ $json.email_asunto }}",
+            "Cuerpo_HTML": "={{ $json.email_html }}",
+            "CCO": "apatriarca.apsol@gmail.com"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "from", "displayName": "from", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "to", "displayName": "to", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "Asunto", "displayName": "Asunto", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "Cuerpo_HTML", "displayName": "Cuerpo_HTML", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "Reply to", "displayName": "Reply to", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": true },
+            { "id": "CC", "displayName": "CC", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": true },
+            { "id": "CCO", "displayName": "CCO", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [-4464, 2176],
+      "id": "abda1b39-eea0-4c58-ab37-d8dd240f5170",
+      "name": "Call 'Enviador de emails'1"
+    }
+  ],
+  "connections": {
+    "Webhook Colaborador": {
+      "main": [[{ "node": "Armar email", "type": "main", "index": 0 }]]
+    },
+    "Armar email": {
+      "main": [[{ "node": "Call 'Enviador de emails'1", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateCredsSetupCompleted": true }
+}

@@ -1627,19 +1627,61 @@ a.link-primary:hover { text-decoration: underline; }
 .picker-dropdown {
   background: white;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
   margin-top: 8px;
-  max-height: 200px;
+  max-height: 360px;
   overflow-y: auto;
   position: absolute;
   z-index: 100;
-  width: 230px;
+  width: 300px;
+}
+
+/* Buscador (lupita) pegado arriba del desplegable — queda fijo aunque la
+   lista scrollee. */
+.picker-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: white;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.picker-search svg {
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+
+.picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.picker-search input::placeholder {
+  color: #94a3b8;
+}
+
+.picker-no-results {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-style: italic;
+  text-align: center;
 }
 
 .picker-option {
-  padding: 8px 12px;
+  padding: 9px 12px;
   font-size: 13px;
+  line-height: 1.35;
   color: #475569;
   cursor: pointer;
   transition: all 0.2s;
@@ -1652,12 +1694,13 @@ a.link-primary:hover { text-decoration: underline; }
 
 .picker-option.checklist {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 
 .picker-option.checklist svg {
   flex-shrink: 0;
+  margin-top: 1px;
   color: #cbd5e1;
 }
 
@@ -1745,8 +1788,31 @@ a.link-primary:hover { text-decoration: underline; }
 }
 
 .filtro-multiselect .picker-dropdown {
-  min-width: 220px;
-  max-width: 280px;
+  min-width: 300px;
+  max-width: 380px;
+}
+
+/* Personal + Prospectos van juntos y empujados a la derecha, separados de
+   los filtros de fecha y con aire entre sí (antes quedaban pegados). */
+.filtro-multi-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-left: auto;
+}
+
+/* El último filtro del grupo (Prospectos) abre su panel hacia la izquierda
+   para que un desplegable ancho no se corte contra el borde de la pantalla. */
+.filtro-multi-group .filtro-multiselect:last-child .picker-dropdown {
+  left: auto;
+  right: 0;
+}
+
+@media (max-width: 720px) {
+  .filtro-multi-group {
+    margin-left: 0;
+    gap: 16px;
+  }
 }
 
 .filter-group input[type="date"] {
@@ -2064,9 +2130,171 @@ a.link-primary:hover { text-decoration: underline; }
 }
 
 .modal-content.premium {
-  max-width: 550px;
+  max-width: 720px;
   border: none;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  border-radius: 22px;
+  box-shadow: 0 30px 70px -15px rgba(0, 0, 0, 0.35);
+}
+
+.modal-content.premium .modal-header {
+  padding: 24px 32px;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+}
+.modal-content.premium .modal-header h2 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.modal-content.premium .modal-body {
+  padding: 26px 32px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.modal-content.premium .modal-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.modal-content.premium .modal-fieldset:disabled {
+  opacity: 0.7;
+}
+.modal-content.premium .form-group { gap: 7px; }
+.modal-content.premium .form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.modal-content.premium .form-grid { gap: 16px; }
+.modal-content.premium input,
+.modal-content.premium select,
+.modal-content.premium textarea {
+  padding: 11px 14px;
+  border-radius: 11px;
+  font-size: 14px;
+}
+.modal-content.premium .input-with-icon input,
+.modal-content.premium .input-with-icon select {
+  padding-left: 38px !important;
+}
+.modal-content.premium textarea { min-height: 84px; resize: vertical; }
+
+.modal-content.premium .modal-footer {
+  padding: 18px 32px 24px;
+  border-top: 1px solid var(--color-border);
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* Botones del modal del cronograma */
+.btn-pri,
+.btn-sec,
+.btn-danger-ghost {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px 24px;
+  border-radius: 11px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-pri { background: var(--color-primary); color: #fff; }
+.btn-pri:hover:not(:disabled) { background: var(--color-primary-hover); }
+.btn-sec { background: var(--color-surface); color: var(--color-text); border-color: var(--color-border); }
+.btn-sec:hover:not(:disabled) { background: var(--color-surface2); }
+.btn-danger-ghost {
+  background: transparent;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  margin-right: auto;
+}
+.btn-danger-ghost:hover { background: rgba(220, 38, 38, 0.08); }
+
+/* Chips de duración rápida */
+.dur-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -6px;
+}
+.dur-chips-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-right: 2px;
+}
+.dur-chip {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 40px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.dur-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(224, 98, 0, 0.06);
+}
+
+/* Contador de caracteres de la descripción */
+.desc-counter {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  align-self: flex-end;
+}
+.desc-counter.short {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* react-select dentro del modal (Prospecto, Responsable, Invitados: mismo look) */
+.modal-content.premium .rs__control {
+  min-height: 44px;
+  border-radius: 11px;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+}
+/* Input de "Responsable" cuando es un colaborador (no elige): mismo alto/estilo
+   que el react-select, pero de solo lectura. */
+.modal-content.premium .rs-readonly-input {
+  min-height: 44px;
+  border-radius: 11px;
+  background: var(--color-surface2);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+.modal-content.premium .rs__control--is-focused {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(224, 98, 0, 0.12);
+}
+.modal-content.premium .rs__multi-value {
+  background: rgba(224, 98, 0, 0.10);
+  border-radius: 8px;
+}
+.modal-content.premium .rs__multi-value__label { color: var(--color-primary); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .modal-content.premium { max-width: 100%; border-radius: 16px; }
+  .modal-content.premium .modal-body,
+  .modal-content.premium .modal-header,
+  .modal-content.premium .modal-footer { padding-left: 18px; padding-right: 18px; }
+  .modal-content.premium .form-grid { grid-template-columns: 1fr; }
 }
 
 .modal-subtitle {
