@@ -1,70 +1,39 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { describe, test, expect } from 'vitest'
+import { resolverNombreColaborador } from '../operaciones'
 
-vi.mock('../../lib/supabase', () => ({ supabase: { from: vi.fn(), rpc: vi.fn() } }))
-
-// BUG real: getTickets pedía `apsol_colaboradores(nombre, apellido)`, pero esa
-// tabla NO tiene esas columnas (tiene nombre_manual/apellido_manual y el
-// nombre real sale de apsol_usuarios). Postgres devolvía
-// "column apsol_colaboradores_1.nombre does not exist" y la pantalla de
-// Tickets fallaba siempre, con o sin sesión.
-describe('getTickets', () => {
-  let getTickets
-
-  beforeEach(async () => {
-    vi.clearAllMocks()
-    vi.resetModules()
-    getTickets = (await import('../operaciones.js')).getTickets
-  })
-
-  test('no pide columnas inexistentes de apsol_colaboradores; toma el nombre de apsol_usuarios', async () => {
-    const { supabase } = await import('../../lib/supabase')
-    const select = vi.fn().mockReturnThis()
-    supabase.from.mockReturnValueOnce({
-      select,
-      order: vi.fn().mockResolvedValueOnce({ data: [], error: null })
+// ──────────────────────────────────────────────────────────────
+// BUG real: getTickets/getTicketById pedían nombre/apellido directo sobre
+// apsol_colaboradores, columnas que no existen ahí (viven en apsol_usuarios,
+// con nombre_manual/apellido_manual de respaldo) -> Postgres tira
+// "column apsol_colaboradores_1.nombre does not exist" y la consulta entera
+// falla para cualquier usuario, no solo Colaborador.
+// resolverNombreColaborador arma el nombre a mostrar a partir del embed
+// correcto (usuarios + fallback manual). Mismo patrón que proyectos.js.
+// ──────────────────────────────────────────────────────────────
+describe('resolverNombreColaborador', () => {
+  test('prioriza el nombre del usuario vinculado', () => {
+    const out = resolverNombreColaborador({
+      id: 'c1',
+      usuarios: { nombre: 'Mateo', apellido: 'Courault' },
+      nombre_manual: 'Manual', apellido_manual: 'Viejo',
     })
-
-    await getTickets()
-
-    const consulta = select.mock.calls[0][0]
-    // apsol_colaboradores NO expone `nombre`/`apellido` sueltos
-    expect(consulta).not.toContain("apsol_colaboradores(nombre,")
-    expect(consulta).not.toContain("apsol_colaboradores(nombre, apellido)")
-    // el nombre debe venir del join a usuarios
-    expect(consulta).toMatch(/apsol_colaboradores\([^)]*usuarios:apsol_usuarios\(/)
-  })
-})
-
-describe('getTickets — normalización del nombre del colaborador', () => {
-  let getTickets
-  beforeEach(async () => {
-    vi.clearAllMocks(); vi.resetModules()
-    getTickets = (await import('../operaciones.js')).getTickets
+    expect(out.nombre).toBe('Mateo')
+    expect(out.apellido).toBe('Courault')
   })
 
-  async function conDatos(filas) {
-    const { supabase } = await import('../../lib/supabase')
-    supabase.from.mockReturnValueOnce({
-      select: vi.fn().mockReturnThis(),
-      order: vi.fn().mockResolvedValueOnce({ data: filas, error: null })
-    })
-    return getTickets()
-  }
-
-  test('toma nombre y apellido del usuario vinculado', async () => {
-    const [t] = await conDatos([{ id: 't1', colaboradores: { nombre_manual: null, apellido_manual: null, usuarios: { nombre: 'Renata', apellido: 'Morano' } } }])
-    expect(t.colaboradores.nombre).toBe('Renata')
-    expect(t.colaboradores.apellido).toBe('Morano')
+  test('usa nombre_manual/apellido_manual si no hay usuario vinculado', () => {
+    const out = resolverNombreColaborador({ id: 'c1', usuarios: null, nombre_manual: 'Manual', apellido_manual: 'Viejo' })
+    expect(out.nombre).toBe('Manual')
+    expect(out.apellido).toBe('Viejo')
   })
 
-  test('cae a los campos manuales cuando el colaborador no tiene usuario', async () => {
-    const [t] = await conDatos([{ id: 't1', colaboradores: { nombre_manual: 'Juan', apellido_manual: 'Pérez', usuarios: null } }])
-    expect(t.colaboradores.nombre).toBe('Juan')
-    expect(t.colaboradores.apellido).toBe('Pérez')
+  test('sin usuario ni datos manuales, devuelve string vacío en vez de undefined', () => {
+    const out = resolverNombreColaborador({ id: 'c1' })
+    expect(out.nombre).toBe('')
+    expect(out.apellido).toBe('')
   })
 
-  test('un ticket sin colaborador asignado pasa intacto', async () => {
-    const [t] = await conDatos([{ id: 't1', colaboradores: null }])
-    expect(t.colaboradores).toBeNull()
+  test('null pasa igual (ticket sin colaborador asignado)', () => {
+    expect(resolverNombreColaborador(null)).toBeNull()
   })
 })

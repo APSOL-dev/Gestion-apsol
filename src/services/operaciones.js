@@ -1,5 +1,23 @@
 import { supabase } from '../lib/supabase'
 
+// apsol_colaboradores no tiene columnas nombre/apellido (viven en
+// apsol_usuarios, con nombre_manual/apellido_manual como respaldo si el
+// colaborador no tiene usuario vinculado). Pedirlas directas en el embed
+// rompe la consulta entera con "column ... does not exist" para cualquier
+// usuario -> hay que traer usuarios y nombre_manual/apellido_manual y
+// resolver acá el nombre a mostrar.
+export function resolverNombreColaborador(colaborador) {
+  if (!colaborador) return colaborador
+  return {
+    ...colaborador,
+    nombre: colaborador.usuarios?.nombre || colaborador.nombre_manual || '',
+    apellido: colaborador.usuarios?.apellido || colaborador.apellido_manual || '',
+  }
+}
+
+const EMBED_COLABORADOR = 'apsol_colaboradores(nombre_manual, apellido_manual, usuarios:apsol_usuarios(nombre, apellido))'
+const EMBED_COLABORADOR_CON_ID = 'apsol_colaboradores(id, nombre_manual, apellido_manual, usuarios:apsol_usuarios(nombre, apellido))'
+
 // ========================
 // TICKETS
 // ========================
@@ -9,22 +27,12 @@ export async function getTickets() {
     .select(`
       *,
       proyectos:apsol_proyectos(nombre, prospectos:apsol_prospectos(empresas:apsol_empresas(nombre))),
-      colaboradores:apsol_colaboradores(nombre_manual, apellido_manual, usuarios:apsol_usuarios(nombre, apellido))
+      colaboradores:${EMBED_COLABORADOR}
     `)
     .order('fecha_creacion', { ascending: false })
 
   if (error) throw error
-  // apsol_colaboradores no tiene nombre/apellido propios: el nombre real vive
-  // en apsol_usuarios y, para los colaboradores sin usuario, en *_manual. Se
-  // normaliza acá para que las pantallas sigan leyendo colaboradores.nombre.
-  return (data || []).map(t => t.colaboradores ? {
-    ...t,
-    colaboradores: {
-      ...t.colaboradores,
-      nombre: t.colaboradores.usuarios?.nombre || t.colaboradores.nombre_manual || '',
-      apellido: t.colaboradores.usuarios?.apellido || t.colaboradores.apellido_manual || ''
-    }
-  } : t)
+  return (data || []).map(t => ({ ...t, colaboradores: resolverNombreColaborador(t.colaboradores) }))
 }
 
 export async function getTicketById(id) {
@@ -33,13 +41,13 @@ export async function getTicketById(id) {
     .select(`
       *,
       proyectos:apsol_proyectos(id, nombre, prospectos:apsol_prospectos(empresas:apsol_empresas(nombre))),
-      colaboradores:apsol_colaboradores(id, nombre, apellido)
+      colaboradores:${EMBED_COLABORADOR_CON_ID}
     `)
     .eq('id', id)
     .single()
 
   if (error) throw error
-  return data
+  return { ...data, colaboradores: resolverNombreColaborador(data.colaboradores) }
 }
 
 export async function saveTicket(ticket) {
