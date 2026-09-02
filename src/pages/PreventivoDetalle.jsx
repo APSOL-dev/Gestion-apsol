@@ -10,7 +10,7 @@ export default function PreventivoDetalle() {
   const esNuevo = id === 'nuevo'
 
   const [preventivo, setPreventivo] = useState({
-    equipo_sistema: '',
+    nombre: '',
     proyecto_id: '',
     frecuencia_dias: 30,
     ultima_realizacion: '',
@@ -121,7 +121,7 @@ export default function PreventivoDetalle() {
           </button>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <h1 className="page-title">{esNuevo ? 'Nuevo Plan Preventivo' : preventivo.equipo_sistema}</h1>
+              <h1 className="page-title">{esNuevo ? 'Nuevo Plan Preventivo' : preventivo.nombre}</h1>
               {!esNuevo && vencido && (
                 <span className="badge badge-orange">Vencido</span>
               )}
@@ -153,8 +153,8 @@ export default function PreventivoDetalle() {
               type="text" 
               required 
               placeholder="Ej. Servidor principal, Tablero Eléctrico T1..."
-              value={preventivo.equipo_sistema} 
-              onChange={e => setPreventivo({...preventivo, equipo_sistema: e.target.value})} 
+              value={preventivo.nombre}
+              onChange={e => setPreventivo({...preventivo, nombre: e.target.value})}
             />
           </div>
 

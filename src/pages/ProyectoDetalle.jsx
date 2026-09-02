@@ -379,7 +379,7 @@ export default function ProyectoDetalle() {
                         const vencido = p.proxima_realizacion && new Date(p.proxima_realizacion) < new Date()
                         return (
                           <tr key={p.id}>
-                            <td><Link to={`/preventivos/${p.id}`} style={{ fontWeight: '500', color: 'inherit', textDecoration: 'none' }}>{p.equipo_sistema}</Link></td>
+                            <td><Link to={`/preventivos/${p.id}`} style={{ fontWeight: '500', color: 'inherit', textDecoration: 'none' }}>{p.nombre}</Link></td>
                             <td>{p.frecuencia_dias} días</td>
                             <td style={{ color: vencido ? 'var(--color-danger)' : 'inherit', fontWeight: vencido ? '600' : 'normal' }}>
                               {p.proxima_realizacion ? new Date(p.proxima_realizacion).toLocaleDateString('es-AR') : '-'}

@@ -20,7 +20,7 @@ export default function Preventivos() {
 
   const preventivosFiltrados = preventivos.filter(p => {
     const matchSearch = 
-      (p.equipo_sistema && p.equipo_sistema.toLowerCase().includes(search.toLowerCase())) ||
+      (p.nombre && p.nombre.toLowerCase().includes(search.toLowerCase())) ||
       (p.proyectos?.nombre && p.proyectos.nombre.toLowerCase().includes(search.toLowerCase())) ||
       (p.proyectos?.prospectos?.empresas?.nombre && p.proyectos.prospectos.empresas.nombre.toLowerCase().includes(search.toLowerCase()))
       
@@ -100,7 +100,7 @@ export default function Preventivos() {
                   <tr key={p.id} style={{ backgroundColor: vencido ? 'rgba(239, 68, 68, 0.05)' : 'transparent' }}>
                     <td>
                       <Link to={`/preventivos/${p.id}`} style={{ color: 'inherit', textDecoration: 'none', fontWeight: '500' }}>
-                        {p.equipo_sistema}
+                        {p.nombre}
                       </Link>
                     </td>
                     <td>
@@ -131,7 +131,7 @@ export default function Preventivos() {
                       {/* Botón rápido para generar un ticket para este preventivo.
                           En una versión completa esto navegaría a `/tickets/nuevo?preventivo_id=X` 
                           Para simplificar la Demo solo redirige a Tickets Nuevo. */}
-                      <Link to={`/tickets/nuevo?proyecto=${p.proyecto_id}&titulo=Preventivo:%20${encodeURIComponent(p.equipo_sistema)}`} className="btn btn-secondary" style={{ fontSize: '12px', padding: '4px 8px' }}>
+                      <Link to={`/tickets/nuevo?proyecto=${p.proyecto_id}&titulo=Preventivo:%20${encodeURIComponent(p.nombre)}`} className="btn btn-secondary" style={{ fontSize: '12px', padding: '4px 8px' }}>
                         Crear Tarea
                       </Link>
                     </td>

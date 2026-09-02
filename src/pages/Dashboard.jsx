@@ -195,7 +195,7 @@ export default function Dashboard() {
                       return (
                         <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', border: `1px solid ${vencido ? 'var(--color-danger)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-sm)' }}>
                           <div>
-                            <Link to={`/preventivos/${p.id}`} style={{ fontWeight: '500', fontSize: '14px', color: 'inherit', textDecoration: 'none' }}>{p.equipo_sistema}</Link>
+                            <Link to={`/preventivos/${p.id}`} style={{ fontWeight: '500', fontSize: '14px', color: 'inherit', textDecoration: 'none' }}>{p.nombre}</Link>
                             <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>{p.proyectos?.prospectos?.empresas?.nombre}</div>
                           </div>
                           <div>
