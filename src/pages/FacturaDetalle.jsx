@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Receipt, DollarSign, Calendar, UploadCloud, Plus, Search, Copy, Check, FileText, Upload, Briefcase, Building2, Download } from 'lucide-react'
-import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto, prepararFacturaParaGuardar, componerLeyendaFactura, fechaReferenciaUva, validarFacturaParaGuardar } from '../services/facturacion'
+import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto, prepararFacturaParaGuardar, componerLeyendaFactura, fechaReferenciaUva, validarFacturaParaGuardar, decidirActualizacionTarifa, calcularCicloTarifaTrasActualizar, actualizarCicloTarifaProspecto } from '../services/facturacion'
 import BotonCopiar from '../components/BotonCopiar'
 import { useData } from '../context/DataContext'
 import { getContactos } from '../services/contactos'
@@ -55,7 +55,11 @@ export default function FacturaDetalle() {
   })
   
   const [prospectoSeleccionado, setProspectoSeleccionado] = useState(null)
-  
+  // Última factura ya cargada del prospecto elegido (solo al crear una
+  // nueva). Sirve para el precompletado y para "congelar" el valor UVA entre
+  // dos actualizaciones de tarifa pactadas. Ver decidirActualizacionTarifa().
+  const [ultimaFacturaProspecto, setUltimaFacturaProspecto] = useState(null)
+
   const [pagos, setPagos] = useState([])
   const [prospectos, setProspectos] = useState([])
   const [contactos, setContactos] = useState([])
@@ -215,6 +219,7 @@ export default function FacturaDetalle() {
             } catch (err) {
               console.error('Error al buscar la última factura del prospecto:', err)
             }
+            setUltimaFacturaProspecto(ultimaFactura)
           }
 
           const updates = calcularPrefillFactura({
@@ -228,6 +233,27 @@ export default function FacturaDetalle() {
 
           if (updates.contacto_cobro2_id) setMostrarContacto2(true)
 
+          // Ciclo de ajuste de tarifa (índice UVA): si NO toca actualizar,
+          // esta factura repite EL ÚLTIMO MONTO facturado (monto fijo, igual
+          // que las facturas históricas) en vez de recalcular con tarifa UVA.
+          // Si toca actualizar, queda en modo tarifa UVA para re-preciar.
+          if (esNueva) {
+            const decision = decidirActualizacionTarifa({
+              prospecto: prosp,
+              ultimaFactura,
+              periodo_hasta: updates.periodo_hasta || factura.periodo_hasta
+            })
+            if (!decision.actualiza) {
+              setModoManualMonto(true)
+              updates.monto = decision.montoCongelado
+              updates.tarifa_base_uva = 0
+              updates.valor_uva_dia = 0
+              updates.redondeo_multiplo = 0 // facturar exactamente el último monto
+            } else {
+              setModoManualMonto(false)
+            }
+          }
+
           if (Object.keys(updates).length > 0) {
             setFactura(prev => ({ ...prev, ...updates }))
           }
@@ -235,6 +261,7 @@ export default function FacturaDetalle() {
       } else {
         setProspectoSeleccionado(null)
         setRazonesSociales([])
+        setUltimaFacturaProspecto(null)
       }
     }
     updateProspectoData()
@@ -260,6 +287,28 @@ export default function FacturaDetalle() {
     periodo_hasta: factura.periodo_hasta
   })
 
+  // Ciclo de ajuste de tarifa (índice UVA): decide si esta factura nueva
+  // RE-PRECIA con el valor UVA del día ("actualiza") o repite el ÚLTIMO MONTO
+  // facturado ("congela"), según la "Próx. Act. Tarifa" pactada del prospecto.
+  // Ver decidirActualizacionTarifa() en services/facturacion.
+  const decisionTarifa = decidirActualizacionTarifa({
+    prospecto: prospectoSeleccionado,
+    ultimaFactura: ultimaFacturaProspecto,
+    periodo_hasta: factura.periodo_hasta
+  })
+  const congelarMonto = esNueva && !decisionTarifa.actualiza && decisionTarifa.montoCongelado > 0
+  // A qué quedaría la "Próx. Act. Tarifa" del prospecto si esta factura
+  // re-precia la tarifa (para mostrarlo en el aviso de la sección de montos).
+  const cicloTrasActualizar = calcularCicloTarifaTrasActualizar({
+    periodo_desde: factura.periodo_desde,
+    frecuencia_actualizacion: prospectoSeleccionado?.frecuencia_actualizacion
+  })
+  const fmtFechaCorta = (f) => {
+    const s = String(f || '').split('T')[0]
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.split('-').reverse().join('/') : '—'
+  }
+  const uvaRefTexto = uvaReferenciaPeriodo === 'fin' ? 'fin' : 'inicio'
+
   // Campos obligatorios que faltan para poder guardar (solo al crear). Los
   // botones "Guardar Factura" solo se muestran cuando esto está vacío.
   const faltantesObligatorios = esNueva ? validarFacturaParaGuardar(factura) : []
@@ -283,6 +332,9 @@ export default function FacturaDetalle() {
   useEffect(() => {
     async function buscarUVA() {
       if (!esFechaCompleta(fechaParaUVA)) return
+      // Tarifa congelada: la factura repite el último monto (modo manual), no
+      // se re-precia con el UVA del día. No pisar valor_uva_dia en ese caso.
+      if (congelarMonto) return
       try {
         const valor = await obtenerUVAParaFecha(fechaParaUVA)
         if (valor) {
@@ -297,7 +349,7 @@ export default function FacturaDetalle() {
       }
     }
     buscarUVA()
-  }, [fechaParaUVA, esNueva])
+  }, [fechaParaUVA, esNueva, congelarMonto])
 
   // Efecto para auto-numerar Invoice
   useEffect(() => {
@@ -544,6 +596,22 @@ export default function FacturaDetalle() {
 
       // La factura ya está guardada de verdad: el borrador local no hace falta.
       limpiarBorrador()
+
+      // Si esta factura RE-PRECIA la tarifa (venció el ciclo de UVA o es la
+      // primera del prospecto), rotar el ciclo de ajuste del prospecto:
+      // Última Act. Tarifa = inicio del período facturado; Próx. Act. Tarifa
+      // = + Frecuencia Act. Un fallo acá nunca tira abajo el guardado.
+      if (esNueva && decisionTarifa.actualiza && factura.prospecto_id) {
+        try {
+          await actualizarCicloTarifaProspecto(factura.prospecto_id, {
+            periodo_desde: factura.periodo_desde,
+            frecuencia_actualizacion: prospectoSeleccionado?.frecuencia_actualizacion,
+            indice_cobro: prospectoSeleccionado?.indice_cobro
+          })
+        } catch (cicloErr) {
+          console.error('No se pudo rotar el ciclo de actualización de tarifa del prospecto:', cicloErr)
+        }
+      }
 
       // Refrescar la caché del listado de Facturación SÍ o SÍ (forzar): si no,
       // al volver a /facturacion dentro de los 90s del TTL, la lista no se
@@ -1292,12 +1360,57 @@ export default function FacturaDetalle() {
                     <label>
                       Valor UVA del día ($)
                       {fechaParaUVA && (
-                        <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}> · al {String(fechaParaUVA).split('T')[0].split('-').reverse().join('/')}</span>
+                        <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}> · al {fmtFechaCorta(fechaParaUVA)}</span>
                       )}
                     </label>
                     <input type="number" step="0.01" value={factura.valor_uva_dia} onChange={e => setFactura({...factura, valor_uva_dia: e.target.value})} />
                   </div>
                 </>
+              )}
+
+              {/* Aviso del ciclo de ajuste de tarifa (índice UVA). Explica por
+                  qué esta factura repite el último monto o re-precia con UVA. */}
+              {esNueva && prospectoSeleccionado && decisionTarifa.motivo !== 'sin-indice-uva' && (congelarMonto || !modoManualMonto) && (
+                <div style={{
+                  gridColumn: '1 / -1',
+                  padding: '12px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  lineHeight: 1.55,
+                  background: congelarMonto ? 'rgba(56,87,35,0.08)' : 'rgba(197,90,17,0.08)',
+                  border: `1px solid ${congelarMonto ? 'rgba(56,87,35,0.25)' : 'rgba(197,90,17,0.25)'}`
+                }}>
+                  {congelarMonto ? (
+                    <>
+                      <strong>🔒 Monto congelado.</strong> Esta factura repite el último monto facturado del
+                      prospecto: <strong>${formatearMonto(decisionTarifa.montoCongelado)}</strong>
+                      {ultimaFacturaProspecto?.numero_factura ? ` (factura N° ${ultimaFacturaProspecto.numero_factura})` : ''}.
+                      La tarifa se re-precia con el valor UVA recién cuando el <strong>fin del período</strong> supere la{' '}
+                      <strong>Próx. Act. Tarifa</strong>
+                      {decisionTarifa.proximaActualizacion ? ` (${fmtFechaCorta(decisionTarifa.proximaActualizacion)})` : ''}.
+                    </>
+                  ) : decisionTarifa.motivo === 'primera-factura' ? (
+                    <>
+                      <strong>🔄 Primera factura del prospecto.</strong> Se toma el valor UVA de {uvaRefTexto} del
+                      período. Al guardar arranca el ciclo: <strong>Última Act. Tarifa</strong> = inicio del período
+                      {cicloTrasActualizar ? ` (${fmtFechaCorta(cicloTrasActualizar.ultima_actualizacion_tarifa)})` : ''} y{' '}
+                      <strong>Próx. Act. Tarifa</strong>{cicloTrasActualizar ? ` = ${fmtFechaCorta(cicloTrasActualizar.proxima_actualizacion_tarifa)}` : ' = + Frecuencia Act.'}
+                    </>
+                  ) : decisionTarifa.motivo === 'sin-ciclo' ? (
+                    <>
+                      <strong>ℹ️ El prospecto no tiene “Próx. Act. Tarifa” cargada.</strong> Sin ciclo definido, la
+                      factura toma el valor UVA de {uvaRefTexto} del período todos los meses. Cargá esa fecha y la
+                      Frecuencia Act. en el prospecto (pestaña Gestión y Operaciones) para congelar el precio entre ajustes.
+                    </>
+                  ) : (
+                    <>
+                      <strong>🔄 Actualiza tarifa.</strong> El fin del período supera la Próx. Act. Tarifa
+                      {decisionTarifa.proximaActualizacion ? ` (${fmtFechaCorta(decisionTarifa.proximaActualizacion)})` : ''}:
+                      se toma el valor UVA de {uvaRefTexto} del período. Al guardar, la Próx. Act. Tarifa del prospecto
+                      pasa a {cicloTrasActualizar ? fmtFechaCorta(cicloTrasActualizar.proxima_actualizacion_tarifa) : '+ Frecuencia Act.'}
+                    </>
+                  )}
+                </div>
               )}
               <div className="field">
                 <label>Descuento (%)</label>

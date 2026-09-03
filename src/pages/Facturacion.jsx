@@ -335,7 +335,7 @@ export default function Facturacion() {
                 <thead>
                   <tr style={{ backgroundColor: '#f9f9f9', borderBottom: '1px solid #eee' }}>
                     <th style={{ padding: '12px 16px', fontWeight: '600', color: '#666' }}>Fecha</th>
-                    <th style={{ padding: '12px 16px', fontWeight: '600', color: '#666' }}>Empresa</th>
+                    <th style={{ padding: '12px 16px', fontWeight: '600', color: '#666' }}>Prospecto</th>
                     <th style={{ padding: '12px 16px', fontWeight: '600', color: '#666' }}>Contacto 1</th>
                     <th style={{ padding: '12px 16px', fontWeight: '600', color: '#666' }}>Última notificación</th>
                     <th style={{ padding: '12px 16px', fontWeight: '600', color: '#666' }}>Prox. Notificación / Retraso</th>
@@ -381,9 +381,9 @@ export default function Facturacion() {
                           {formatFecha(factura.fecha_emision)}
                         </td>
 
-                        {/* Empresa */}
+                        {/* Prospecto */}
                         <td style={{ padding: '14px 16px', fontWeight: '500', color: '#2c3e50' }}>
-                          {factura.prospectos?.empresas?.nombre || '-'}
+                          {factura.prospectos?.nombre || '-'}
                         </td>
 
                         {/* Contacto 1 */}

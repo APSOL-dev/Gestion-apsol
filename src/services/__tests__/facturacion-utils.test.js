@@ -1490,4 +1490,203 @@ describe('getUltimaFacturaProspecto', () => {
     expect(selectArg).toMatch(/incluir_horas_leyenda/)
     expect(selectArg).toMatch(/hs_facturadas/)
   })
+
+  test('pide también monto y numero_factura (para congelar el precio entre actualizaciones de tarifa)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const select = vi.fn().mockReturnThis()
+    supabase.from.mockReturnValueOnce({
+      select,
+      eq: vi.fn().mockReturnThis(),
+      not: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValueOnce({ data: null, error: null })
+    })
+
+    await getUltimaFacturaProspecto('prospecto-1')
+
+    const selectArg = select.mock.calls[0][0]
+    expect(selectArg).toMatch(/\bmonto\b/)
+    expect(selectArg).toMatch(/numero_factura/)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Ciclo de actualización de tarifa (índice UVA).
+//
+// La tarifa en UVA (Valor Base del prospecto) es fija. Lo que se ajusta es
+// el valor del UVA en pesos, y NO mes a mes: solo cuando el período a
+// facturar termina después de la "Próx. Act. Tarifa" pactada. Hasta
+// entonces la factura repite el valor UVA de la factura anterior (precio
+// congelado). Al emitir la factura que sí actualiza, el prospecto rota su
+// ciclo: última = inicio del período facturado, próxima = última + frecuencia.
+// ──────────────────────────────────────────────────────────────
+describe('decidirActualizacionTarifa', () => {
+  let decidirActualizacionTarifa
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    decidirActualizacionTarifa = mod.decidirActualizacionTarifa
+  })
+
+  const prospectoUVA = {
+    indice_cobro: 'UVA',
+    proxima_actualizacion_tarifa: '2026-10-01',
+    frecuencia_actualizacion: 3,
+  }
+  const ultima = { monto: 1215000 }
+
+  test('CONGELA cuando el fin del período todavía no superó la Próx. Act. Tarifa', () => {
+    const r = decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: ultima, periodo_hasta: '2026-08-31' })
+    expect(r.actualiza).toBe(false)
+    expect(r.motivo).toBe('dentro-del-ciclo')
+    expect(r.montoCongelado).toBe(1215000)
+  })
+
+  test('ACTUALIZA cuando el fin del período supera la Próx. Act. Tarifa', () => {
+    const r = decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: ultima, periodo_hasta: '2026-10-31' })
+    expect(r.actualiza).toBe(true)
+    expect(r.motivo).toBe('vencio-ciclo')
+  })
+
+  test('el límite exacto (fin del período == Próx. Act. Tarifa) todavía CONGELA', () => {
+    const r = decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: ultima, periodo_hasta: '2026-10-01' })
+    expect(r.actualiza).toBe(false)
+  })
+
+  test('ACTUALIZA siempre si el prospecto no tiene índice de ajuste UVA', () => {
+    const r = decidirActualizacionTarifa({
+      prospecto: { ...prospectoUVA, indice_cobro: 'Dólar' },
+      ultimaFactura: ultima, periodo_hasta: '2026-08-31',
+    })
+    expect(r.actualiza).toBe(true)
+    expect(r.motivo).toBe('sin-indice-uva')
+  })
+
+  test('ACTUALIZA si es la primera factura del prospecto (no hay monto previo para congelar)', () => {
+    expect(decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: null, periodo_hasta: '2026-08-31' }).motivo)
+      .toBe('primera-factura')
+    expect(decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: { monto: 0 }, periodo_hasta: '2026-08-31' }).actualiza)
+      .toBe(true)
+  })
+
+  test('ACTUALIZA si el prospecto no tiene "Próx. Act. Tarifa" cargada (no hay ciclo definido)', () => {
+    const r = decidirActualizacionTarifa({
+      prospecto: { indice_cobro: 'UVA', proxima_actualizacion_tarifa: null, frecuencia_actualizacion: 3 },
+      ultimaFactura: ultima, periodo_hasta: '2026-08-31',
+    })
+    expect(r.actualiza).toBe(true)
+    expect(r.motivo).toBe('sin-ciclo')
+  })
+
+  test('CONGELA una tarifa lejana: períodos 2026 con Próx. Act. Tarifa en 2028 (caso Insuga)', () => {
+    const r = decidirActualizacionTarifa({
+      prospecto: { indice_cobro: 'UVA', proxima_actualizacion_tarifa: '2028-10-28', frecuencia_actualizacion: 3 },
+      ultimaFactura: { monto: 1215000 },
+      periodo_hasta: '2026-09-28',
+    })
+    expect(r.actualiza).toBe(false)
+    expect(r.montoCongelado).toBe(1215000)
+  })
+
+  test('el disparador mira el fin del período, sin importar "Valor UVA de referencia"', () => {
+    const r = decidirActualizacionTarifa({
+      prospecto: { ...prospectoUVA, uva_referencia_periodo: 'inicio' },
+      ultimaFactura: ultima, periodo_hasta: '2026-10-31',
+    })
+    expect(r.actualiza).toBe(true)
+  })
+
+  test('tolera fechas ISO con hora y un prospecto ausente', () => {
+    expect(decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: ultima, periodo_hasta: '2026-08-31T00:00:00' }).actualiza)
+      .toBe(false)
+    expect(decidirActualizacionTarifa({}).actualiza).toBe(true)
+  })
+
+  test('expone la fecha de próxima actualización normalizada (para mostrarla en pantalla)', () => {
+    const r = decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: ultima, periodo_hasta: '2026-08-31' })
+    expect(r.proximaActualizacion).toBe('2026-10-01')
+  })
+})
+
+describe('calcularCicloTarifaTrasActualizar', () => {
+  let calcularCicloTarifaTrasActualizar
+
+  beforeEach(async () => {
+    const mod = await import('../facturacion.js')
+    calcularCicloTarifaTrasActualizar = mod.calcularCicloTarifaTrasActualizar
+  })
+
+  test('última = inicio del período facturado; próxima = última + frecuencia (meses)', () => {
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '2026-10-01', frecuencia_actualizacion: 3 }))
+      .toEqual({ ultima_actualizacion_tarifa: '2026-10-01', proxima_actualizacion_tarifa: '2027-01-01' })
+  })
+
+  test('frecuencia ausente o inválida => 1 mes', () => {
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '2026-10-01' }))
+      .toEqual({ ultima_actualizacion_tarifa: '2026-10-01', proxima_actualizacion_tarifa: '2026-11-01' })
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '2026-10-01', frecuencia_actualizacion: 'x' }).proxima_actualizacion_tarifa)
+      .toBe('2026-11-01')
+  })
+
+  test('acepta la frecuencia como string (los <input number> la devuelven así)', () => {
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '2026-10-01', frecuencia_actualizacion: '6' }).proxima_actualizacion_tarifa)
+      .toBe('2027-04-01')
+  })
+
+  test('devuelve null si el inicio del período no es una fecha válida', () => {
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '' })).toBeNull()
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '0002-01-01' })).toBeNull()
+  })
+
+  test('tolera fecha ISO con hora', () => {
+    expect(calcularCicloTarifaTrasActualizar({ periodo_desde: '2026-10-01T00:00:00', frecuencia_actualizacion: 3 }).ultima_actualizacion_tarifa)
+      .toBe('2026-10-01')
+  })
+})
+
+describe('actualizarCicloTarifaProspecto', () => {
+  let actualizarCicloTarifaProspecto
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../facturacion.js')
+    actualizarCicloTarifaProspecto = mod.actualizarCicloTarifaProspecto
+  })
+
+  test('escribe última y próxima actualización de tarifa en el prospecto (índice UVA)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const update = vi.fn().mockReturnThis()
+    const eq = vi.fn().mockResolvedValueOnce({ error: null })
+    supabase.from.mockReturnValueOnce({ update, eq })
+
+    const r = await actualizarCicloTarifaProspecto('prospecto-1', {
+      periodo_desde: '2026-10-01', frecuencia_actualizacion: 3, indice_cobro: 'UVA',
+    })
+
+    expect(supabase.from).toHaveBeenCalledWith('apsol_prospectos')
+    expect(update).toHaveBeenCalledWith({
+      ultima_actualizacion_tarifa: '2026-10-01',
+      proxima_actualizacion_tarifa: '2027-01-01',
+    })
+    expect(eq).toHaveBeenCalledWith('id', 'prospecto-1')
+    expect(r).toEqual({ ultima_actualizacion_tarifa: '2026-10-01', proxima_actualizacion_tarifa: '2027-01-01' })
+  })
+
+  test('no toca la base si el prospecto no tiene índice de ajuste UVA', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const r = await actualizarCicloTarifaProspecto('prospecto-1', {
+      periodo_desde: '2026-10-01', frecuencia_actualizacion: 3, indice_cobro: 'Dólar',
+    })
+    expect(r).toBeNull()
+    expect(supabase.from).not.toHaveBeenCalled()
+  })
+
+  test('no toca la base sin prospectoId ni con un inicio de período inválido', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    expect(await actualizarCicloTarifaProspecto(null, { periodo_desde: '2026-10-01', indice_cobro: 'UVA' })).toBeNull()
+    expect(await actualizarCicloTarifaProspecto('p1', { periodo_desde: '', indice_cobro: 'UVA' })).toBeNull()
+    expect(supabase.from).not.toHaveBeenCalled()
+  })
 })

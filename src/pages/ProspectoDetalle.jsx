@@ -1127,7 +1127,42 @@ export default function ProspectoDetalle() {
                 <Activity size={20} className="text-success" />
                 Control de Producción y Facturación
               </h3>
-              
+
+              {/* Cómo se aplica el ajuste por UVA en las facturas nuevas */}
+              <div style={{
+                marginBottom: '20px',
+                padding: '14px 16px',
+                borderRadius: '8px',
+                background: 'rgba(56,87,35,0.06)',
+                border: '1px solid rgba(56,87,35,0.2)',
+                fontSize: '12.5px',
+                lineHeight: 1.6
+              }}>
+                <strong style={{ display: 'block', marginBottom: '6px' }}>
+                  Cómo se ajusta la tarifa en las facturas (Índice de Ajuste = UVA)
+                </strong>
+                La <strong>tarifa en UVA</strong> (Valor Base) es fija; lo que cambia es el valor del UVA en pesos, y{' '}
+                <strong>no mes a mes</strong>:
+                <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                  <li>
+                    Cada factura nueva <strong>repite el último monto facturado</strong> (precio congelado)
+                    mientras el <strong>fin del período</strong> sea anterior o igual a la <strong>Próx. Act. Tarifa</strong>.
+                  </li>
+                  <li>
+                    Cuando el fin del período <strong>supera</strong> la Próx. Act. Tarifa, la factura se re-precia:
+                    Valor Base (UVA) × <strong>valor UVA fresco</strong> del día que indique <em>“Valor UVA de referencia”</em> (inicio o fin del período).
+                  </li>
+                  <li>
+                    Al emitir esa factura, <strong>Última Act. Tarifa</strong> pasa a ser el inicio de su período y{' '}
+                    <strong>Próx. Act. Tarifa</strong> se recalcula (Última + <strong>Frecuencia Act.</strong>).
+                  </li>
+                  <li>
+                    La <strong>primera factura</strong> de un prospecto (sin monto previo) se re-precia e inicia el ciclo.
+                    Sin “Próx. Act. Tarifa” cargada no hay congelado: se re-precia todos los meses.
+                  </li>
+                </ul>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
                 <div className="field">
                   <label>Horas Mensuales</label>

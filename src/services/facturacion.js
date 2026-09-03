@@ -139,6 +139,76 @@ export function fechaReferenciaUva({ uva_referencia_periodo, periodo_desde, peri
   return fecha || ''
 }
 
+/** 'YYYY-MM-DD' o ISO con hora -> 'YYYY-MM-DD'. '' si no es una fecha completa. */
+function soloFechaCompleta(valor) {
+  const s = String(valor || '').split('T')[0]
+  return esFechaCompleta(s) ? s : ''
+}
+
+/**
+ * Decide, al crear una factura nueva, si hay que RE-PRECIAR la tarifa con el
+ * valor UVA fresco ("actualiza") o repetir el valor UVA de la última factura
+ * del prospecto ("congela"), según el ciclo de ajuste pactado.
+ *
+ * La tarifa en UVA (Valor Base del prospecto) es fija; lo que se ajusta es
+ * el valor del UVA en pesos, y NO mes a mes: recién cuando el período a
+ * facturar termina DESPUÉS de la "Próx. Act. Tarifa" del prospecto. Hasta
+ * entonces se repite EL ÚLTIMO MONTO facturado (el histórico no guarda
+ * desglose tarifa/valor UVA, solo el monto; por eso se congela sobre `monto`).
+ *
+ *  - `indice_cobro` != 'UVA'             -> actualiza (motivo 'sin-indice-uva')
+ *  - sin factura previa con monto        -> actualiza (motivo 'primera-factura')
+ *  - sin 'Próx. Act. Tarifa' cargada     -> actualiza (motivo 'sin-ciclo')
+ *  - periodo_hasta  >  Próx. Act. Tarifa -> actualiza (motivo 'vencio-ciclo')
+ *  - si no                               -> congela  (motivo 'dentro-del-ciclo')
+ *
+ * El disparador SIEMPRE compara contra `periodo_hasta` (fin del período), sin
+ * importar la config "Valor UVA de referencia" del prospecto — esa solo
+ * define de qué día se lee el valor UVA cuando sí toca actualizar.
+ *
+ * Función pura (sin I/O): se testea sin montar el componente ni tocar Supabase.
+ *
+ * @returns {{ actualiza: boolean, motivo: string, proximaActualizacion: string, montoCongelado: number }}
+ */
+export function decidirActualizacionTarifa({ prospecto, ultimaFactura, periodo_hasta } = {}) {
+  const proximaActualizacion = soloFechaCompleta(prospecto?.proxima_actualizacion_tarifa)
+  const montoCongelado = Number(ultimaFactura?.monto) || 0
+  const base = { proximaActualizacion, montoCongelado }
+
+  if (String(prospecto?.indice_cobro || '').toUpperCase() !== 'UVA') {
+    return { ...base, actualiza: true, motivo: 'sin-indice-uva' }
+  }
+  if (!ultimaFactura || montoCongelado <= 0) {
+    return { ...base, actualiza: true, motivo: 'primera-factura' }
+  }
+  const finPeriodo = soloFechaCompleta(periodo_hasta)
+  if (!proximaActualizacion || !finPeriodo) {
+    return { ...base, actualiza: true, motivo: 'sin-ciclo' }
+  }
+  if (finPeriodo > proximaActualizacion) {
+    return { ...base, actualiza: true, motivo: 'vencio-ciclo' }
+  }
+  return { ...base, actualiza: false, motivo: 'dentro-del-ciclo' }
+}
+
+/**
+ * Nuevos valores de ciclo de tarifa para el prospecto cuando una factura
+ * "actualizó" la tarifa:
+ *   ultima_actualizacion_tarifa  = inicio del período facturado (periodo_desde)
+ *   proxima_actualizacion_tarifa = ese inicio + `frecuencia_actualizacion` meses
+ * Frecuencia ausente / inválida => 1 mes. Devuelve null si periodo_desde no
+ * es una fecha válida. Pura.
+ */
+export function calcularCicloTarifaTrasActualizar({ periodo_desde, frecuencia_actualizacion } = {}) {
+  const desde = soloFechaCompleta(periodo_desde)
+  if (!desde) return null
+  const meses = Number(frecuencia_actualizacion) > 0 ? Number(frecuencia_actualizacion) : 1
+  return {
+    ultima_actualizacion_tarifa: desde,
+    proxima_actualizacion_tarifa: sumarMeses(desde, meses),
+  }
+}
+
 /**
  * Decide qué campos precompletar al elegir un prospecto en una factura nueva:
  * razón social, contactos de cobro, cuenta bancaria, tipo de comprobante,
@@ -523,6 +593,31 @@ async function avanzarProximaFacturaProspecto(prospectoId) {
     .eq('id', prospectoId)
 }
 
+/**
+ * Al emitir una factura que RE-PRECIA la tarifa (venció el ciclo de UVA o es
+ * la primera del prospecto), rota el ciclo de ajuste del prospecto:
+ * "Última Act. Tarifa" pasa a ser el inicio del período facturado y
+ * "Próx. Act. Tarifa" se recalcula (última + Frecuencia Act.). Solo para
+ * prospectos con Índice de Ajuste = UVA. No-op silencioso si falta el
+ * prospecto, el índice no es UVA o el período no tiene un inicio válido.
+ * La decisión de si "actualiza" o "congela" la toma decidirActualizacionTarifa
+ * en el cliente ANTES de guardar (con la última factura previa a esta).
+ */
+export async function actualizarCicloTarifaProspecto(prospectoId, { periodo_desde, frecuencia_actualizacion, indice_cobro } = {}) {
+  if (!prospectoId) return null
+  if (String(indice_cobro || '').toUpperCase() !== 'UVA') return null
+
+  const ciclo = calcularCicloTarifaTrasActualizar({ periodo_desde, frecuencia_actualizacion })
+  if (!ciclo) return null
+
+  const { error } = await supabase
+    .from('apsol_prospectos')
+    .update(ciclo)
+    .eq('id', prospectoId)
+  if (error) throw error
+  return ciclo
+}
+
 // Servicios para Pagos
 export async function savePago(pago) {
   // Limpiar campos de joins
@@ -612,7 +707,7 @@ export async function getUltimaFacturaProspecto(prospectoId) {
   const { data, error } = await supabase
     .from('apsol_facturacion')
     .select(`
-      periodo_desde, periodo_hasta, tarifa_base_uva, porcentaje_descuento,
+      numero_factura, monto, periodo_desde, periodo_hasta, tarifa_base_uva, valor_uva_dia, porcentaje_descuento,
       cuenta_bancaria_id, solo_invoice, contacto_cobro_id, contacto_cobro2_id,
       razon_social_id, leyenda, redondeo_multiplo, incluir_horas_leyenda, hs_facturadas
     `)
