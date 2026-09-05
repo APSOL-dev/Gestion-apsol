@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { vi, describe, test, expect, beforeEach } from 'vitest'
 import moment from 'moment'
 import Cronograma from '../Cronograma'
@@ -119,7 +119,8 @@ const ACTIVIDADES_MOCK = [
 const PROSPECTOS_MOCK = [
   { id: 'pros-1', nombre: 'Escobar', estado: '6A - En producción' },
   { id: 'pros-2', nombre: 'Consultora', estado: '6A - En producción' },
-  { id: 'pros-3', nombre: 'Norte 2025', estado: '4 - Propuesta enviada' }
+  { id: 'pros-3', nombre: 'Norte 2025', estado: '4 - Propuesta enviada' },
+  { id: 'pros-4', nombre: 'Cliente Cerrado', estado: '5H - Finalizados' }
 ]
 
 const COLABORADORES_MOCK = [
@@ -185,6 +186,10 @@ const rsValor = () => document.querySelector('.rs__single-value')?.textContent ?
 describe('Cronograma', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // El componente recuerda algunas preferencias en localStorage (ancho del
+    // panel de saldo, tilde "Ver histórico"); sin limpiar, un test le filtra
+    // el estado al siguiente.
+    localStorage.clear()
     mockUseData()
     mockServiciosCronograma()
     // Sin usuario logueado por defecto: así el preseleccionado automático
@@ -294,6 +299,54 @@ describe('Cronograma', () => {
     })
   })
 
+  // ─── Indicadores de dedicación (recuadro bajo el saldo) ─────────────────────
+
+  const ACTIVIDADES_CON_DURACION = [
+    { ...ACTIVIDADES_MOCK[0], duracion_horas: 1 },   // col-1, pros-1 (Escobar)
+    { ...ACTIVIDADES_MOCK[1], duracion_horas: 2 },   // col-2, pros-2 (Consultora)
+    {
+      id: '3', prospecto_id: 'pros-1', descripcion: 'Ajustes',
+      inicio: '2026-08-22T09:00:00', fin: '2026-08-22T12:00:00',
+      responsable_id: 'col-2', responsable_nombre: 'Carlos Gómez',
+      reunion_cliente: false, link_reunion: '', comentarios_reunion: '',
+      duracion_horas: 3, multiplicador: 1
+    }
+  ]
+
+  test('sin filtros, el recuadro de indicadores suma todas las horas del rango', async () => {
+    mockServiciosCronograma({ actividades: ACTIVIDADES_CON_DURACION })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    expect(caja).toHaveTextContent('Todo el personal · Todos los prospectos')
+    expect(caja).toHaveTextContent('6.00h')   // 1 + 2 + 3
+    expect(caja).toHaveTextContent('Actividades')
+  })
+
+  test('cruza el filtro de Personal con el de Prospectos y suma solo esa intersección', async () => {
+    mockServiciosCronograma({ actividades: ACTIVIDADES_CON_DURACION })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    // Personal -> Carlos (col-2)
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    const dropdownPersonal = screen.getByLabelText('Buscar en Personal').closest('.picker-dropdown')
+    fireEvent.click(within(dropdownPersonal).getByText('Carlos Gómez'))
+    // Prospectos -> Escobar (pros-1). "Escobar" también figura en el panel de
+    // saldo, así que se acota la búsqueda al desplegable del filtro.
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    const dropdownProsp = screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown')
+    fireEvent.click(within(dropdownProsp).getByText('Escobar'))
+
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    await waitFor(() => {
+      expect(caja).toHaveTextContent('Carlos Gómez · Escobar')
+      // Solo la actividad 3 (Carlos en Escobar, 3h). La 1 es de Ana, la 2 es otro prospecto.
+      expect(caja).toHaveTextContent('3.00h')
+    })
+  })
+
   // ─── Tests del modal ────────────────────────────────────────────────────────
 
   test('el modal se abre con formulario vacío al hacer clic en el botón "+"', () => {
@@ -345,6 +398,94 @@ describe('Cronograma', () => {
     })
     // El campo de descripción debe estar vacío (es una nueva actividad)
     expect(screen.getByPlaceholderText('¿Qué se va a realizar?')).toHaveValue('')
+  })
+
+  // ─── Filtro "Prospectos" / "Personal" y el tilde "Ver histórico" ──────────
+
+  test('por defecto el filtro de Prospectos muestra solo los que están en producción (no los finalizados)', async () => {
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    const dd = screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown')
+    expect(within(dd).getByText('Escobar')).toBeInTheDocument()               // 6A - En producción
+    expect(within(dd).queryByText('Cliente Cerrado')).not.toBeInTheDocument() // 5H - Finalizados, oculto
+    expect(within(dd).queryByText('Norte 2025')).not.toBeInTheDocument()      // pipeline, nunca
+  })
+
+  test('"Ver histórico" suma los finalizados al filtro de Prospectos y los de baja al de Personal', async () => {
+    mockUseData({
+      colaboradores: [
+        ...COLABORADORES_MOCK,
+        { id: 'col-baja', usuario_id: null, nombre: 'Felipe', apellido: 'Duarte', activo: false }
+      ]
+    })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    // Antes de tildar: ni el finalizado ni el de baja aparecen
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    expect(within(screen.getByLabelText('Buscar en Personal').closest('.picker-dropdown'))
+      .queryByText('Felipe Duarte')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ })) // cerrar
+
+    fireEvent.click(screen.getByRole('button', { name: /Ver histórico/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    expect(within(screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown'))
+      .getByText('Cliente Cerrado')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
+    expect(within(screen.getByLabelText('Buscar en Personal').closest('.picker-dropdown'))
+      .getByText('Felipe Duarte')).toBeInTheDocument()
+  })
+
+  test('con "Ver histórico" tildado se puede filtrar por un prospecto finalizado y ver sus actividades', async () => {
+    mockServiciosCronograma({
+      actividades: [
+        ...ACTIVIDADES_MOCK,
+        {
+          id: '9', prospecto_id: 'pros-4', descripcion: 'Cierre de servicio',
+          inicio: '2026-08-19T09:00:00', fin: '2026-08-19T10:00:00',
+          responsable_id: 'col-1', responsable_nombre: 'Ana López',
+          reunion_cliente: false, link_reunion: '', comentarios_reunion: '',
+          duracion_horas: 1, multiplicador: 1
+        }
+      ]
+    })
+    render(<Cronograma />)
+    await waitFor(() => expect(screen.getByTestId('event-9')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /Ver histórico/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    const dd = screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown')
+    fireEvent.click(within(dd).getByText('Cliente Cerrado'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-9')).toBeInTheDocument()
+      expect(screen.queryByTestId('event-1')).not.toBeInTheDocument()
+    })
+  })
+
+  test('al DEStildar "Ver histórico" se limpia del filtro el prospecto finalizado que había quedado seleccionado (sin chip fantasma)', async () => {
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByRole('button', { name: /Ver histórico/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    fireEvent.click(within(screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown'))
+      .getByText('Cliente Cerrado'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos (1)')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Ver histórico/ })) // destildar
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos')
+      expect(screen.getByRole('button', { name: /Prospectos/ })).not.toHaveTextContent('Prospectos (')
+    })
   })
 
   // ─── Tests del selector "Prospecto / Cliente" del modal ────────────────────

@@ -26,11 +26,15 @@ Registros históricos de actividad cargados en `apsol_private.cronograma`
 | 10 | Estudio Gustavo Echarte | `e974ee7d-e790-462d-90bf-2486ffa0c99e` | 32 | 2026-04-10 | 68 | 164.07 | 04/04/2026 → 04/09/2026 | +8.87 h |
 | 11 | Marketing APSOL | `816dc40f-38bb-48dd-bcfc-b0ddbd929abe` | 16 | 2026-06-01 | 20 | 46.00 | 08/06/2026 → 28/07/2026 | −2.04 h |
 | 12 | Open Pack Estabilización | `361c3e6a-c923-4916-8c96-93f2cb16023b` | 16 | 2026-07-22 | 5 | 16.50 | 24/07/2026 → 10/08/2026 | −5.67 h |
+| 13 | DG | `1654bbba-9770-4600-b193-b2dd4b70d1b4` | 24 | 2022-12-04 | 126 | 613.77 | 24/08/2023 → 31/01/2025 | −461.52 h · ver nota |
 
-**Total: 12 prospectos · 1.411 filas · 3.516,71 horas ponderadas.**
+**Total: 13 prospectos · 1.537 filas · 4.130,48 horas ponderadas.**
 
 Cada carga fue verificada en el browser (`localhost:5173/cronograma`, panel
 "Saldo De Horas — Mes Actual"): el saldo mostrado coincide con el valor calculado.
+Excepción: **DG** está en estado "5H - Finalizados" y no aparece en ese panel;
+se verificó abriendo la actividad en el calendario (semana del 19–25/08/2024,
+"Tablero Garantias DG", prospecto DG, hora AR correcta).
 
 ## Notas por prospecto
 
@@ -52,6 +56,13 @@ Cada carga fue verificada en el browser (`localhost:5173/cronograma`, panel
   `Open Pack Final`, `Open Pack Estabilización`). Se usó
   `361c3e6a-…` ("6A - En producción"). Sin registros previos; sin duplicados.
   5 filas, responsables Mateo Courault (3) y Adrian Patriarca (2).
+- **DG:** proyecto finalizado (2022-2024), la mayoría de las filas con responsable
+  Felipe Duarte (usuario dado de baja, no seleccionable en los filtros del
+  Cronograma). Incluye una fila **"Ajuste Inicial"** de `287 h`
+  (01/01/2024 00:00 → 12/01/2024 23:00) que cubre el período previo al registro
+  detallado — cargada tal cual venía en el paste. Sin registros previos.
+  El saldo −461.52 h es esperable: `hs_teoricas` sigue acumulando hasta la fecha
+  de referencia aunque el servicio haya terminado en enero 2025.
 
 ## Pipeline aplicado a cada batch
 

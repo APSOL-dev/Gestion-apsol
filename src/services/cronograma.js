@@ -41,29 +41,11 @@ export function calcularHorasTeoricas(hsMensuales, inicioServicio, fechaReferenc
   return semanas * (Number(hsMensuales) / 4.33)
 }
 
-/**
- * Calcula el saldo de horas de un prospecto: horas efectivamente dedicadas
- * en TODO el historial (`horasDedicadas`, ver `getHorasDedicadasPorProspecto`)
- * menos las horas teóricas que le correspondían desde el inicio del
- * servicio (ver `calcularHorasTeoricas`). Es un saldo acumulado, no se
- * resetea cada mes — igual que en AppSheet, un mes flojo se puede
- * compensar (o arrastrar en contra) en los siguientes.
- *
- * Devuelve `null` cuando el prospecto no tiene un abono de horas
- * configurado, o no tiene fecha de inicio de servicio (no hay desde cuándo
- * contar), para no mostrar un saldo engañoso.
- * @param {{hs_mensuales: number|null|undefined, inicio_servicio: string|null|undefined}} prospecto
- * @param {number|null|undefined} horasDedicadas  del Map que devuelve getHorasDedicadasPorProspecto
- * @param {Date} [fechaReferencia]
- * @returns {number|null}
- */
 export function calcularSaldoHoras(prospecto, horasDedicadas, fechaReferencia = new Date()) {
-  if (prospecto.hs_mensuales == null) return null
+  if (!prospecto || prospecto.hs_mensuales == null) return null
   if (!prospecto.inicio_servicio) return null
   const hsTeoricas = calcularHorasTeoricas(prospecto.hs_mensuales, prospecto.inicio_servicio, fechaReferencia)
   const dedicadas = Number(horasDedicadas) || 0
-  // 2 decimales: es la precisión con la que Adrian compara el saldo contra
-  // el histórico de AppSheet (ej. -85.79, no -85.8).
   return Math.round((dedicadas - hsTeoricas) * 100) / 100
 }
 

@@ -83,9 +83,30 @@ Este documento detalla la lógica técnica y de negocio utilizada para migrar y 
   * **Problema:** En el histórico de la hoja `Facturación` de AppSheet existen registros de cobro asociados a IDs de contactos (ej. `62660d5b` o `79c13bda`) que no existen en la hoja de `Contactos` (fueron eliminados o modificados en el origen). Intentar insertarlos tal cual violaba la restricción de clave foránea (`foreign key`) de la tabla física `facturacion` en Supabase.
   * **Solución:** El script de importación lee de antemano el conjunto de todos los IDs de contacto válidos existentes en la hoja `Contactos`. Al iterar las facturas, valida si el `Contacto 1` o `Contacto 2` del Excel pertenece a este conjunto. Si no existe, se mapea a `NULL` de manera segura, evitando fallos de integridad referencial.
 
+
 * **Importación de Fechas de Notificación y Retraso:**
   * Las columnas `Ultima notificación` y `Proxima notificación` se mapean y guardan en `ultima_notificacion` y `proxima_notificacion` de Supabase.
   * El estado de cobro se normaliza conforme al tipo ENUM de base de datos (`Pendiente`, `Enviada`, `Cobrada parcial`, `Cobrada total`).
   * En el listado de la app, si una factura no se encuentra en estado `Cobrada total`, se calcula de forma dinámica y visualiza el **Retraso** transcurrido en días restando la fecha de emisión de la factura a la fecha del día de hoy.
+
+---
+
+## 5. Lógica de Cronograma (Carga Masiva 2023 - 2026)
+
+* **Origen:** Hoja `Cronograma Local` del archivo Excel `Apsol App (4).xlsx`.
+* **Destino:** Tabla física `apsol_private.cronograma` (a través de la vista pública `public.apsol_cronograma`).
+* **Volumen de Datos Migrado:**
+  * Año 2023: 145 actividades
+  * Año 2024: 972 actividades
+  * Año 2025: 1,586 actividades
+  * Año 2026: 1,752 actividades
+  * **Total unificado:** 4,455 registros acumulados.
+* **Reglas de transformación y resiliencia:**
+  * **UUIDs de Actividades:** Los IDs hexadecimales de AppSheet (8 caracteres) se expanden al formato UUID estándar de PostgreSQL (`XXXXXXXX-0000-0000-0000-000000000000`).
+  * **Mapeo Estricto de Prospectos:** Se respeta la distinción exacta de cada versión de prospecto registrada en el catálogo de base de datos (`apsol_private.prospectos`). Por ejemplo, la empresa DG cuenta con prospectos distintos e independientes: `DG` (versión histórica), `DG 2025` y `DG 2026`. Ningún prospecto se agrupa ni colapsa con el de otro año. Si una actividad no coincide con un prospecto activo, su clave foránea `prospecto_id` se asigna a `NULL` y su nombre se preserva anteponiéndolo en la descripción (`[Nombre] Descripción`).
+  * **Mapeo de Colaboradores:** Se asignan a los IDs UUID del equipo (Santiago Toscano, Mateo Courault, Renata Morano, Adrian Patriarca, Felipe Duarte, Paola Yossen, Rocío Franco, Sofía Leiva, Mantenimiento).
+  * **Atributos adicionales:** Se calculan las duraciones en horas, marcas de reunión con cliente, links de videollamadas, comentarios, array de herramientas utilizadas e identificadores de Google Calendar (`google_calendar_id`).
+
+
 
 

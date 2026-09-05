@@ -28,6 +28,8 @@ import { sincronizarEventoReunion, listarEventosCalendar } from '../services/cal
 import {
   esActividadOcupada, normalizarResponsableEInvitados, colaboradorPuedeEditarActividad
 } from '../utils/cronogramaVisibilidad'
+import { calcularIndicadoresDedicacion } from '../utils/indicadoresCronograma'
+import * as filtrosCronograma from '../utils/cronogramaFiltros'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
 
 moment.locale('es')
@@ -74,6 +76,18 @@ const ANCHO_COL_NOMBRE_MIN = 70
 const ANCHO_COL_NOMBRE_ABS_MAX = 400 // techo de sanidad ante un valor corrupto en localStorage
 const ANCHO_COL_NOMBRE_DEFAULT = 110
 const CLAVE_ANCHO_COL_NOMBRE = 'apsol_cronograma_saldo_col_nombre_width'
+// Preferencia del tilde "Ver histórico" (barra de filtros): incluir en las
+// listas de "Personal" y "Prospectos" a los ex-colaboradores de baja y a los
+// prospectos finalizados. Se recuerda entre visitas.
+const CLAVE_VER_HISTORICO = 'apsol_cronograma_ver_historico'
+
+function leerVerHistoricoGuardado() {
+  try {
+    return localStorage.getItem(CLAVE_VER_HISTORICO) === '1'
+  } catch {
+    return false
+  }
+}
 
 function leerAnchoColNombreGuardado() {
   const guardado = Number(localStorage.getItem(CLAVE_ANCHO_COL_NOMBRE))
@@ -145,6 +159,19 @@ export default function Cronograma() {
   // agendamientos que vienen de afuera (Google Calendar de APSOL: Calendly,
   // eventos cargados a mano desde otro dispositivo, etc.).
   const [verAgendaExterna, setVerAgendaExterna] = useState(true)
+  // Tilde "Ver histórico": cuando está apagado (por defecto) las listas de
+  // "Personal" y "Prospectos" muestran solo lo vigente (colaboradores
+  // activos + prospectos en producción); encendido, suman los
+  // ex-colaboradores de baja y los prospectos finalizados. Ver
+  // utils/cronogramaFiltros.js.
+  const [verHistorico, setVerHistorico] = useState(leerVerHistoricoGuardado)
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLAVE_VER_HISTORICO, verHistorico ? '1' : '0')
+    } catch {
+      // localStorage no disponible: la preferencia solo dura esta sesión.
+    }
+  }, [verHistorico])
 
   const [selectedColab, setSelectedColab] = useState([])
   const [selectedProspectos, setSelectedProspectos] = useState([])
@@ -261,7 +288,9 @@ export default function Cronograma() {
 
   useEffect(() => {
     refreshProspectos(prospectos.length > 0)
-    getColaboradoresLista()
+    // Se trae la lista COMPLETA (incluidos los de baja): qué se muestra en el
+    // filtro "Personal" lo decide el tilde "Ver histórico", client-side.
+    getColaboradoresLista({ soloActivos: false })
       .then(setColaboradores)
       .catch(err => console.error('Error al cargar la lista de colaboradores:', err))
   }, [])
@@ -332,6 +361,38 @@ export default function Cronograma() {
   // Filtrar prospectos en producción
   const prospectosProduccion = prospectos.filter(p => p.estado === '6A - En producción')
 
+  // Opciones del filtro "Personal" de la barra: colaboradores activos, y
+  // también los de baja si el tilde "Ver histórico" está encendido (los
+  // stubs de conciliación de la migración nunca).
+  const personalVisible = filtrosCronograma.personalVisible(colaboradores, verHistorico)
+
+  // Opciones del filtro "Prospectos" de la barra: los que están EN PRODUCCIÓN,
+  // y también los FINALIZADOS si "Ver histórico" está encendido (ex clientes
+  // que conservan actividades y horas históricas que se puede querer revisar).
+  // El alta de actividades y el panel de saldo siguen siendo solo producción
+  // — un cliente cerrado no suma horas nuevas ni tiene saldo vivo. Producción
+  // primero, luego finalizados; cada grupo alfabético.
+  const prospectosFiltrables = filtrosCronograma
+    .prospectosFiltrables(prospectos, verHistorico)
+    .sort((a, b) => {
+      const rank = e => (e === '6A - En producción' ? 0 : 1)
+      return rank(a.estado) - rank(b.estado) || (a.nombre || '').localeCompare(b.nombre || '')
+    })
+
+  // Al APAGAR "Ver histórico", saco de los filtros lo que dejó de estar
+  // visible: si no, queda un chip "(1)" fantasma cuya opción ya no aparece
+  // en la lista y no se puede destildar.
+  function toggleVerHistorico() {
+    const siguiente = !verHistorico
+    setVerHistorico(siguiente)
+    if (!siguiente) {
+      setSelectedColab(sel => filtrosCronograma.podarSeleccion(
+        sel, filtrosCronograma.personalVisible(colaboradores, false)))
+      setSelectedProspectos(sel => filtrosCronograma.podarSeleccion(
+        sel, filtrosCronograma.prospectosFiltrables(prospectos, false)))
+    }
+  }
+
   // Opciones del selector "Prospecto / Cliente": prospectos EN PRODUCCIÓN +
   // categorías internas fijas, deduplicadas (por si un prospecto se llama
   // igual que una categoría).
@@ -396,6 +457,37 @@ export default function Cronograma() {
         return ordenAsc ? va - vb : vb - va
       })
   }, [prospectosProduccion, horasDedicadasPorProspecto, reunionesPorProspecto, ordenColumna, ordenAsc])
+
+  // Indicadores de dedicación: total de horas del cruce Personal × Prospecto
+  // que el usuario tenga filtrado arriba, acotado al rango de fechas visible
+  // (las mismas actividades que alimentan el calendario). Sin filtro de
+  // personal cuenta a todos; sin filtro de prospecto, todos.
+  const indicadores = useMemo(
+    () => calcularIndicadoresDedicacion(actividadesRangoResueltas, {
+      colaboradoresIds: selectedColab,
+      prospectosIds: selectedProspectos,
+      prospectos
+    }),
+    [actividadesRangoResueltas, selectedColab, selectedProspectos, prospectos]
+  )
+
+  // Texto que aclara qué está sumando el recuadro de indicadores según los
+  // filtros activos ("Mateo · Prospecto uno", "3 personas · Todos los
+  // prospectos", etc.).
+  const resumenSeleccion = useMemo(() => {
+    const nombreColab = id => {
+      const c = colaboradores.find(x => x.id === id)
+      return c ? `${c.nombre} ${c.apellido || ''}`.trim() : '—'
+    }
+    const nombreProsp = id => prospectos.find(x => x.id === id)?.nombre || '—'
+    const personal = selectedColab.length === 0
+      ? 'Todo el personal'
+      : selectedColab.length === 1 ? nombreColab(selectedColab[0]) : `${selectedColab.length} personas`
+    const prosp = selectedProspectos.length === 0
+      ? 'Todos los prospectos'
+      : selectedProspectos.length === 1 ? nombreProsp(selectedProspectos[0]) : `${selectedProspectos.length} prospectos`
+    return `${personal} · ${prosp}`
+  }, [selectedColab, selectedProspectos, colaboradores, prospectos])
 
   // Color por prospecto: estable y distinto para cada nombre, así se nota
   // el corte entre un bloque y el siguiente en el calendario (ver
@@ -819,7 +911,7 @@ export default function Cronograma() {
             <FiltroMultiSelect
               icon={<Users size={14} />}
               label="Personal"
-              options={colaboradores}
+              options={personalVisible}
               selectedIds={selectedColab}
               onChange={setSelectedColab}
               getLabel={c => `${c.nombre} ${c.apellido || ''}`.trim()}
@@ -830,11 +922,25 @@ export default function Cronograma() {
             <FiltroMultiSelect
               icon={<Target size={14} />}
               label="Prospectos"
-              options={prospectosProduccion}
+              options={prospectosFiltrables}
               selectedIds={selectedProspectos}
               onChange={setSelectedProspectos}
-              emptyMessage="No hay prospectos en producción"
+              emptyMessage="No hay prospectos en producción o finalizados"
             />
+
+            {/* Un solo tilde que gobierna las dos listas de arriba: apagado
+                muestra solo lo vigente (personal activo + prospectos en
+                producción); encendido suma los ex-colaboradores de baja y
+                los prospectos finalizados. */}
+            <button
+              type="button"
+              className={`filtro-trigger ${verHistorico ? 'active' : ''}`}
+              onClick={toggleVerHistorico}
+              title="Incluir en Personal y Prospectos a los ex-colaboradores de baja y a los prospectos finalizados"
+            >
+              {verHistorico ? <CheckSquare size={14} /> : <Square size={14} />}
+              Ver histórico
+            </button>
 
             {/* Solo administrador: mostrar/ocultar los agendamientos externos
                 (Google Calendar de APSOL: Calendly, cargados desde otro
@@ -928,7 +1034,14 @@ export default function Cronograma() {
             <h3>Saldo de Horas — Mes Actual</h3>
           </div>
 
-          <div className="compliance-list" style={{ '--ancho-col-nombre': `${anchoColNombreAplicado}px` }}>
+          <div
+            className="compliance-list"
+            style={{
+              '--ancho-col-nombre': `${anchoColNombreAplicado}px`,
+              maxHeight: 'clamp(200px, 38vh, 420px)',
+              overflowY: 'auto'
+            }}
+          >
             <div
               className="col-resize-handle"
               style={{ left: `${anchoColNombreAplicado}px` }}
@@ -971,6 +1084,38 @@ export default function Cronograma() {
               )
             })}
           </div>
+        </div>
+
+        {/* Indicadores de dedicación: suma de horas del cruce Personal ×
+            Prospecto filtrado arriba, dentro del rango de fechas visible. */}
+        <div className="sidebar-section indicadores-dedicacion">
+          <div className="section-header">
+            <h3>Horas dedicadas — según filtros</h3>
+          </div>
+          <p style={{
+            margin: '0 0 10px', fontSize: 12, color: '#64748b', fontWeight: 500,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+          }} title={resumenSeleccion}>
+            {resumenSeleccion}
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {[
+              { k: 'horas', label: 'Horas', valor: `${indicadores.horas.toFixed(2)}h`, hint: 'Suma de la duración de las actividades' },
+              { k: 'act', label: 'Actividades', valor: String(indicadores.actividades), hint: 'Cantidad de actividades contadas' },
+              { k: 'pond', label: 'Ajustadas', valor: `${indicadores.horasPonderadas.toFixed(2)}h`, hint: 'Horas × multiplicador — lo que suma al saldo' }
+            ].map(t => (
+              <div key={t.k} title={t.hint} style={{
+                background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8,
+                padding: '10px 8px', textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', lineHeight: 1.1 }}>{t.valor}</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', marginTop: 4 }}>{t.label}</div>
+              </div>
+            ))}
+          </div>
+          <p style={{ margin: '8px 0 0', fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>
+            En el rango {moment(fechaDesde).format('DD/MM')}–{moment(fechaHasta).format('DD/MM')}
+          </p>
         </div>
 
         <div className="details-panel-empty">

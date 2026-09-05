@@ -318,6 +318,8 @@ describe('calcularSaldoHoras', () => {
     expect(calcularSaldoHoras(prospecto, undefined, new Date('2026-08-30T12:00:00Z'))).toBe(-22.17)
   })
 
+
+
   test('el saldo puede ser positivo si se dedicó más de lo teórico', () => {
     const prospecto = { hs_mensuales: 24, inicio_servicio: '2025-02-03' }
     expect(calcularSaldoHoras(prospecto, 500, new Date('2026-08-30T12:00:00Z'))).toBe(45.5)
