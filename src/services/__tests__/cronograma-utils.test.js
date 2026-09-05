@@ -379,39 +379,102 @@ describe('calcularDiasDesde', () => {
 // estas piden al servidor solo lo que hace falta en cada caso.
 // ──────────────────────────────────────────────────────────────
 
+// La RPC apsol_cronograma_visible se lee como una tabla: PostgREST recorta
+// la respuesta en `db-max-rows` (1000) filas. Con el histórico migrado una
+// ventana ancha ya pasa esas 1000 filas, así que getActividadesEnRango tiene
+// que pedir DE A PÁGINAS y concatenar. Si no, el calendario y el recuadro
+// "Horas Dedicadas — Según Filtros" pierden en silencio todo lo que caiga
+// después de la fila 1000 (p. ej. proyectos viejos ya finalizados).
 describe('getActividadesEnRango', () => {
-  let getActividadesEnRango
+  let getActividadesEnRango, TAM_PAGINA_ACTIVIDADES, supabaseMod
 
   beforeEach(async () => {
     vi.clearAllMocks()
     vi.resetModules()
+    supabaseMod = await import('../../lib/supabase')
     const mod = await import('../cronograma.js')
     getActividadesEnRango = mod.getActividadesEnRango
+    TAM_PAGINA_ACTIVIDADES = mod.TAM_PAGINA_ACTIVIDADES
   })
 
-  test('lee por la RPC apsol_cronograma_visible (redacción por rol server-side), no de la tabla directa', async () => {
-    const { supabase } = await import('../../lib/supabase')
-    supabase.rpc.mockResolvedValueOnce({ data: [{ id: '1' }, { id: '2', descripcion: 'Ocupado' }], error: null })
+  // `supabase.rpc(...)` devuelve un builder encadenable Y "thenable"; la
+  // paginación usa `.range(from, to)`. Este mock entrega una página distinta
+  // (en orden) por cada llamada a `.range()`.
+  function mockRpcPaginado(paginas) {
+    let i = 0
+    supabaseMod.supabase.rpc.mockImplementation(() => ({
+      range: vi.fn(() => Promise.resolve(paginas[i++] ?? { data: [], error: null }))
+    }))
+  }
+
+  test('lee por la RPC apsol_cronograma_visible con el rango (redacción por rol server-side), no de la tabla directa', async () => {
+    mockRpcPaginado([{ data: [{ id: '1' }, { id: '2', descripcion: 'Ocupado' }], error: null }])
 
     const resultado = await getActividadesEnRango('2026-08-01T00:00:00.000Z', '2026-08-31T23:59:59.999Z')
 
-    expect(supabase.rpc).toHaveBeenCalledWith('apsol_cronograma_visible', {
+    expect(supabaseMod.supabase.rpc).toHaveBeenCalledWith('apsol_cronograma_visible', {
       p_desde: '2026-08-01T00:00:00.000Z',
       p_hasta: '2026-08-31T23:59:59.999Z'
     })
-    expect(supabase.from).not.toHaveBeenCalled()
+    expect(supabaseMod.supabase.from).not.toHaveBeenCalled()
     expect(resultado).toEqual([{ id: '1' }, { id: '2', descripcion: 'Ocupado' }])
   })
 
+  test('NO trunca en 1000: pagina hasta agotar el rango y concatena todo', async () => {
+    const pagina = n => ({ data: Array.from({ length: n }, (_, i) => ({ id: String(i) })), error: null })
+    // 2 páginas llenas + 1 parcial => 1000 + 1000 + 137 = 2137 filas
+    mockRpcPaginado([
+      pagina(TAM_PAGINA_ACTIVIDADES),
+      pagina(TAM_PAGINA_ACTIVIDADES),
+      pagina(137)
+    ])
+
+    const resultado = await getActividadesEnRango('a', 'b')
+
+    expect(resultado).toHaveLength(TAM_PAGINA_ACTIVIDADES * 2 + 137)
+  })
+
+  test('pide las páginas por offset contiguo (0-999, 1000-1999, …) hasta que una vuelve incompleta', async () => {
+    const rangeCalls = []
+    let i = 0
+    const paginas = [
+      { data: Array.from({ length: TAM_PAGINA_ACTIVIDADES }, () => ({})), error: null },
+      { data: [{}], error: null }
+    ]
+    supabaseMod.supabase.rpc.mockImplementation(() => ({
+      range: vi.fn((from, to) => {
+        rangeCalls.push([from, to])
+        return Promise.resolve(paginas[i++] ?? { data: [], error: null })
+      })
+    }))
+
+    await getActividadesEnRango('a', 'b')
+
+    expect(rangeCalls).toEqual([
+      [0, TAM_PAGINA_ACTIVIDADES - 1],
+      [TAM_PAGINA_ACTIVIDADES, TAM_PAGINA_ACTIVIDADES * 2 - 1]
+    ])
+  })
+
+  test('una sola página (menos de 1000) no dispara una segunda request', async () => {
+    let llamadas = 0
+    supabaseMod.supabase.rpc.mockImplementation(() => ({
+      range: vi.fn(() => { llamadas++; return Promise.resolve({ data: [{ id: 'x' }], error: null }) })
+    }))
+
+    const r = await getActividadesEnRango('a', 'b')
+
+    expect(llamadas).toBe(1)
+    expect(r).toEqual([{ id: 'x' }])
+  })
+
   test('devuelve [] si la RPC no trae nada', async () => {
-    const { supabase } = await import('../../lib/supabase')
-    supabase.rpc.mockResolvedValueOnce({ data: null, error: null })
+    mockRpcPaginado([{ data: null, error: null }])
     expect(await getActividadesEnRango('a', 'b')).toEqual([])
   })
 
-  test('propaga el error de la RPC', async () => {
-    const { supabase } = await import('../../lib/supabase')
-    supabase.rpc.mockResolvedValueOnce({ data: null, error: new Error('rpc caída') })
+  test('propaga el error de la RPC (y corta la paginación)', async () => {
+    mockRpcPaginado([{ data: null, error: new Error('rpc caída') }])
     await expect(getActividadesEnRango('a', 'b')).rejects.toThrow('rpc caída')
   })
 })
@@ -449,6 +512,25 @@ describe('getHorasDedicadasPorProspecto', () => {
     supabase.rpc.mockResolvedValueOnce({ data: null, error: null })
     const resultado = await getHorasDedicadasPorProspecto()
     expect(resultado.size).toBe(0)
+  })
+
+  // CRÍTICO: el saldo NUNCA se puede truncar. La suma se hace server-side
+  // (SUM + GROUP BY dentro de la RPC) y vuelve UNA fila por prospecto — un
+  // puñado, nunca cerca del tope de 1000 de PostgREST. Este test bloquea
+  // que alguien lo convierta en una lectura paginada de la tabla (que sí
+  // podría cortar filas y falsear el saldo).
+  test('LOCK: agrega server-side en UNA sola llamada, sin paginar — el saldo no se puede truncar aunque la tabla crezca', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.rpc.mockResolvedValueOnce({
+      data: [{ prospecto_id: 'p-1', horas_dedicadas: 987654.32 }],
+      error: null
+    })
+
+    const resultado = await getHorasDedicadasPorProspecto()
+
+    expect(supabase.rpc).toHaveBeenCalledTimes(1)
+    expect(supabase.rpc).toHaveBeenCalledWith('get_horas_dedicadas_por_prospecto')
+    expect(resultado.get('p-1')).toBe(987654.32)
   })
 
   test('propaga el error de la RPC', async () => {

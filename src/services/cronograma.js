@@ -336,13 +336,30 @@ export function extraerProspectoParaMostrar(prospectoNombreReal, descripcion) {
  * @param {string} desde  ISO 8601
  * @param {string} hasta  ISO 8601
  */
+
+/**
+ * Tamaño de página de {@link getActividadesEnRango}. La RPC se lee como una
+ * tabla y PostgREST corta la respuesta en `db-max-rows` (1000) filas. Con el
+ * histórico migrado una ventana ancha ya supera esas 1000 filas, así que hay
+ * que pedir de a páginas de este tamaño hasta agotar el rango; si no, el
+ * calendario y los indicadores pierden en silencio todo lo que caiga después
+ * de la fila 1000. El saldo NO usa esto: se agrega server-side
+ * (get_horas_dedicadas_por_prospecto) y no se puede truncar.
+ */
+export const TAM_PAGINA_ACTIVIDADES = 1000
+
 export async function getActividadesEnRango(desde, hasta) {
-  const { data, error } = await supabase.rpc('apsol_cronograma_visible', {
-    p_desde: desde,
-    p_hasta: hasta
-  })
-  if (error) throw error
-  return data || []
+  const todas = []
+  for (let offset = 0; ; offset += TAM_PAGINA_ACTIVIDADES) {
+    const { data, error } = await supabase
+      .rpc('apsol_cronograma_visible', { p_desde: desde, p_hasta: hasta })
+      .range(offset, offset + TAM_PAGINA_ACTIVIDADES - 1)
+    if (error) throw error
+    const pagina = data || []
+    todas.push(...pagina)
+    if (pagina.length < TAM_PAGINA_ACTIVIDADES) break
+  }
+  return todas
 }
 
 /**
