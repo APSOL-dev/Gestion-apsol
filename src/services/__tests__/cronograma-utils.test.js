@@ -736,3 +736,93 @@ describe('saveActividad calcula duracion_horas', () => {
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ duracion_horas: 4.25 }))
   })
 })
+
+// ──────────────────────────────────────────────────────────────
+// Bug (reportado por Santiago): cargó una actividad a las 08:00 y quedó
+// guardada a las 05:00. El <input type="datetime-local"> entrega la hora
+// de pared local sin zona ('2026-09-07T08:00'); si eso entra tal cual a
+// la columna timestamptz, PostgREST lo interpreta como UTC y la actividad
+// queda 3 h corrida (se ve 05:00 lo que se cargó 08:00). Hay que pasar el
+// valor a un instante UTC ISO antes de persistir.
+// El test asume zona local UTC-3 (America/Argentina/Buenos_Aires), igual
+// que el resto de este archivo.
+// ──────────────────────────────────────────────────────────────
+describe('datetimeLocalAUtc', () => {
+  let datetimeLocalAUtc
+
+  beforeEach(async () => {
+    vi.resetModules()
+    const mod = await import('../cronograma.js')
+    datetimeLocalAUtc = mod.datetimeLocalAUtc
+  })
+
+  test('convierte la hora de pared local del datetime-local a instante UTC', () => {
+    expect(datetimeLocalAUtc('2026-09-07T08:00')).toBe('2026-09-07T11:00:00.000Z')
+  })
+
+  test('el round-trip a hora de pared local devuelve lo que tipeó el usuario', () => {
+    const iso = datetimeLocalAUtc('2026-09-07T08:00')
+    expect(moment(iso).format('YYYY-MM-DDTHH:mm')).toBe('2026-09-07T08:00')
+  })
+
+  test('deja pasar sin tocar un instante ISO completo (drag/resize del calendario)', () => {
+    expect(datetimeLocalAUtc('2026-09-07T11:00:00.000Z')).toBe('2026-09-07T11:00:00.000Z')
+  })
+
+  test('devuelve el valor original si es vacío o inválido', () => {
+    expect(datetimeLocalAUtc('')).toBe('')
+    expect(datetimeLocalAUtc(null)).toBe(null)
+    expect(datetimeLocalAUtc('no-es-fecha')).toBe('no-es-fecha')
+  })
+})
+
+describe('saveActividad normaliza inicio/fin a UTC antes de persistir', () => {
+  let saveActividad
+  let insertMock, updateMock, selectMock, singleMock, eqMock, fromMock
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const { supabase } = await import('../../lib/supabase')
+    insertMock = vi.fn()
+    updateMock = vi.fn()
+    selectMock = vi.fn()
+    singleMock = vi.fn().mockResolvedValue({ data: {}, error: null })
+    eqMock = vi.fn()
+    fromMock = vi.fn(() => ({ insert: insertMock, update: updateMock }))
+    supabase.from.mockImplementation(fromMock)
+    insertMock.mockReturnValue({ select: selectMock })
+    updateMock.mockReturnValue({ eq: eqMock })
+    eqMock.mockReturnValue({ select: selectMock })
+    selectMock.mockReturnValue({ single: singleMock })
+
+    const mod = await import('../cronograma.js')
+    saveActividad = mod.saveActividad
+  })
+
+  test('al crear con un datetime-local (08:00 local) guarda el instante UTC (11:00Z)', async () => {
+    await saveActividad({
+      prospecto_id: 'p-1',
+      inicio: '2026-09-07T08:00',
+      fin: '2026-09-07T08:30'
+    })
+
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({
+      inicio: '2026-09-07T11:00:00.000Z',
+      fin: '2026-09-07T11:30:00.000Z'
+    }))
+  })
+
+  test('al editar con un instante ISO completo (drag) no lo vuelve a correr', async () => {
+    await saveActividad({
+      id: 'act-1',
+      inicio: '2026-09-07T11:00:00.000Z',
+      fin: '2026-09-07T12:00:00.000Z'
+    })
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      inicio: '2026-09-07T11:00:00.000Z',
+      fin: '2026-09-07T12:00:00.000Z'
+    }))
+  })
+})

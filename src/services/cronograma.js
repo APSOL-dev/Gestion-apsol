@@ -114,6 +114,26 @@ export function calcularHastaConDuracion(desde, horas) {
 /** Opciones de duración rápida (en horas) que muestra el modal bajo Desde/Hasta. */
 export const DURACIONES_RAPIDAS = [1, 2, 3, 4, 5, 6]
 
+/**
+ * Un `<input type="datetime-local">` entrega la hora de pared LOCAL sin zona
+ * ('2026-09-07T08:00'). La columna `inicio`/`fin` es `timestamptz`: si ese
+ * string sin offset entra tal cual, PostgREST/Postgres lo interpreta como UTC
+ * y la actividad queda corrida (bug de Santiago: cargó 08:00 y se guardó/mostró
+ * 05:00). Esta función lo pasa al instante UTC ISO equivalente.
+ *
+ * Solo actúa si el valor tiene EXACTAMENTE el formato del datetime-local; un
+ * instante ISO ya completo (el que manda el drag/resize del calendario, vía
+ * `moment(...).toISOString()`) o un valor vacío/ inválido se devuelven sin
+ * tocar, así la función es idempotente.
+ * @param {string} valorLocal
+ * @returns {string} ISO 8601 en UTC, o el valor original
+ */
+export function datetimeLocalAUtc(valorLocal) {
+  if (!valorLocal) return valorLocal
+  const m = moment(valorLocal, ['YYYY-MM-DDTHH:mm', 'YYYY-MM-DDTHH:mm:ss'], true)
+  return m.isValid() ? m.toISOString() : valorLocal
+}
+
 /** Zona horaria de la operación (todo lo que se ve/usa es UTC-3). */
 export const ZONA_HORARIA = 'America/Argentina/Buenos_Aires'
 
@@ -442,6 +462,11 @@ function limpiarPayloadCronograma(actividad) {
 
 export async function saveActividad(actividad) {
   const payload = limpiarPayloadCronograma(actividad)
+  // El modal manda la hora de pared local del datetime-local ('...T08:00');
+  // sin esto se guarda como UTC y la actividad queda 3 h corrida. Idempotente:
+  // si ya viene un instante ISO completo (drag/resize) lo deja igual.
+  if (payload.inicio) payload.inicio = datetimeLocalAUtc(payload.inicio)
+  if (payload.fin) payload.fin = datetimeLocalAUtc(payload.fin)
   // No hay ningún trigger en la base que calcule esto solo (se verificó) -
   // si no se manda acá, la columna queda NULL y el saldo de horas la
   // ignora en silencio (la cuenta como 0h). Se recalcula siempre a partir
