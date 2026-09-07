@@ -838,6 +838,22 @@ describe('Cronograma', () => {
     expect(resp).toHaveValue('Ana López')
   })
 
+  test('el selector de Responsable no lista los stubs de conciliación de la migración "(sheet id ...)"', async () => {
+    mockUseData({
+      colaboradores: [
+        ...COLABORADORES_MOCK,
+        { id: 'stub-1', usuario_id: null, nombre: '(sheet id 3)', apellido: '', activo: false },
+      ],
+    })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    const opciones = opcionesRS(screen.getByLabelText('Responsable Asignado'))
+    expect(opciones).toContain('Ana López')
+    expect(opciones.some(o => o.includes('sheet id'))).toBe(false)
+  })
+
   test('un Team Lead puede agendar para otra persona y se guarda ese responsable', async () => {
     useAuth.mockReturnValue({ user: { id: 'user-1' }, esColaborador: true, esTeamLead: true })
     cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })

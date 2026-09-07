@@ -220,10 +220,13 @@ export default function Cronograma() {
     [colaboradores, formData.responsable_id]
   )
 
-  // Opciones del selector de responsable (cualquier colaborador; un
-  // colaborador no lo elige, siempre es él mismo — ver más abajo).
+  // Opciones del selector de responsable: cualquier colaborador real, MENOS
+  // los stubs de conciliación de la migración de AppSheet ("(sheet id abc)"),
+  // que no son personas. Mismo criterio que el filtro "Personal".
   const opcionesResponsable = useMemo(
-    () => colaboradores.map(c => ({ value: c.id, label: `${c.nombre} ${c.apellido || ''}`.trim() })),
+    () => colaboradores
+      .filter(c => !filtrosCronograma.esColaboradorConciliacion(c))
+      .map(c => ({ value: c.id, label: `${c.nombre} ${c.apellido || ''}`.trim() })),
     [colaboradores]
   )
 
