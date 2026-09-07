@@ -2312,6 +2312,42 @@ a.link-primary:hover { text-decoration: underline; }
   background: rgba(224, 98, 0, 0.06);
 }
 
+/* Herramientas: botones toggle (uno o varios). */
+.herr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.herr-chip {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.herr-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(224, 98, 0, 0.06);
+}
+.herr-chip.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+.herr-chip.active:hover {
+  color: #fff;
+}
+fieldset[disabled] .herr-chip {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* Contador de caracteres de la descripción */
 .desc-counter {
   font-size: 12px;

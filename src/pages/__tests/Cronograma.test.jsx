@@ -777,15 +777,23 @@ describe('Cronograma', () => {
     expect(sincronizarEventoReunion).not.toHaveBeenCalled()
   })
 
-  test('permite elegir herramienta(s) utilizada(s) y las guarda como array', async () => {
+  test('las herramientas son botones toggle: se elige una o varias y se guardan como array', async () => {
     cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })
     render(<Cronograma />)
     fireEvent.click(screen.getByTitle('Nueva Actividad'))
     await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
     await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Ana López')
     fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
-    await elegirEnRS(screen.getByLabelText('Herramienta(s) utilizada(s)'), 'Antigravity')
-    await elegirEnRS(screen.getByLabelText('Herramienta(s) utilizada(s)'), 'N8N')
+
+    const grupo = screen.getByRole('group', { name: 'Herramientas utilizadas' })
+    fireEvent.click(within(grupo).getByRole('button', { name: 'Antigravity' }))
+    fireEvent.click(within(grupo).getByRole('button', { name: 'N8N' }))
+    fireEvent.click(within(grupo).getByRole('button', { name: 'Power Bi' }))
+    // toggle off: vuelvo a tocar Power Bi y queda sin marcar
+    fireEvent.click(within(grupo).getByRole('button', { name: 'Power Bi' }))
+
+    expect(within(grupo).getByRole('button', { name: 'Antigravity' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(grupo).getByRole('button', { name: 'Power Bi' })).toHaveAttribute('aria-pressed', 'false')
 
     fireEvent.click(screen.getByText('Confirmar'))
 

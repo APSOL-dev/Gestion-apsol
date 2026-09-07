@@ -223,11 +223,6 @@ export default function Cronograma() {
     [colaboradores]
   )
 
-  const opcionesHerramientas = useMemo(
-    () => HERRAMIENTAS_CRONOGRAMA.map(h => ({ value: h, label: h })),
-    []
-  )
-
   // Estilos compartidos por los 3 react-select del modal (portal por
   // encima del overlay del modal).
   const rsProps = {
@@ -1249,25 +1244,31 @@ export default function Cronograma() {
                 </div>
               </div>
 
-              {/* Herramienta(s) utilizada(s): selección múltiple, mismo estilo
-                  que el resto de los selects del modal. */}
+              {/* Herramienta(s) utilizada(s): botones toggle, se puede marcar
+                  una o varias. */}
               <div className="form-group">
-                <label htmlFor="sel-herramientas">Herramienta(s) utilizada(s)</label>
-                <Select
-                  {...rsProps}
-                  inputId="sel-herramientas"
-                  isMulti
-                  isClearable
-                  isDisabled={soloLectura}
-                  placeholder="Elegí una o más herramientas…"
-                  noOptionsMessage={() => 'Sin más herramientas'}
-                  options={opcionesHerramientas}
-                  value={opcionesHerramientas.filter(o => (formData.herramientas || []).includes(o.value))}
-                  onChange={sel => {
-                    const arr = Array.isArray(sel) ? sel : (sel ? [sel] : [])
-                    setFormData({ ...formData, herramientas: arr.map(o => o.value) })
-                  }}
-                />
+                <label>Herramienta(s) utilizada(s)</label>
+                <div className="herr-chips" role="group" aria-label="Herramientas utilizadas">
+                  {HERRAMIENTAS_CRONOGRAMA.map(h => {
+                    const activa = (formData.herramientas || []).includes(h)
+                    return (
+                      <button
+                        key={h}
+                        type="button"
+                        className={`herr-chip ${activa ? 'active' : ''}`}
+                        aria-pressed={activa}
+                        onClick={() => setFormData({
+                          ...formData,
+                          herramientas: activa
+                            ? (formData.herramientas || []).filter(x => x !== h)
+                            : [...(formData.herramientas || []), h]
+                        })}
+                      >
+                        {h}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
 
               {/* Multiplicador de horas para el saldo — SOLO administrador.
