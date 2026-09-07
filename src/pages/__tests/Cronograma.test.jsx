@@ -400,6 +400,33 @@ describe('Cronograma', () => {
     expect(screen.getByPlaceholderText('¿Qué se va a realizar?')).toHaveValue('')
   })
 
+  test('hacer clic fuera del modal (en el fondo) NO lo cierra — así no se pierde lo escrito', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    expect(screen.getByText('Nueva Actividad')).toBeInTheDocument()
+
+    fireEvent.click(document.querySelector('.modal-overlay'))
+
+    expect(screen.getByText('Nueva Actividad')).toBeInTheDocument() // sigue abierto
+  })
+
+  test('la tecla Escape cierra el modal', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    expect(screen.getByText('Nueva Actividad')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByText('Nueva Actividad')).not.toBeInTheDocument()
+  })
+
+  test('la X cierra el modal', () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+    fireEvent.click(document.querySelector('.btn-close'))
+    expect(screen.queryByText('Nueva Actividad')).not.toBeInTheDocument()
+  })
+
   test('al abrir "Nueva Actividad" el responsable arranca en la persona logueada', async () => {
     mockUseAuth({ id: 'user-1' }) // user-1 = col-1 = Ana López (COLABORADORES_MOCK)
     render(<Cronograma />)

@@ -205,6 +205,14 @@ export default function Cronograma() {
   const [showModal, setShowModal] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [formData, setFormData] = useState(FORM_VACÍO)
+
+  // Escape cierra el modal de actividad (además de la X y Cancelar/Guardar).
+  useEffect(() => {
+    if (!showModal) return
+    const onKeyDown = e => { if (e.key === 'Escape') setShowModal(false) }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showModal])
   // Un Colaborador que abre un evento pasado hace más de 2 días hábiles lo
   // ve en SOLO LECTURA (no puede editar ni borrar). Un admin nunca.
   const [soloLectura, setSoloLectura] = useState(false)
@@ -1184,10 +1192,11 @@ export default function Cronograma() {
         </div>
       </aside>
 
-      {/* MODAL */}
+      {/* MODAL — se cierra SOLO con la X, Escape o Guardar/Cancelar (nunca
+          por un clic en el fondo, para no perder lo que se estaba tipeando). */}
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content premium" onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal-content premium">
             <div className="modal-header">
               <div>
                 <h2>{selectedEvent ? 'Editar Actividad' : 'Nueva Actividad'}</h2>
