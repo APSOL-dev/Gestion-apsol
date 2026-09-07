@@ -827,6 +827,38 @@ describe('Cronograma', () => {
     expect(screen.queryByLabelText('Multiplicador')).not.toBeInTheDocument()
   })
 
+  test('un colaborador raso: el Responsable es un campo fijo con su nombre (no puede elegir a otro)', async () => {
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esColaborador: true }) // user-1 = Ana López
+    render(<Cronograma />)
+    await esperarCargaInicial()
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    const resp = screen.getByLabelText('Responsable Asignado')
+    expect(resp).toHaveAttribute('readonly')
+    expect(resp).toHaveValue('Ana López')
+  })
+
+  test('un Team Lead puede agendar para otra persona y se guarda ese responsable', async () => {
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esColaborador: true, esTeamLead: true })
+    cronogramaService.saveActividad.mockResolvedValue({ id: 'real-1' })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    // Arranca en la persona logueada (Ana López) pero es un selector editable
+    expect(rsValor()).toBe('Ana López')
+    await elegirEnRS(screen.getByLabelText('Responsable Asignado'), 'Carlos Gómez')
+
+    await elegirEnRS(screen.getByLabelText('Prospecto / Cliente'), 'Escobar')
+    fireEvent.change(screen.getByPlaceholderText('¿Qué se va a realizar?'), { target: { value: 'x'.repeat(60) } })
+    fireEvent.click(screen.getByText('Confirmar'))
+
+    await waitFor(() => expect(cronogramaService.saveActividad).toHaveBeenCalled())
+    expect(cronogramaService.saveActividad).toHaveBeenCalledWith(
+      expect.objectContaining({ responsable_id: 'col-2' })
+    )
+  })
+
   test('un colaborador abre un evento pasado hace más de 2 días hábiles en SOLO LECTURA', async () => {
     useAuth.mockReturnValue({ user: { id: 'user-1' }, esColaborador: true })
     render(<Cronograma />)

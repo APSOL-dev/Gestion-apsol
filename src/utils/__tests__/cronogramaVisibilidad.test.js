@@ -209,4 +209,13 @@ describe('normalizarResponsableEInvitados', () => {
     expect(r.responsable_id).toBe(OTRO)
     expect(r.participantes_ids).toEqual([ADMIN])
   })
+
+  it('Team Lead (colaborador con el flag): puede agendar para otro y con varios invitados', () => {
+    const r = normalizarResponsableEInvitados(
+      { responsable_id: OTRO, participantes_ids: [ADMIN, YO, ADMIN] },
+      { esColaborador: true, esTeamLead: true, miColaboradorId: YO }
+    )
+    expect(r.responsable_id).toBe(OTRO)          // NO lo fuerza a sí mismo
+    expect(r.participantes_ids).toEqual([ADMIN, YO]) // no corta en 1, dedup, saca al responsable
+  })
 })

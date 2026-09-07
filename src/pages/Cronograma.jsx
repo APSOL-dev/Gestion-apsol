@@ -110,7 +110,11 @@ export default function Cronograma() {
   const {
     prospectos, loadingProspectos, refreshProspectos
   } = useData()
-  const { user, esColaborador } = useAuth()
+  const { user, esColaborador, esTeamLead } = useAuth()
+  // Quién puede agendar/editar actividades para OTRA persona: Admin o Team
+  // Lead (Renata). Un colaborador raso solo se agenda a sí mismo. Está
+  // espejado en la RLS de cronograma (migration_cronograma_agendar_team_lead.sql).
+  const puedeAgendarParaOtros = !esColaborador || esTeamLead
   // Lista mínima de colaboradores (id + nombre), NO la ficha completa: un
   // Colaborador por RLS solo ve su propia ficha en apsol_colaboradores, pero
   // necesita la lista para el filtro "Personal" y el selector de invitados.
@@ -732,10 +736,11 @@ export default function Cronograma() {
 
     const { prospecto_nombre, descripcion, ...resto } = formData
     const resuelto = resolverProspectoParaGuardar(prospecto_nombre, descripcion, prospectos)
-    // Un colaborador siempre queda de responsable y con 1 invitado como máximo.
+    // Un colaborador raso siempre queda de responsable y con 1 invitado como
+    // máximo; un Admin o Team Lead puede agendar para cualquiera.
     const { responsable_id, participantes_ids } = normalizarResponsableEInvitados(
       { responsable_id: resto.responsable_id, participantes_ids: resto.participantes_ids },
-      { esColaborador, miColaboradorId: miColaborador?.id }
+      { esColaborador, esTeamLead, miColaboradorId: miColaborador?.id }
     )
     const payload = { ...resto, ...resuelto, responsable_id, participantes_ids }
 
@@ -1301,15 +1306,7 @@ export default function Cronograma() {
 
               <div className="form-group">
                 <label htmlFor="sel-responsable">Responsable Asignado</label>
-                {esColaborador ? (
-                  <input
-                    type="text"
-                    className="rs-readonly-input"
-                    readOnly
-                    value={`${miColaborador?.nombre || ''} ${miColaborador?.apellido || ''}`.trim() || 'Vos'}
-                    title="Un colaborador solo puede agendarse a sí mismo"
-                  />
-                ) : (
+                {puedeAgendarParaOtros ? (
                   <Select
                     {...rsProps}
                     inputId="sel-responsable"
@@ -1320,21 +1317,30 @@ export default function Cronograma() {
                     value={opcionesResponsable.find(o => o.value === formData.responsable_id) || null}
                     onChange={sel => setFormData({ ...formData, responsable_id: sel ? sel.value : '' })}
                   />
+                ) : (
+                  <input
+                    id="sel-responsable"
+                    type="text"
+                    className="rs-readonly-input"
+                    readOnly
+                    value={`${miColaborador?.nombre || ''} ${miColaborador?.apellido || ''}`.trim() || 'Vos'}
+                    title="Un colaborador solo puede agendarse a sí mismo"
+                  />
                 )}
               </div>
 
               {/* Invitados: desplegable de búsqueda con SOLO usuarios activos del
-                  sistema. Un colaborador puede invitar a 1 (isMulti off); un
-                  admin, a varios. */}
+                  sistema. Un colaborador raso puede invitar a 1 (isMulti off);
+                  un admin o Team Lead, a varios. */}
               <div className="form-group">
-                <label htmlFor="sel-invitados">{esColaborador ? 'Invitado (opcional)' : 'Invitados (opcional)'}</label>
+                <label htmlFor="sel-invitados">{puedeAgendarParaOtros ? 'Invitados (opcional)' : 'Invitado (opcional)'}</label>
                 <Select
                   {...rsProps}
                   inputId="sel-invitados"
-                  isMulti={!esColaborador}
+                  isMulti={puedeAgendarParaOtros}
                   isClearable
                   isDisabled={soloLectura}
-                  placeholder={esColaborador ? 'Elegí un invitado…' : 'Elegí uno o más invitados…'}
+                  placeholder={puedeAgendarParaOtros ? 'Elegí uno o más invitados…' : 'Elegí un invitado…'}
                   noOptionsMessage={() => 'No hay usuarios activos para invitar'}
                   options={opcionesInvitados}
                   value={opcionesInvitados.filter(o => formData.participantes_ids.includes(o.value))}

@@ -81,18 +81,21 @@ export function esActividadOcupada(act) {
 
 /**
  * Normaliza responsable + invitados de una actividad según quién la guarda:
- *  - Un Colaborador SIEMPRE queda como responsable de lo que agenda, y puede
- *    invitar como mucho a UNA persona (a sí mismo nunca).
- *  - Un Admin puede poner cualquier responsable y varios invitados; se le
- *    saca de la lista al propio responsable y se deduplica.
+ *  - Un Colaborador raso SIEMPRE queda como responsable de lo que agenda, y
+ *    puede invitar como mucho a UNA persona (a sí mismo nunca).
+ *  - Un Admin o un Team Lead pueden poner cualquier responsable y varios
+ *    invitados; se saca de la lista al propio responsable y se deduplica.
  *
  * @param {{ responsable_id?: string, participantes_ids?: string[] }} form
- * @param {{ esColaborador?: boolean, miColaboradorId?: string|null }} ctx
+ * @param {{ esColaborador?: boolean, esTeamLead?: boolean, miColaboradorId?: string|null }} ctx
  * @returns {{ responsable_id: string, participantes_ids: string[] }}
  */
 export function normalizarResponsableEInvitados(form = {}, ctx = {}) {
-  const { esColaborador = false, miColaboradorId = null } = ctx
-  const responsable_id = esColaborador && miColaboradorId
+  const { esColaborador = false, esTeamLead = false, miColaboradorId = null } = ctx
+  // "Colaborador raso" = colaborador que NO es Team Lead: solo se agenda a sí mismo.
+  const soloParaMi = esColaborador && !esTeamLead
+
+  const responsable_id = soloParaMi && miColaboradorId
     ? miColaboradorId
     : (form.responsable_id || '')
 
@@ -100,7 +103,7 @@ export function normalizarResponsableEInvitados(form = {}, ctx = {}) {
   invitados = [...new Set(invitados.filter(Boolean))]
     .filter(id => id !== responsable_id)
 
-  if (esColaborador) invitados = invitados.slice(0, 1)
+  if (soloParaMi) invitados = invitados.slice(0, 1)
 
   return { responsable_id, participantes_ids: invitados }
 }
