@@ -1979,6 +1979,42 @@ a.link-primary:hover { text-decoration: underline; }
   border-radius: 4px !important;
 }
 
+/* Buscador del panel "Saldo de Horas" */
+.saldo-buscador {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #94a3b8;
+}
+
+.saldo-buscador input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  color: #1e293b;
+  padding: 0;
+}
+
+.saldo-buscador-clear {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: #94a3b8;
+}
+
+.saldo-buscador-clear:hover {
+  color: #475569;
+}
+
 /* Compliance List (Right Sidebar) */
 .compliance-list {
   display: flex;
@@ -2067,13 +2103,37 @@ a.link-primary:hover { text-decoration: underline; }
 
 .p-saldo {
   font-weight: 400;
-  text-align: right;
   padding-right: 12px;
   color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
 }
 
 .p-saldo.negative {
   color: #ef4444;
+}
+
+/* Semáforo del saldo (referencia: AppSheet):
+   negativo = rojo, al día = verde, a favor por más de una semana de
+   horas = violeta con relojito. */
+.p-saldo.saldo-negativo {
+  color: #ef4444;
+  font-weight: 500;
+}
+
+.p-saldo.saldo-ok {
+  color: #16a34a;
+}
+
+.p-saldo.saldo-excedente {
+  color: #7c3aed;
+  font-weight: 500;
+}
+
+.p-saldo.saldo-excedente svg {
+  flex-shrink: 0;
 }
 
 .p-days {

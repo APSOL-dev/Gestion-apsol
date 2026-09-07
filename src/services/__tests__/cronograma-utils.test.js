@@ -326,6 +326,43 @@ describe('calcularSaldoHoras', () => {
   })
 })
 
+describe('nivelSaldo (semáforo del panel de saldo)', () => {
+  let nivelSaldo
+  beforeEach(async () => {
+    nivelSaldo = (await import('../cronograma.js')).nivelSaldo
+  })
+
+  test('saldo negativo -> "negativo" (rojo)', () => {
+    expect(nivelSaldo(-0.01, 24)).toBe('negativo')
+    expect(nivelSaldo(-91.34, 40)).toBe('negativo')
+  })
+
+  test('saldo 0 o a favor pero dentro de una semana de horas -> "ok" (verde)', () => {
+    expect(nivelSaldo(0, 24)).toBe('ok')
+    // 24 hs/mes / 4.33 ≈ 5.54 -> una semana
+    expect(nivelSaldo(5, 24)).toBe('ok')
+    expect(nivelSaldo(5.54, 24)).toBe('ok')
+  })
+
+  test('saldo a favor por MÁS de una semana de horas -> "excedente" (violeta + reloj)', () => {
+    expect(nivelSaldo(6, 24)).toBe('excedente')
+    expect(nivelSaldo(9.38, 24)).toBe('excedente')
+  })
+
+  test('prospecto con hs_mensuales 0 (Mantenimiento): cualquier saldo a favor es "excedente", 0 sigue "ok"', () => {
+    expect(nivelSaldo(0, 0)).toBe('ok')
+    expect(nivelSaldo(0.5, 0)).toBe('excedente')
+    expect(nivelSaldo(20.77, 0)).toBe('excedente')
+    expect(nivelSaldo(-3, 0)).toBe('negativo')
+  })
+
+  test('sin saldo calculable -> null (no se colorea)', () => {
+    expect(nivelSaldo(null, 24)).toBeNull()
+    expect(nivelSaldo(undefined, 24)).toBeNull()
+    expect(nivelSaldo(NaN, 24)).toBeNull()
+  })
+})
+
 // Fórmula real de AppSheet para "Días desde la última reunión" (la pasó
 // Adrian tal cual del editor):
 //   IF(no hay ninguna reunión con cliente,

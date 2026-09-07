@@ -50,6 +50,29 @@ export function calcularSaldoHoras(prospecto, horasDedicadas, fechaReferencia = 
 }
 
 /**
+ * Nivel del saldo para el semáforo del panel "Saldo de Horas":
+ *  - 'negativo' (rojo): el prospecto debe horas.
+ *  - 'ok' (verde): al día, hasta el equivalente a UNA semana de horas a favor.
+ *  - 'excedente' (violeta + reloj): a favor por más de una semana de horas.
+ *  - null: sin saldo calculable → no se colorea.
+ *
+ * "Una semana de horas" = horas mensuales contratadas / 4.33 (las mismas
+ * semanas/mes que usa calcularHorasTeoricas). Un prospecto con hs_mensuales
+ * 0 (p. ej. los de Mantenimiento) tiene umbral 0: cualquier saldo a favor
+ * ya es 'excedente'.
+ * @param {number|null|undefined} saldo
+ * @param {number|string|null|undefined} hsMensuales
+ * @returns {'negativo'|'ok'|'excedente'|null}
+ */
+export function nivelSaldo(saldo, hsMensuales) {
+  if (saldo == null || Number.isNaN(Number(saldo))) return null
+  const s = Number(saldo)
+  if (s < 0) return 'negativo'
+  const unaSemana = (Number(hsMensuales) || 0) / 4.33
+  return s > unaSemana ? 'excedente' : 'ok'
+}
+
+/**
  * Calcula "días desde la última reunión", reproduciendo la fórmula real de
  * AppSheet (columna virtual de Prospectos):
  *   IF(no hay ninguna reunión con cliente,

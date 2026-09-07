@@ -400,6 +400,79 @@ describe('Cronograma', () => {
     expect(screen.getByPlaceholderText('¿Qué se va a realizar?')).toHaveValue('')
   })
 
+  test('al abrir "Nueva Actividad" el responsable arranca en la persona logueada', async () => {
+    mockUseAuth({ id: 'user-1' }) // user-1 = col-1 = Ana López (COLABORADORES_MOCK)
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    // Prospecto queda vacío; el único single-value es el de Responsable
+    expect(rsValor()).toBe('Ana López')
+  })
+
+  test('duplicar una actividad reabre el editor como NUEVA con los mismos datos', async () => {
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByTestId('event-1'))
+    await waitFor(() => {
+      expect(screen.getByText('Editar Actividad')).toBeInTheDocument()
+      expect(screen.getByText('Escobar', { selector: '.rs__single-value' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Duplicar/ }))
+
+    // Pasa a modo alta: título "Nueva Actividad", sin botón Eliminar ni Duplicar
+    expect(screen.getByText('Nueva Actividad')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Eliminar/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Duplicar/ })).not.toBeInTheDocument()
+    // ...pero conserva los datos de la original
+    expect(screen.getByText('Escobar', { selector: '.rs__single-value' })).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Reunión de seguimiento')).toBeInTheDocument()
+  })
+
+  // ─── Panel "Saldo de Horas": buscador + semáforo de color ─────────────────
+
+  test('el buscador del panel de saldo filtra la lista por nombre de prospecto', async () => {
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    const lista = document.querySelector('.compliance-list')
+    expect(within(lista).getByText('Escobar')).toBeInTheDocument()
+    expect(within(lista).getByText('Consultora')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Buscar prospecto'), { target: { value: 'cons' } })
+
+    expect(within(lista).getByText('Consultora')).toBeInTheDocument()
+    expect(within(lista).queryByText('Escobar')).not.toBeInTheDocument()
+  })
+
+  test('el saldo se pinta según el semáforo: negativo rojo, al día verde, excedente violeta con reloj', async () => {
+    mockUseData({
+      prospectos: [
+        { id: 'p-rojo', nombre: 'Rojo SA', estado: '6A - En producción', hs_mensuales: 24, inicio_servicio: '2025-01-01' },
+        { id: 'p-verde', nombre: 'Verde SA', estado: '6A - En producción', hs_mensuales: 0, inicio_servicio: '2025-01-01' },
+        { id: 'p-violeta', nombre: 'Violeta SA', estado: '6A - En producción', hs_mensuales: 0, inicio_servicio: '2025-01-01' },
+      ],
+    })
+    mockServiciosCronograma({
+      actividades: [],
+      horasDedicadas: new Map([['p-rojo', 0], ['p-verde', 0], ['p-violeta', 6]]),
+    })
+    render(<Cronograma />)
+
+    const lista = await screen.findByText('Rojo SA').then(el => el.closest('.compliance-list'))
+    const saldoDe = nombre => within(lista).getByText(nombre).closest('.compliance-item').querySelector('.p-saldo')
+
+    expect(saldoDe('Rojo SA')).toHaveClass('saldo-negativo')
+    expect(saldoDe('Verde SA')).toHaveClass('saldo-ok')
+    expect(saldoDe('Violeta SA')).toHaveClass('saldo-excedente')
+    // El excedente lleva un ícono (relojito); los otros no
+    expect(saldoDe('Violeta SA').querySelector('svg')).toBeInTheDocument()
+    expect(saldoDe('Verde SA').querySelector('svg')).not.toBeInTheDocument()
+  })
+
   // Bug (Santiago): el campo "Prospecto / Cliente" era un CreatableSelect, así
   // que se podía TIPEAR cualquier texto ("MD (Futbol y Agencia)", o cualquier
   // pavada) y quedaba guardado con prospecto_id NULL. Tiene que ser elegir

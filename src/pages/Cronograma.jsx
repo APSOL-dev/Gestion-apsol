@@ -7,13 +7,13 @@ import 'moment/dist/locale/es'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import {
   Plus, ChevronLeft, ChevronRight,
-  Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square
+  Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square, Copy, Clock, Search
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
 import Select from 'react-select'
 import {
-  saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde,
+  saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde, nivelSaldo,
   resolverProspectoParaGuardar, resolverActividades,
   getActividadesEnRango, getHorasDedicadasPorProspecto, getUltimasReunionesPorProspecto,
   rangoCronogramaPorDefecto, CATEGORIAS_CRONOGRAMA,
@@ -439,6 +439,8 @@ export default function Cronograma() {
   // al final, sin importar la columna o el sentido elegido.
   const [ordenColumna, setOrdenColumna] = useState('saldo')
   const [ordenAsc, setOrdenAsc] = useState(true)
+  // Buscador del panel "Saldo de Horas": filtra la lista por nombre de prospecto.
+  const [busquedaSaldo, setBusquedaSaldo] = useState('')
 
   function ordenarPor(campo, ascendentePorDefecto) {
     if (ordenColumna === campo) {
@@ -465,6 +467,12 @@ export default function Cronograma() {
         return ordenAsc ? va - vb : vb - va
       })
   }, [prospectosProduccion, horasDedicadasPorProspecto, reunionesPorProspecto, ordenColumna, ordenAsc])
+
+  const prospectosConSaldoVisibles = useMemo(() => {
+    const q = busquedaSaldo.trim().toLowerCase()
+    if (!q) return prospectosConSaldo
+    return prospectosConSaldo.filter(({ prospecto: p }) => (p.nombre || '').toLowerCase().includes(q))
+  }, [prospectosConSaldo, busquedaSaldo])
 
   // Indicadores de dedicación: total de horas del cruce Personal × Prospecto
   // que el usuario tenga filtrado arriba, acotado al rango de fechas visible
@@ -596,8 +604,9 @@ export default function Cronograma() {
       ...FORM_VACÍO,
       inicio: moment(start).format('YYYY-MM-DDTHH:mm'),
       fin: moment(end).format('YYYY-MM-DDTHH:mm'),
-      // Un colaborador siempre se agenda a sí mismo.
-      responsable_id: esColaborador && miColaborador ? miColaborador.id : ''
+      // Por defecto, responsable = la persona logueada (se puede cambiar a
+      // otra). Un colaborador, además, no puede elegir a nadie más.
+      responsable_id: miColaborador?.id || ''
     })
     setSelectedEvent(null)
     setSoloLectura(false)
@@ -605,10 +614,21 @@ export default function Cronograma() {
   }
 
   function abrirModalNuevo() {
-    setFormData(FORM_VACÍO)
+    setFormData({ ...FORM_VACÍO, responsable_id: miColaborador?.id || '' })
     setSelectedEvent(null)
     setSoloLectura(false)
     setShowModal(true)
+  }
+
+  // Duplicar: reabre el editor como actividad NUEVA con todos los datos de
+  // la actual (prospecto, descripción, herramientas, multiplicador,
+  // responsable, invitados, reunión). Se le saca el id y el vínculo con el
+  // evento de Google Calendar para que al confirmar cree una fila nueva (y,
+  // si es reunión, su propio evento) en vez de tocar la original.
+  function duplicarActividad() {
+    setFormData(prev => ({ ...prev, id: undefined, google_calendar_id: null }))
+    setSelectedEvent(null)
+    setSoloLectura(false)
   }
 
   const handleSelectEvent = (event) => {
@@ -1042,6 +1062,22 @@ export default function Cronograma() {
             <h3>Saldo de Horas — Mes Actual</h3>
           </div>
 
+          <div className="saldo-buscador">
+            <Search size={14} />
+            <input
+              type="text"
+              aria-label="Buscar prospecto"
+              placeholder="Buscar prospecto…"
+              value={busquedaSaldo}
+              onChange={e => setBusquedaSaldo(e.target.value)}
+            />
+            {busquedaSaldo && (
+              <button type="button" className="saldo-buscador-clear" onClick={() => setBusquedaSaldo('')} title="Limpiar">
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
           <div
             className="compliance-list"
             style={{
@@ -1078,11 +1114,16 @@ export default function Cronograma() {
             {prospectosConSaldo.length === 0 && (
               <div className="picker-empty">No hay prospectos en producción</div>
             )}
-            {prospectosConSaldo.map(({ prospecto: p, saldo, dias }) => {
+            {prospectosConSaldo.length > 0 && prospectosConSaldoVisibles.length === 0 && (
+              <div className="picker-empty">Ningún prospecto coincide con “{busquedaSaldo}”</div>
+            )}
+            {prospectosConSaldoVisibles.map(({ prospecto: p, saldo, dias }) => {
+              const nivel = nivelSaldo(saldo, p.hs_mensuales)
               return (
                 <div key={p.id} className="compliance-item">
                   <span className="p-name">{p.nombre}</span>
-                  <span className={`p-saldo ${saldo != null && saldo < 0 ? 'negative' : ''}`}>
+                  <span className={`p-saldo ${nivel ? `saldo-${nivel}` : ''}`}>
+                    {nivel === 'excedente' && <Clock size={11} aria-hidden="true" />}
                     {saldo != null ? `${saldo.toFixed(2)}h` : '—'}
                   </span>
                   <span className="p-days" title={dias == null ? 'Sin reuniones registradas' : `Hace ${dias} día(s)`}>
@@ -1372,6 +1413,12 @@ export default function Cronograma() {
                 {selectedEvent && !soloLectura && (
                   <button type="button" className="btn-danger-ghost" onClick={handleDelete}>
                     <Trash2 size={15} /> Eliminar
+                  </button>
+                )}
+                {/* Duplicar: solo al ver una actividad existente editable */}
+                {selectedEvent && !soloLectura && (
+                  <button type="button" className="btn-sec" onClick={duplicarActividad} title="Crear una actividad nueva con estos mismos datos">
+                    <Copy size={15} /> Duplicar
                   </button>
                 )}
                 <button type="button" className="btn-sec" onClick={() => setShowModal(false)}>
