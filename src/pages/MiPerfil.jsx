@@ -32,6 +32,25 @@ function primerInicio(contratos) {
 const HOY_ISO = new Date().toISOString().split('T')[0]
 const FACTURA_VACIA = { numero_factura: '', fecha_factura: HOY_ISO, monto: '', archivo_factura: '' }
 
+// Definidos a nivel de módulo (no dentro de MiPerfil): si se declaran dentro
+// del componente, cada render crea un tipo nuevo y React desmonta/re-monta
+// toda la sección en cada tecla — el input pierde el foco y la pantalla salta.
+const Mensaje = ({ msg }) => msg ? (
+  <div className={`alert ${msg.tipo === 'ok' ? 'alert-success' : 'alert-error'}`} style={{ marginTop: '12px' }}>{msg.texto}</div>
+) : null
+
+const Seccion = ({ icon: Icon, titulo, extra, children }) => (
+  <div className="card">
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+      <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+        <Icon size={20} className="text-primary" /> {titulo}
+      </h3>
+      {extra}
+    </div>
+    {children}
+  </div>
+)
+
 export default function MiPerfil() {
   const { user } = useAuth()
 
@@ -203,10 +222,6 @@ export default function MiPerfil() {
     )
   }
 
-  const Mensaje = ({ msg }) => msg ? (
-    <div className={`alert ${msg.tipo === 'ok' ? 'alert-success' : 'alert-error'}`} style={{ marginTop: '12px' }}>{msg.texto}</div>
-  ) : null
-
   const contratos = ficha?.contratos || []
   const facturas = [...(ficha?.facturas_colaboradores || [])].sort((a, b) => new Date(b.fecha_factura) - new Date(a.fecha_factura))
   // Más nuevo arriba, más viejo abajo.
@@ -226,18 +241,6 @@ export default function MiPerfil() {
     'espera': `Vas a poder subir tu factura a partir del ${fmt(ventana.desde)} (${DIAS_HABILES_VENTANA} días hábiles antes del pago).`,
     'abierta': 'Ventana abierta: subí tu factura del período.',
   }[ventana.motivo]
-
-  const Seccion = ({ icon: Icon, titulo, extra, children }) => (
-    <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-        <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
-          <Icon size={20} className="text-primary" /> {titulo}
-        </h3>
-        {extra}
-      </div>
-      {children}
-    </div>
-  )
 
   return (
     <div className="page" style={{ maxWidth: '980px', margin: '0 auto' }}>

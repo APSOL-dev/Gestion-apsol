@@ -27,8 +27,10 @@ Registros históricos de actividad cargados en `apsol_private.cronograma`
 | 11 | Marketing APSOL | `816dc40f-38bb-48dd-bcfc-b0ddbd929abe` | 16 | 2026-06-01 | 20 | 46.00 | 08/06/2026 → 28/07/2026 | −2.04 h |
 | 12 | Open Pack Estabilización | `361c3e6a-c923-4916-8c96-93f2cb16023b` | 16 | 2026-07-22 | 5 | 16.50 | 24/07/2026 → 10/08/2026 | −5.67 h |
 | 13 | DG | `1654bbba-9770-4600-b193-b2dd4b70d1b4` | 24 | 2022-12-04 | 126 | 613.77 | 24/08/2023 → 31/01/2025 | −461.52 h · ver nota |
+| 14 | Natión | `358040f1-aba7-47c0-911d-74e6b23506b2` | 40 | 2023-08-23 | 216 | 872.58 | 25/08/2023 → 18/06/2025 | finalizado — 872,58 h acum. |
+| 15 | Nation Marketing | `27890bb0-6b41-42db-8017-680d7075a190` | 16 | 2023-11-14 | 71 | 183.97 | 22/11/2023 → 11/11/2024 | finalizado — 183,97 h acum. |
 
-**Total: 13 prospectos · 1.537 filas · 4.130,48 horas ponderadas.**
+**Total: 15 prospectos · 1.824 filas · 5.187,03 horas ponderadas.**
 
 Cada carga fue verificada en el browser (`localhost:5173/cronograma`, panel
 "Saldo De Horas — Mes Actual"): el saldo mostrado coincide con el valor calculado.
@@ -63,6 +65,17 @@ se verificó abriendo la actividad en el calendario (semana del 19–25/08/2024,
   detallado — cargada tal cual venía en el paste. Sin registros previos.
   El saldo −461.52 h es esperable: `hs_teoricas` sigue acumulando hasta la fecha
   de referencia aunque el servicio haya terminado en enero 2025.
+- **Natión:** finalizado (5H). 216 filas, sin registros previos. Incluye una fila
+  **"Ajuste"** de `261 h` (01/01/2024 00:00 → 11/01/2024 21:00) — cargada tal
+  cual. Sin la fila de ajuste son 611,58 h. Responsables: Felipe Duarte (mayoría),
+  Adrian Patriarca, Renata Morano. Verificado en browser vía "Ver histórico" +
+  filtro Prospecto=Natión (recuadro "Horas dedicadas — según filtros":
+  216 actividades / 872,58 h).
+- **Nation Marketing:** finalizado (5H). 71 filas, sin registros previos. Incluye
+  una fila **"Ajuste"** de `7 h` (01/01/2024 00:00 → 07:00) — cargada tal cual;
+  sin ella son 176,97 h. Responsables: Felipe Duarte (mayoría), Adrian Patriarca.
+  Verificado en browser (recuadro "Horas dedicadas — según filtros":
+  71 actividades / 183,97 h).
 
 ## Pipeline aplicado a cada batch
 
