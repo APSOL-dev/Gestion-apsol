@@ -838,11 +838,12 @@ describe('Cronograma', () => {
     expect(resp).toHaveValue('Ana López')
   })
 
-  test('el selector de Responsable no lista los stubs de conciliación de la migración "(sheet id ...)"', async () => {
+  test('el selector de Responsable solo lista colaboradores activos (ni stubs "(sheet id ...)" ni ex-colaboradores)', async () => {
     mockUseData({
       colaboradores: [
         ...COLABORADORES_MOCK,
         { id: 'stub-1', usuario_id: null, nombre: '(sheet id 3)', apellido: '', activo: false },
+        { id: 'ex-1', usuario_id: null, nombre: 'Felipe', apellido: 'Duarte', activo: false },
       ],
     })
     render(<Cronograma />)
@@ -850,8 +851,35 @@ describe('Cronograma', () => {
     fireEvent.click(screen.getByTitle('Nueva Actividad'))
 
     const opciones = opcionesRS(screen.getByLabelText('Responsable Asignado'))
-    expect(opciones).toContain('Ana López')
+    expect(opciones).toContain('Ana López')      // activo
+    expect(opciones).toContain('Carlos Gómez')   // activo
     expect(opciones.some(o => o.includes('sheet id'))).toBe(false)
+    expect(opciones).not.toContain('Felipe Duarte') // de baja
+  })
+
+  test('al editar una actividad cuyo responsable ya no está activo, ese responsable sigue visible/seleccionado', async () => {
+    mockUseData({
+      colaboradores: [
+        ...COLABORADORES_MOCK,
+        { id: 'ex-1', usuario_id: null, nombre: 'Felipe', apellido: 'Duarte', activo: false },
+      ],
+    })
+    mockServiciosCronograma({
+      actividades: [{
+        id: '77', prospecto_id: 'pros-1', descripcion: 'Trabajo viejo de Felipe',
+        inicio: '2026-08-20T09:00:00', fin: '2026-08-20T10:00:00',
+        responsable_id: 'ex-1', responsable_nombre: 'Felipe Duarte',
+        reunion_cliente: false, link_reunion: '', comentarios_reunion: '', duracion_horas: 1, multiplicador: 1,
+      }],
+    })
+    render(<Cronograma />)
+    await waitFor(() => expect(screen.getByTestId('event-77')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('event-77'))
+    await waitFor(() => expect(screen.getByText('Editar Actividad')).toBeInTheDocument())
+
+    // El responsable de baja se muestra como valor elegido (no queda en blanco)
+    expect(screen.getByText('Felipe Duarte', { selector: '.rs__single-value' })).toBeInTheDocument()
   })
 
   test('un Team Lead puede agendar para otra persona y se guarda ese responsable', async () => {

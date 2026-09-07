@@ -220,15 +220,21 @@ export default function Cronograma() {
     [colaboradores, formData.responsable_id]
   )
 
-  // Opciones del selector de responsable: cualquier colaborador real, MENOS
-  // los stubs de conciliación de la migración de AppSheet ("(sheet id abc)"),
-  // que no son personas. Mismo criterio que el filtro "Personal".
-  const opcionesResponsable = useMemo(
-    () => colaboradores
-      .filter(c => !filtrosCronograma.esColaboradorConciliacion(c))
-      .map(c => ({ value: c.id, label: `${c.nombre} ${c.apellido || ''}`.trim() })),
-    [colaboradores]
-  )
+  // Opciones del selector de responsable: solo colaboradores ACTIVOS (no se
+  // agenda para alguien que ya no está), sin los stubs de conciliación de la
+  // migración de AppSheet ("(sheet id abc)"). Excepción: si la actividad que
+  // se está editando ya tiene como responsable a un ex-colaborador, se lo
+  // deja en la lista para no borrarlo sin querer al guardar.
+  const opcionesResponsable = useMemo(() => {
+    const activos = colaboradores.filter(
+      c => !filtrosCronograma.esColaboradorConciliacion(c) && c.activo !== false
+    )
+    if (formData.responsable_id && !activos.some(c => c.id === formData.responsable_id)) {
+      const actual = colaboradores.find(c => c.id === formData.responsable_id)
+      if (actual) activos.push(actual)
+    }
+    return activos.map(c => ({ value: c.id, label: `${c.nombre} ${c.apellido || ''}`.trim() }))
+  }, [colaboradores, formData.responsable_id])
 
   // Estilos compartidos por los 3 react-select del modal (portal por
   // encima del overlay del modal).
