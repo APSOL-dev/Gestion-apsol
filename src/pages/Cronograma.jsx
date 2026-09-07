@@ -396,16 +396,26 @@ export default function Cronograma() {
   // El alta de actividades y el panel de saldo siguen siendo solo producción
   // — un cliente cerrado no suma horas nuevas ni tiene saldo vivo. Producción
   // primero, luego finalizados; cada grupo alfabético.
-  const prospectosFiltrables = filtrosCronograma
-    .prospectosFiltrables(prospectos, verHistorico)
-    .sort((a, b) => {
-      const rank = e => (e === '6A - En producción' ? 0 : 1)
-      return rank(a.estado) - rank(b.estado) || (a.nombre || '').localeCompare(b.nombre || '')
-    })
+  // Categorías internas (Consultora, Día Libre, etc.) como pseudo-opciones del
+  // filtro "Prospectos": sus actividades no tienen prospecto pero también se
+  // les dedica tiempo y hay que poder contabilizarlas.
+  const opcionesCategoriasFiltro = useMemo(
+    () => filtrosCronograma.opcionesCategorias(CATEGORIAS_CRONOGRAMA),
+    []
+  )
+  const prospectosFiltrables = [
+    ...filtrosCronograma
+      .prospectosFiltrables(prospectos, verHistorico)
+      .sort((a, b) => {
+        const rank = e => (e === '6A - En producción' ? 0 : 1)
+        return rank(a.estado) - rank(b.estado) || (a.nombre || '').localeCompare(b.nombre || '')
+      }),
+    ...opcionesCategoriasFiltro
+  ]
 
   // Al APAGAR "Ver histórico", saco de los filtros lo que dejó de estar
   // visible: si no, queda un chip "(1)" fantasma cuya opción ya no aparece
-  // en la lista y no se puede destildar.
+  // en la lista y no se puede destildar. Las categorías nunca se podan.
   function toggleVerHistorico() {
     const siguiente = !verHistorico
     setVerHistorico(siguiente)
@@ -413,7 +423,7 @@ export default function Cronograma() {
       setSelectedColab(sel => filtrosCronograma.podarSeleccion(
         sel, filtrosCronograma.personalVisible(colaboradores, false)))
       setSelectedProspectos(sel => filtrosCronograma.podarSeleccion(
-        sel, filtrosCronograma.prospectosFiltrables(prospectos, false)))
+        sel, [...filtrosCronograma.prospectosFiltrables(prospectos, false), ...opcionesCategoriasFiltro]))
     }
   }
 
@@ -498,9 +508,12 @@ export default function Cronograma() {
     () => calcularIndicadoresDedicacion(actividadesRangoResueltas, {
       colaboradoresIds: selectedColab,
       prospectosIds: selectedProspectos,
-      prospectos
+      // Se le suman las categorías como pseudo-prospectos ("categoria:Consultora")
+      // para que calcularIndicadoresDedicacion resuelva sus actividades (que van
+      // sin prospecto_id) contra la selección del filtro.
+      prospectos: [...prospectos, ...opcionesCategoriasFiltro]
     }),
-    [actividadesRangoResueltas, selectedColab, selectedProspectos, prospectos]
+    [actividadesRangoResueltas, selectedColab, selectedProspectos, prospectos, opcionesCategoriasFiltro]
   )
 
   // Texto que aclara qué está sumando el recuadro de indicadores según los
@@ -511,7 +524,9 @@ export default function Cronograma() {
       const c = colaboradores.find(x => x.id === id)
       return c ? `${c.nombre} ${c.apellido || ''}`.trim() : '—'
     }
-    const nombreProsp = id => prospectos.find(x => x.id === id)?.nombre || '—'
+    const nombreProsp = id => id.startsWith(filtrosCronograma.CAT_PREFIX)
+      ? id.slice(filtrosCronograma.CAT_PREFIX.length)
+      : (prospectos.find(x => x.id === id)?.nombre || '—')
     const personal = selectedColab.length === 0
       ? 'Todo el personal'
       : selectedColab.length === 1 ? nombreColab(selectedColab[0]) : `${selectedColab.length} personas`
@@ -536,10 +551,7 @@ export default function Cronograma() {
         if (!selectedColab.includes(act.responsable_id)) return false
       }
 
-      if (selectedProspectos.length > 0) {
-        const prospecto = prospectos.find(p => p.nombre === act.prospecto_nombre)
-        if (!prospecto || !selectedProspectos.includes(prospecto.id)) return false
-      }
+      if (!filtrosCronograma.actividadEnFiltroProspectos(act, selectedProspectos)) return false
 
       return true
     })

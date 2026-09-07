@@ -3,7 +3,10 @@ import {
   personalVisible,
   prospectosFiltrables,
   podarSeleccion,
-  esColaboradorConciliacion
+  esColaboradorConciliacion,
+  CAT_PREFIX,
+  opcionesCategorias,
+  actividadEnFiltroProspectos
 } from '../cronogramaFiltros'
 
 // El tilde "Ver histórico" de la barra del Cronograma gobierna las DOS
@@ -94,5 +97,49 @@ describe('esColaboradorConciliacion', () => {
     expect(esColaboradorConciliacion({ nombre: 'Mantenimiento' })).toBe(false)
     expect(esColaboradorConciliacion({})).toBe(false)
     expect(esColaboradorConciliacion(null)).toBe(false)
+  })
+})
+
+describe('categorías internas en el filtro "Prospectos"', () => {
+  test('opcionesCategorias arma pseudo-opciones {id, nombre} con prefijo', () => {
+    expect(opcionesCategorias(['Consultora', 'Día Libre'])).toEqual([
+      { id: 'categoria:Consultora', nombre: 'Consultora' },
+      { id: 'categoria:Día Libre', nombre: 'Día Libre' },
+    ])
+    expect(CAT_PREFIX).toBe('categoria:')
+    expect(opcionesCategorias(null)).toEqual([])
+  })
+
+  describe('actividadEnFiltroProspectos', () => {
+    const prospActa = { prospecto_id: 'p-1', prospecto_nombre: 'Escobar' }
+    const catActa = { prospecto_id: null, prospecto_nombre: 'Consultora' }
+
+    test('selección vacía: entra todo', () => {
+      expect(actividadEnFiltroProspectos(prospActa, [])).toBe(true)
+      expect(actividadEnFiltroProspectos(catActa, [])).toBe(true)
+    })
+
+    test('prospecto real: matchea por id', () => {
+      expect(actividadEnFiltroProspectos(prospActa, ['p-1'])).toBe(true)
+      expect(actividadEnFiltroProspectos(prospActa, ['p-2'])).toBe(false)
+      expect(actividadEnFiltroProspectos(prospActa, ['categoria:Consultora'])).toBe(false)
+    })
+
+    test('categoría interna: matchea por "categoria:<nombre>"', () => {
+      expect(actividadEnFiltroProspectos(catActa, ['categoria:Consultora'])).toBe(true)
+      expect(actividadEnFiltroProspectos(catActa, ['categoria:Capacitación'])).toBe(false)
+      expect(actividadEnFiltroProspectos(catActa, ['p-1'])).toBe(false)
+    })
+
+    test('selección mixta prospecto + categoría', () => {
+      const sel = ['p-1', 'categoria:Consultora']
+      expect(actividadEnFiltroProspectos(prospActa, sel)).toBe(true)
+      expect(actividadEnFiltroProspectos(catActa, sel)).toBe(true)
+      expect(actividadEnFiltroProspectos({ prospecto_id: 'p-9', prospecto_nombre: 'Otro' }, sel)).toBe(false)
+    })
+
+    test('actividad sin prospecto_id ni nombre con selección activa: no entra', () => {
+      expect(actividadEnFiltroProspectos({ prospecto_id: null }, ['categoria:Consultora'])).toBe(false)
+    })
   })
 })

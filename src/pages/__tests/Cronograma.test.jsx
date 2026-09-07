@@ -347,6 +347,37 @@ describe('Cronograma', () => {
     })
   })
 
+  test('el filtro de Prospectos incluye las categorías internas y suma sus horas', async () => {
+    mockServiciosCronograma({
+      actividades: [
+        ...ACTIVIDADES_CON_DURACION, // 6h en prospectos reales
+        {
+          id: 'cat1', prospecto_id: null, descripcion: '[Día Libre] Vacaciones de Ana',
+          inicio: '2026-08-24T09:00:00', fin: '2026-08-24T14:00:00',
+          responsable_id: 'col-1', responsable_nombre: 'Ana López',
+          reunion_cliente: false, link_reunion: '', comentarios_reunion: '',
+          duracion_horas: 5, multiplicador: 1,
+        },
+      ],
+    })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    const dd = screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown')
+    // las categorías internas figuran como opción
+    expect(within(dd).getByText('Día Libre')).toBeInTheDocument()
+    expect(within(dd).getByText('Capacitación')).toBeInTheDocument()
+
+    // al elegir "Día Libre" el recuadro cuenta SOLO esa categoría
+    fireEvent.click(within(dd).getByText('Día Libre'))
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    await waitFor(() => {
+      expect(caja).toHaveTextContent('Todo el personal · Día Libre')
+      expect(caja).toHaveTextContent('5.00h')
+    })
+  })
+
   // ─── Tests del modal ────────────────────────────────────────────────────────
 
   test('el modal se abre con formulario vacío al hacer clic en el botón "+"', () => {

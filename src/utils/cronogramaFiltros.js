@@ -50,6 +50,34 @@ export function prospectosFiltrables(prospectos, verHistorico) {
   )
 }
 
+// El filtro "Prospectos" también deja elegir CATEGORÍAS internas (Consultora,
+// Día Libre, etc.), que no son prospectos: sus actividades van con
+// `prospecto_id` NULL y el nombre de la categoría en `prospecto_nombre` (ver
+// resolverActividades). Para que convivan en el mismo `selectedProspectos`,
+// las categorías usan un id sintético con este prefijo.
+export const CAT_PREFIX = 'categoria:'
+
+/** Opciones "pseudo-prospecto" para las categorías internas del filtro. */
+export function opcionesCategorias(categorias) {
+  return (categorias || []).map(nombre => ({ id: CAT_PREFIX + nombre, nombre }))
+}
+
+/**
+ * ¿Una actividad YA RESUELTA (con `prospecto_id` / `prospecto_nombre`) entra
+ * en la selección del filtro "Prospectos"? La selección puede mezclar ids de
+ * prospecto reales e ids de categoría ("categoria:Consultora"). Selección
+ * vacía = entra todo.
+ * @param {{prospecto_id?: string|null, prospecto_nombre?: string}} act
+ * @param {string[]} seleccionIds
+ * @returns {boolean}
+ */
+export function actividadEnFiltroProspectos(act, seleccionIds) {
+  const sel = seleccionIds || []
+  if (sel.length === 0) return true
+  if (act && act.prospecto_id) return sel.includes(act.prospecto_id)
+  return act && act.prospecto_nombre ? sel.includes(CAT_PREFIX + act.prospecto_nombre) : false
+}
+
 /**
  * Deja en `seleccionIds` solo los ids que siguen estando entre las opciones
  * visibles. Se llama al apagar "Ver histórico" para no dejar un filtro
