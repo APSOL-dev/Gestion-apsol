@@ -14,10 +14,10 @@ export default function TicketDetalle() {
     titulo: '',
     descripcion: '',
     proyecto_id: '',
-    tipo: 'Correctivo',
+    tipo_ticket: 'Correctivo',
     prioridad: 'Media',
     estado: 'Abierto',
-    colaborador_id: '',
+    responsable_id: '',
     fecha_resolucion: ''
   })
   
@@ -75,7 +75,7 @@ export default function TicketDetalle() {
     try {
       const dataToSave = { ...ticket }
       if (!dataToSave.proyecto_id) dataToSave.proyecto_id = null
-      if (!dataToSave.colaborador_id) dataToSave.colaborador_id = null
+      if (!dataToSave.responsable_id) dataToSave.responsable_id = null
       if (!dataToSave.fecha_resolucion) dataToSave.fecha_resolucion = null
 
       // Si pasa a Resuelto o Cerrado sin fecha, le ponemos la de hoy
@@ -210,7 +210,7 @@ export default function TicketDetalle() {
 
             <div className="field" style={{ marginBottom: '16px' }}>
               <label>Tipo</label>
-              <select value={ticket.tipo} onChange={e => setTicket({...ticket, tipo: e.target.value})} form="ticketForm">
+              <select value={ticket.tipo_ticket} onChange={e => setTicket({...ticket, tipo_ticket: e.target.value})} form="ticketForm">
                 <option value="Correctivo">Mantenimiento Correctivo (Falla)</option>
                 <option value="Evolutivo">Mantenimiento Evolutivo (Mejora)</option>
                 <option value="Soporte">Soporte a Usuario</option>
@@ -220,7 +220,7 @@ export default function TicketDetalle() {
 
             <div className="field" style={{ marginBottom: '16px' }}>
               <label>Responsable</label>
-              <select value={ticket.colaborador_id} onChange={e => setTicket({...ticket, colaborador_id: e.target.value})} form="ticketForm">
+              <select value={ticket.responsable_id || ''} onChange={e => setTicket({...ticket, responsable_id: e.target.value})} form="ticketForm">
                 <option value="">-- Sin Asignar --</option>
                 {colaboradores.map(c => (
                   <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>

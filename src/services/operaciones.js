@@ -50,11 +50,29 @@ export async function getTicketById(id) {
   return { ...data, colaboradores: resolverNombreColaborador(data.colaboradores) }
 }
 
+// Columnas reales de apsol_tickets. El form arrastra embeds anidados
+// (`proyectos`, `colaboradores`) y campos auxiliares que NO son columnas:
+// mandarlos en el insert/update rompe todo con "column ... does not exist".
+export const COLUMNAS_TICKET = [
+  'proyecto_id', 'preventivo_id', 'titulo', 'descripcion', 'estado',
+  'prioridad', 'tipo_ticket', 'tipo_problema', 'responsable_id',
+  'fecha_resolucion', 'recordatorio', 'fecha_recordatorio',
+]
+
+export function limpiarPayloadTicket(ticket = {}) {
+  const payload = {}
+  for (const campo of COLUMNAS_TICKET) {
+    if (ticket[campo] !== undefined) payload[campo] = ticket[campo]
+  }
+  return payload
+}
+
 export async function saveTicket(ticket) {
+  const payload = limpiarPayloadTicket(ticket)
   if (ticket.id) {
     const { data, error } = await supabase
       .from('apsol_tickets')
-      .update(ticket)
+      .update(payload)
       .eq('id', ticket.id)
       .select()
       .single()
@@ -63,7 +81,7 @@ export async function saveTicket(ticket) {
   } else {
     const { data, error } = await supabase
       .from('apsol_tickets')
-      .insert([ticket])
+      .insert([payload])
       .select()
       .single()
     if (error) throw error

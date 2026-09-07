@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { resolverNombreColaborador } from '../operaciones'
+import { resolverNombreColaborador, limpiarPayloadTicket, COLUMNAS_TICKET } from '../operaciones'
 
 // ──────────────────────────────────────────────────────────────
 // BUG real: getTickets/getTicketById pedían nombre/apellido directo sobre
@@ -35,5 +35,39 @@ describe('resolverNombreColaborador', () => {
 
   test('null pasa igual (ticket sin colaborador asignado)', () => {
     expect(resolverNombreColaborador(null)).toBeNull()
+  })
+})
+
+// BUG real: el form de tickets mandaba `titulo`, `estado`, `colaborador_id`
+// y embeds anidados (`proyectos`, `colaboradores`) al insert/update. La
+// tabla no tenía `titulo`/`estado` (se agregaron por migración) y el campo
+// se llama `responsable_id`, no `colaborador_id` -> siempre fallaba con
+// "Could not find the 'colaborador_id' column". limpiarPayloadTicket deja
+// solo columnas reales.
+describe('limpiarPayloadTicket', () => {
+  test('conserva las columnas reales del ticket', () => {
+    const out = limpiarPayloadTicket({
+      titulo: 'Falla en el bot', descripcion: 'no responde', estado: 'Abierto',
+      prioridad: 'Alta', tipo_ticket: 'Correctivo', responsable_id: 'c-1',
+      proyecto_id: 'p-1', fecha_resolucion: null,
+    })
+    expect(out).toEqual({
+      titulo: 'Falla en el bot', descripcion: 'no responde', estado: 'Abierto',
+      prioridad: 'Alta', tipo_ticket: 'Correctivo', responsable_id: 'c-1',
+      proyecto_id: 'p-1', fecha_resolucion: null,
+    })
+  })
+
+  test('descarta embeds anidados y campos que no son columnas', () => {
+    const out = limpiarPayloadTicket({
+      titulo: 'x', responsable_id: 'c-1',
+      proyectos: { nombre: 'Proyecto' },        // embed -> fuera
+      colaboradores: { nombre: 'Ana' },         // embed -> fuera
+      colaborador_id: 'c-9',                     // nombre viejo -> fuera
+      id: 't-1', created_at: '2026-01-01',       // no editables -> fuera
+    })
+    expect(out).toEqual({ titulo: 'x', responsable_id: 'c-1' })
+    expect(COLUMNAS_TICKET).not.toContain('colaborador_id')
+    expect(COLUMNAS_TICKET).toContain('responsable_id')
   })
 })

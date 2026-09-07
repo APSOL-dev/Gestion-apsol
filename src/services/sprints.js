@@ -181,15 +181,31 @@ export async function eliminarNotaSprint(id) {
 
 // Sprints activos de toda la operación, con sus puntos, para el tablero
 // "qué está en rojo ahora mismo".
+const SELECT_SPRINT_TABLERO = `
+  *,
+  proyecto:apsol_proyectos(id, nombre),
+  items:apsol_sprint_items(id, titulo, estado, comentario)
+`
+
 export async function getSprintsActivos() {
   const { data, error } = await supabase
     .from('apsol_sprints')
-    .select(`
-      *,
-      proyecto:apsol_proyectos(id, nombre),
-      items:apsol_sprint_items(id, titulo, estado, comentario)
-    `)
+    .select(SELECT_SPRINT_TABLERO)
     .eq('estado', 'activo')
+    .order('actualizado_en', { ascending: false })
+
+  if (error) throw error
+  return data || []
+}
+
+// Sprints planificados (creados pero todavía sin iniciar) de toda la
+// operación, para que un sprint recién creado se vea en /sprints y no
+// quede "escondido" hasta que alguien lo abra y toque "Iniciar sprint".
+export async function getSprintsPlanificados() {
+  const { data, error } = await supabase
+    .from('apsol_sprints')
+    .select(SELECT_SPRINT_TABLERO)
+    .eq('estado', 'planificado')
     .order('actualizado_en', { ascending: false })
 
   if (error) throw error
