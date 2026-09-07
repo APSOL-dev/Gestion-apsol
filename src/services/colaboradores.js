@@ -246,9 +246,16 @@ export async function saveColaboradorProspectos(colaboradorId, prospectoIds) {
   const aQuitar = [...setActual].filter(pid => !setObjetivo.has(pid))
 
   if (aAgregar.length) {
+    // upsert idempotente: si `actuales` vino incompleto (lectura acotada por
+    // RLS, o dos guardados casi simultáneos), el alta podría incluir un par
+    // (colaborador_id, prospecto_id) que ya existe. Con ignoreDuplicates es
+    // un INSERT ... ON CONFLICT DO NOTHING y no revienta con "duplicate key".
     const { error: e1 } = await supabase
       .from('apsol_colaboradores_prospectos')
-      .insert(aAgregar.map(prospecto_id => ({ colaborador_id: colaboradorId, prospecto_id })))
+      .upsert(
+        aAgregar.map(prospecto_id => ({ colaborador_id: colaboradorId, prospecto_id })),
+        { onConflict: 'colaborador_id,prospecto_id', ignoreDuplicates: true }
+      )
     if (e1) throw e1
   }
   if (aQuitar.length) {

@@ -15,7 +15,7 @@ function makeBuilder(tabla) {
     calls,
     then: (res, rej) => Promise.resolve(result).then(res, rej),
   }
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'ilike', 'not', 'order', 'single', 'maybeSingle']) {
+  for (const m of ['select', 'insert', 'upsert', 'update', 'delete', 'eq', 'in', 'ilike', 'not', 'order', 'single', 'maybeSingle']) {
     builder[m] = vi.fn((...args) => {
       calls.push([m, args])
       return builder
@@ -122,21 +122,44 @@ describe('saveColaborador', () => {
 })
 
 describe('saveColaboradorProspectos', () => {
-  test('inserta los que faltan y borra los que sobran (diff contra el estado actual)', async () => {
+  test('agrega los que faltan y borra los que sobran (diff contra el estado actual)', async () => {
     results.push({ data: [{ prospecto_id: 'p1' }, { prospecto_id: 'p2' }], error: null }) // actuales
-    results.push({ error: null }) // insert
+    results.push({ error: null }) // upsert
     results.push({ error: null }) // delete
     const { saveColaboradorProspectos } = await import('../colaboradores')
 
     await saveColaboradorProspectos('c-1', ['p2', 'p3'])
 
     const enlaces = builders.filter(b => b.tabla === 'apsol_colaboradores_prospectos')
-    const insertPayload = payloadDe(enlaces.find(b => b.calls.some(([m]) => m === 'insert')), 'insert')
-    expect(insertPayload).toEqual([{ colaborador_id: 'c-1', prospecto_id: 'p3' }])
+    const upBuilder = enlaces.find(b => b.calls.some(([m]) => m === 'upsert'))
+    const upCall = upBuilder.calls.find(([m]) => m === 'upsert')
+    expect(upCall[1][0]).toEqual([{ colaborador_id: 'c-1', prospecto_id: 'p3' }])
 
     const delBuilder = enlaces.find(b => b.calls.some(([m]) => m === 'delete'))
     const inCall = delBuilder.calls.find(([m]) => m === 'in')
     expect(inCall[1]).toEqual(['prospecto_id', ['p1']])
+  })
+
+  // Bug (ColaboradorDetalle "Error al guardar los datos" al agregar "MD Final"):
+  // si el SELECT de `actuales` devuelve menos filas de las que hay (lectura
+  // acotada por RLS, o dos guardados casi simultáneos), el diff arma un alta
+  // de un par (colaborador_id, prospecto_id) que YA existe y el INSERT
+  // reventaba con "duplicate key value violates unique constraint". El alta
+  // tiene que ser idempotente: upsert ignorando duplicados.
+  test('el alta de enlaces es un upsert que ignora duplicados (no rompe si el par ya existe)', async () => {
+    results.push({ data: [], error: null }) // actuales: RLS devolvió 0 filas
+    results.push({ error: null })            // upsert
+    const { saveColaboradorProspectos } = await import('../colaboradores')
+
+    await saveColaboradorProspectos('c-1', ['p1', 'p2'])
+
+    const enlaces = builders.filter(b => b.tabla === 'apsol_colaboradores_prospectos')
+    const upBuilder = enlaces.find(b => b.calls.some(([m]) => m === 'upsert'))
+    expect(upBuilder).toBeTruthy()
+    const [, opts] = upBuilder.calls.find(([m]) => m === 'upsert')[1]
+    expect(opts).toMatchObject({ onConflict: 'colaborador_id,prospecto_id', ignoreDuplicates: true })
+    // y nunca usa el insert "crudo" que reventaba con duplicate key
+    expect(enlaces.some(b => b.calls.some(([m]) => m === 'insert'))).toBe(false)
   })
 
   test('no toca la base si el objetivo es igual al estado actual', async () => {
@@ -146,7 +169,7 @@ describe('saveColaboradorProspectos', () => {
     await saveColaboradorProspectos('c-1', ['p1'])
 
     const enlaces = builders.filter(b => b.tabla === 'apsol_colaboradores_prospectos')
-    expect(enlaces.some(b => b.calls.some(([m]) => m === 'insert' || m === 'delete'))).toBe(false)
+    expect(enlaces.some(b => b.calls.some(([m]) => m === 'insert' || m === 'upsert' || m === 'delete'))).toBe(false)
   })
 })
 
