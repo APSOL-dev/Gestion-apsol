@@ -400,6 +400,32 @@ describe('Cronograma', () => {
     expect(screen.getByPlaceholderText('¿Qué se va a realizar?')).toHaveValue('')
   })
 
+  // Bug (Santiago): el campo "Prospecto / Cliente" era un CreatableSelect, así
+  // que se podía TIPEAR cualquier texto ("MD (Futbol y Agencia)", o cualquier
+  // pavada) y quedaba guardado con prospecto_id NULL. Tiene que ser elegir
+  // sí o sí de la lista.
+  test('el campo Prospecto no permite texto libre: no ofrece opción "Usar ..." al tipear algo que no está', async () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    const input = document.getElementById('sel-prospecto')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'MD Futbol y Agencia' } })
+
+    expect(await screen.findByText('Sin coincidencias')).toBeInTheDocument()
+    expect(screen.queryByText(/^Usar "/)).not.toBeInTheDocument()
+    expect(rsValor()).toBeNull()
+  })
+
+  test('el campo Prospecto sí deja elegir un prospecto en producción de la lista', async () => {
+    render(<Cronograma />)
+    fireEvent.click(screen.getByTitle('Nueva Actividad'))
+
+    await elegirEnRS(document.getElementById('sel-prospecto'), 'Escobar')
+
+    expect(rsValor()).toBe('Escobar')
+  })
+
   // ─── Filtro "Prospectos" / "Personal" y el tilde "Ver histórico" ──────────
 
   test('por defecto el filtro de Prospectos muestra solo los que están en producción (no los finalizados)', async () => {

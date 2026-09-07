@@ -12,7 +12,6 @@ import {
 import { useData } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
 import Select from 'react-select'
-import CreatableSelect from 'react-select/creatable'
 import {
   saveActividad, deleteActividad, calcularSaldoHoras, calcularDiasDesde,
   resolverProspectoParaGuardar, resolverActividades,
@@ -1145,16 +1144,16 @@ export default function Cronograma() {
               <fieldset className="modal-fieldset" disabled={soloLectura}>
               <div className="form-group">
                 <label htmlFor="sel-prospecto">Prospecto / Cliente</label>
-                {/* Mismo estilo que Responsable e Invitados. Es "creatable":
-                    además de los prospectos en producción y las categorías
-                    fijas, se puede tipear una categoría suelta. */}
-                <CreatableSelect
+                {/* Solo se puede ELEGIR de la lista (prospectos en producción +
+                    categorías internas fijas). Antes era "creatable" y se podía
+                    tipear cualquier texto: quedaba guardado con prospecto_id
+                    NULL y ensuciaba los datos. */}
+                <Select
                   {...rsProps}
                   inputId="sel-prospecto"
                   isClearable
                   isDisabled={soloLectura}
-                  placeholder="Elegí o escribí un prospecto / categoría…"
-                  formatCreateLabel={v => `Usar "${v}"`}
+                  placeholder="Elegí un prospecto / categoría…"
                   noOptionsMessage={() => 'Sin coincidencias'}
                   options={opcionesProspecto}
                   value={formData.prospecto_nombre
