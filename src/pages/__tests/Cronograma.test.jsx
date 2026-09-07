@@ -514,6 +514,79 @@ describe('Cronograma', () => {
     })
   })
 
+  // ─── Memoria de los filtros de la barra (Desde/Hasta, Personal, Prospectos,
+  //     Ver histórico, Agenda externa) entre recargas / re-login ─────────────
+
+  test('los filtros de la barra se recuerdan al volver a montar la página', async () => {
+    mockUseAuth({ id: 'user-1' })
+
+    const { unmount } = render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-05-10' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-06-20' } })
+    // Ver histórico ON, Agenda externa OFF (arranca ON para admin)
+    fireEvent.click(screen.getByRole('button', { name: /Ver histórico/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Agenda externa/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    fireEvent.click(within(screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown'))
+      .getByText('Escobar'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos (1)')
+    })
+
+    unmount()
+
+    // Segundo montaje: sin volver a tocar nada, todo vuelve como quedó
+    render(<Cronograma />)
+    await waitFor(() => {
+      expect(screen.getByLabelText('Desde')).toHaveValue('2026-05-10')
+    })
+    expect(screen.getByLabelText('Hasta')).toHaveValue('2026-06-20')
+    expect(screen.getByRole('button', { name: /Ver histórico/ })).toHaveClass('active')
+    expect(screen.getByRole('button', { name: /Agenda externa/ })).not.toHaveClass('active')
+    expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos (1)')
+  })
+
+  test('si el usuario nunca toca el rango de fechas, no se persiste (sigue la ventana móvil)', async () => {
+    mockUseAuth({ id: 'user-1' })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    // Tocó "Ver histórico" pero NO las fechas
+    fireEvent.click(screen.getByRole('button', { name: /Ver histórico/ }))
+    await waitFor(() => {
+      const guardado = JSON.parse(localStorage.getItem('apsol_cronograma_filtros') || '{}')
+      expect(guardado['user-1']).toMatchObject({ verHistorico: true })
+    })
+
+    const guardado = JSON.parse(localStorage.getItem('apsol_cronograma_filtros'))
+    expect(guardado['user-1']).not.toHaveProperty('fechaDesde')
+    expect(guardado['user-1']).not.toHaveProperty('fechaHasta')
+
+    // Ahora sí toca "Desde": a partir de acá se persiste
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-04-01' } })
+    await waitFor(() => {
+      const g = JSON.parse(localStorage.getItem('apsol_cronograma_filtros'))
+      expect(g['user-1']).toMatchObject({ fechaDesde: '2026-04-01' })
+    })
+  })
+
+  test('la memoria de filtros es por usuario: la de user-1 no se le aplica a user-2', async () => {
+    mockUseAuth({ id: 'user-1' })
+    const { unmount } = render(<Cronograma />)
+    await esperarCargaInicial()
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-01-02' } })
+    await waitFor(() => expect(screen.getByLabelText('Desde')).toHaveValue('2026-01-02'))
+    unmount()
+
+    mockUseAuth({ id: 'user-2' })
+    render(<Cronograma />)
+    // user-2 no hereda el 2026-01-02 de user-1 (usa el rango por defecto)
+    await waitFor(() => expect(screen.getByLabelText('Desde')).toBeInTheDocument())
+    expect(screen.getByLabelText('Desde')).not.toHaveValue('2026-01-02')
+  })
+
   // ─── Tests del selector "Prospecto / Cliente" del modal ────────────────────
 
   test('el selector ofrece las categorías internas fijas además de los prospectos', () => {

@@ -29,6 +29,7 @@ import {
 } from '../utils/cronogramaVisibilidad'
 import { calcularIndicadoresDedicacion } from '../utils/indicadoresCronograma'
 import * as filtrosCronograma from '../utils/cronogramaFiltros'
+import { leerFiltrosGuardados, guardarFiltros } from '../utils/cronogramaFiltrosPersistencia'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
 
 moment.locale('es')
@@ -75,18 +76,6 @@ const ANCHO_COL_NOMBRE_MIN = 70
 const ANCHO_COL_NOMBRE_ABS_MAX = 400 // techo de sanidad ante un valor corrupto en localStorage
 const ANCHO_COL_NOMBRE_DEFAULT = 110
 const CLAVE_ANCHO_COL_NOMBRE = 'apsol_cronograma_saldo_col_nombre_width'
-// Preferencia del tilde "Ver histórico" (barra de filtros): incluir en las
-// listas de "Personal" y "Prospectos" a los ex-colaboradores de baja y a los
-// prospectos finalizados. Se recuerda entre visitas.
-const CLAVE_VER_HISTORICO = 'apsol_cronograma_ver_historico'
-
-function leerVerHistoricoGuardado() {
-  try {
-    return localStorage.getItem(CLAVE_VER_HISTORICO) === '1'
-  } catch {
-    return false
-  }
-}
 
 function leerAnchoColNombreGuardado() {
   const guardado = Number(localStorage.getItem(CLAVE_ANCHO_COL_NOMBRE))
@@ -133,11 +122,23 @@ export default function Cronograma() {
   const [view, setView] = useState(Views.WEEK)
   const [date, setDate] = useState(new Date())
 
+  // Filtros de la barra recordados POR USUARIO (rango Desde/Hasta, Personal,
+  // Prospectos, "Ver histórico", "Agenda externa"): al refrescar la página o
+  // volver a iniciar sesión, cada uno los reencuentra como los dejó. La ruta
+  // /cronograma solo se monta con la sesión ya resuelta (App.jsx espera a
+  // `loading`), así que acá `user?.id` ya está disponible.
+  const filtrosGuardados = useMemo(() => leerFiltrosGuardados(user?.id), [user?.id])
+
   // FIX Bug #1: Estados para los filtros de fecha.
   // El estándar es una ventana MÓVIL de los últimos 3 meses (de hoy hacia
   // atrás), no el mes calendario en curso — ver rangoCronogramaPorDefecto.
-  const [fechaDesde, setFechaDesde] = useState(() => rangoCronogramaPorDefecto().desde)
-  const [fechaHasta, setFechaHasta] = useState(() => rangoCronogramaPorDefecto().hasta)
+  // Solo se persiste el rango si el usuario lo tocó a mano; si nunca lo
+  // cambió, se lo deja seguir la ventana móvil en cada visita.
+  const [rangoTocado, setRangoTocado] = useState(
+    () => filtrosGuardados.fechaDesde != null || filtrosGuardados.fechaHasta != null
+  )
+  const [fechaDesde, setFechaDesde] = useState(() => filtrosGuardados.fechaDesde ?? rangoCronogramaPorDefecto().desde)
+  const [fechaHasta, setFechaHasta] = useState(() => filtrosGuardados.fechaHasta ?? rangoCronogramaPorDefecto().hasta)
 
   // El Cronograma maneja su propio estado de actividades (no el global de
   // DataContext): antes se precargaban TODAS las filas de la tabla (4400+
@@ -157,30 +158,38 @@ export default function Cronograma() {
   // Toggle (solo administrador) para mostrar/ocultar en el calendario los
   // agendamientos que vienen de afuera (Google Calendar de APSOL: Calendly,
   // eventos cargados a mano desde otro dispositivo, etc.).
-  const [verAgendaExterna, setVerAgendaExterna] = useState(true)
+  const [verAgendaExterna, setVerAgendaExterna] = useState(() => filtrosGuardados.verAgendaExterna ?? true)
   // Tilde "Ver histórico": cuando está apagado (por defecto) las listas de
   // "Personal" y "Prospectos" muestran solo lo vigente (colaboradores
   // activos + prospectos en producción); encendido, suman los
   // ex-colaboradores de baja y los prospectos finalizados. Ver
   // utils/cronogramaFiltros.js.
-  const [verHistorico, setVerHistorico] = useState(leerVerHistoricoGuardado)
-  useEffect(() => {
-    try {
-      localStorage.setItem(CLAVE_VER_HISTORICO, verHistorico ? '1' : '0')
-    } catch {
-      // localStorage no disponible: la preferencia solo dura esta sesión.
-    }
-  }, [verHistorico])
+  const [verHistorico, setVerHistorico] = useState(() => filtrosGuardados.verHistorico ?? false)
 
-  const [selectedColab, setSelectedColab] = useState([])
-  const [selectedProspectos, setSelectedProspectos] = useState([])
+  const [selectedColab, setSelectedColab] = useState(() => filtrosGuardados.selectedColab ?? [])
+  const [selectedProspectos, setSelectedProspectos] = useState(() => filtrosGuardados.selectedProspectos ?? [])
 
   // Por defecto, el filtro "Personal" arranca con el usuario logueado ya
   // tildado (lo más común es que cada uno quiera ver su propia agenda al
   // entrar) - una sola vez, apenas están disponibles los colaboradores y
   // la sesión. `colabDefaultAplicado` evita que esto se reimponga si el
-  // usuario después destilda manualmente el filtro.
-  const [colabDefaultAplicado, setColabDefaultAplicado] = useState(false)
+  // usuario después destilda manualmente el filtro. Si ya había una
+  // selección guardada de "Personal", esa manda y no se impone el default.
+  const [colabDefaultAplicado, setColabDefaultAplicado] = useState(
+    () => Array.isArray(filtrosGuardados.selectedColab)
+  )
+
+  // Persistir los filtros de la barra ante cualquier cambio (y en el montaje,
+  // reescribiendo lo mismo que se restauró: inocuo). El rango de fechas solo
+  // se guarda si el usuario lo tocó (ver `rangoTocado`).
+  useEffect(() => {
+    const payload = { selectedColab, selectedProspectos, verHistorico, verAgendaExterna }
+    if (rangoTocado) {
+      payload.fechaDesde = fechaDesde
+      payload.fechaHasta = fechaHasta
+    }
+    guardarFiltros(user?.id, payload)
+  }, [user?.id, rangoTocado, fechaDesde, fechaHasta, selectedColab, selectedProspectos, verHistorico, verAgendaExterna])
   useEffect(() => {
     if (colabDefaultAplicado) return
     if (!user || colaboradores.length === 0) return
@@ -892,7 +901,7 @@ export default function Cronograma() {
                 id="filtro-desde"
                 type="date"
                 value={fechaDesde}
-                onChange={e => setFechaDesde(e.target.value)}
+                onChange={e => { setRangoTocado(true); setFechaDesde(e.target.value) }}
               />
             </div>
             <div className="filter-group">
@@ -901,7 +910,7 @@ export default function Cronograma() {
                 id="filtro-hasta"
                 type="date"
                 value={fechaHasta}
-                onChange={e => setFechaHasta(e.target.value)}
+                onChange={e => { setRangoTocado(true); setFechaHasta(e.target.value) }}
               />
             </div>
           </div>
