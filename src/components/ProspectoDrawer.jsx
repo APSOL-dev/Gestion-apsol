@@ -207,7 +207,7 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
         role="dialog"
         aria-modal="true"
         style={{
-          position: 'fixed', top: 0, right: 0, bottom: 0, width: '460px',
+          position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(460px, 100vw)',
           backgroundColor: '#fff', boxShadow: '-4px 0 24px rgba(0, 0, 0, 0.15)',
           zIndex: 1000, display: 'flex', flexDirection: 'column',
           animation: 'slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)'

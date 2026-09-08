@@ -336,10 +336,10 @@ export default function MiPerfil() {
                     <tbody>
                       {facturas.map(f => (
                         <tr key={f.id}>
-                          <td>{fmt(f.fecha_factura)}</td>
-                          <td style={{ fontWeight: 500 }}>{fmtMonto(f.monto)}</td>
-                          <td>{f.fecha_pago ? fmt(f.fecha_pago) : <span style={{ color: 'var(--color-text-muted)' }}>Pendiente</span>}</td>
-                          <td>
+                          <td data-label="Fecha factura">{fmt(f.fecha_factura)}</td>
+                          <td data-label="Monto" style={{ fontWeight: 500 }}>{fmtMonto(f.monto)}</td>
+                          <td data-label="Fecha de pago">{f.fecha_pago ? fmt(f.fecha_pago) : <span style={{ color: 'var(--color-text-muted)' }}>Pendiente</span>}</td>
+                          <td data-label="Adjuntos">
                             <span style={{ display: 'flex', gap: 6 }}>
                               {f.archivo_factura && <a href={f.archivo_factura} target="_blank" rel="noreferrer" title="Factura"><FileText size={15} className="text-primary" /></a>}
                               {f.comprobante_pago && <a href={f.comprobante_pago} target="_blank" rel="noreferrer" title="Comprobante de pago"><Receipt size={15} className="text-primary" /></a>}
@@ -372,15 +372,15 @@ export default function MiPerfil() {
                         const esVigente = vigente && c.id === vigente.id
                         return (
                         <tr key={c.id} onClick={() => setContratoVer(c)} style={{ cursor: 'pointer', background: esVigente ? 'var(--color-success-light)' : undefined }}>
-                          <td style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <td data-label="Fecha inicio" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             {fmt(c.fecha_inicio)}
                             {esVigente && <span className="badge badge-green" style={{ fontSize: 10 }}>Vigente</span>}
                           </td>
-                          <td>{c.fecha_fin ? fmt(c.fecha_fin) : 'Indefinido'}</td>
-                          <td>{c.tipo_contrato || '—'}</td>
-                          <td>{c.dias_libres_por_mes != null ? String(c.dias_libres_por_mes).replace('.', ',') : '—'}</td>
-                          <td style={{ fontWeight: 500 }}>{fmtMonto(c.honorarios)}</td>
-                          <td onClick={e => e.stopPropagation()}>
+                          <td data-label="Fecha fin">{c.fecha_fin ? fmt(c.fecha_fin) : 'Indefinido'}</td>
+                          <td data-label="Tipo">{c.tipo_contrato || '—'}</td>
+                          <td data-label="Días libres/mes">{c.dias_libres_por_mes != null ? String(c.dias_libres_por_mes).replace('.', ',') : '—'}</td>
+                          <td data-label="Honorarios" style={{ fontWeight: 500 }}>{fmtMonto(c.honorarios)}</td>
+                          <td data-label="Adjuntos" onClick={e => e.stopPropagation()}>
                             <span style={{ display: 'flex', gap: 6 }}>
                               {c.adjunto && <a href={c.adjunto} target="_blank" rel="noreferrer" title="Contrato"><FileText size={15} className="text-primary" /></a>}
                               {c.adjunto2 && <a href={c.adjunto2} target="_blank" rel="noreferrer" title="Anexo"><FileText size={15} className="text-primary" /></a>}

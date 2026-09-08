@@ -383,10 +383,10 @@ export default function ColaboradorDetalle() {
                         background: pendiente ? 'var(--color-warning-light)' : undefined,
                         boxShadow: pendiente ? 'inset 3px 0 0 var(--color-warning)' : undefined,
                       }}>
-                        <td style={{ fontWeight: pendiente ? 600 : undefined }}>{fmt(f.fecha_factura)}</td>
-                        <td style={{ fontWeight: 500 }}>{fmtMonto(f.monto)}</td>
-                        <td>{fmt(f.fecha_pago)}</td>
-                        <td>
+                        <td data-label="Fecha factura" style={{ fontWeight: pendiente ? 600 : undefined }}>{fmt(f.fecha_factura)}</td>
+                        <td data-label="Monto" style={{ fontWeight: 500 }}>{fmtMonto(f.monto)}</td>
+                        <td data-label="Fecha de Pago">{fmt(f.fecha_pago)}</td>
+                        <td data-label="Adjuntos">
                           <span style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
                             {f.archivo_factura && <a href={f.archivo_factura} target="_blank" rel="noreferrer" title="Factura"><FileText size={15} className="text-primary" /></a>}
                             {f.comprobante_pago && <a href={f.comprobante_pago} target="_blank" rel="noreferrer" title="Comprobante de pago"><Receipt size={15} className="text-primary" /></a>}
@@ -492,14 +492,14 @@ export default function ColaboradorDetalle() {
                       const esVigente = contratoEnVigencia && c.id === contratoEnVigencia.id
                       return (
                       <tr key={c.id} onClick={() => openEditContrato(c)} style={{ cursor: 'pointer', background: esVigente ? 'var(--color-success-light)' : undefined }}>
-                        <td style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <td data-label="Fecha Inicio" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           {fmt(c.fecha_inicio)}
                           {esVigente && <span className="badge badge-green" style={{ fontSize: 10 }}>Vigente</span>}
                         </td>
-                        <td>{c.fecha_fin ? fmt(c.fecha_fin) : 'Indefinido'}</td>
-                        <td>{c.tipo_contrato || '—'}</td>
-                        <td>{c.dias_libres_por_mes != null ? String(c.dias_libres_por_mes).replace('.', ',') : '—'}</td>
-                        <td style={{ fontWeight: 500 }}>{fmtMonto(c.honorarios)}</td>
+                        <td data-label="Fecha Fin">{c.fecha_fin ? fmt(c.fecha_fin) : 'Indefinido'}</td>
+                        <td data-label="Tipo de contrato">{c.tipo_contrato || '—'}</td>
+                        <td data-label="Días libres/mes">{c.dias_libres_por_mes != null ? String(c.dias_libres_por_mes).replace('.', ',') : '—'}</td>
+                        <td data-label="Honorarios" style={{ fontWeight: 500 }}>{fmtMonto(c.honorarios)}</td>
                         <td>
                           <button type="button" className="btn btn-secondary" style={{ padding: 4, color: 'var(--color-danger)', border: 'none', background: 'transparent' }}
                             onClick={e => { e.stopPropagation(); handleDeleteContrato(c.id) }}>

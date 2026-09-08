@@ -2515,3 +2515,118 @@ fieldset[disabled] .herr-chip {
   color: var(--color-danger);
 }
 
+/* ============================================================================
+   AJUSTES MOBILE  (relevamiento: docs/relevamiento-mobile.md)
+   ----------------------------------------------------------------------------
+   TODO lo de este bloque vive dentro de @media (max-width: …). El escritorio
+   (> 768px) NO se ve afectado: ninguna de estas reglas se evalúa ahí.
+   No hay cambios de funcionalidad — sólo layout que se reacomoda en pantalla
+   angosta (cosas que estaban lado a lado pasan a apilarse).
+   ========================================================================= */
+@media (max-width: 768px) {
+
+  /* 1.7 — viewport dinámico: la barra de direcciones del navegador mobile
+     no recorta el fondo. */
+  .app-layout { height: 100dvh; }
+
+  /* 1.8 — red de seguridad: un overflow puntual no debe generar scroll
+     horizontal de toda la página. */
+  html, body { overflow-x: hidden; }
+
+  /* 1.1 — formularios en 2 columnas -> 1 (los modales .premium ya lo hacen a 640). */
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .full-width { grid-column: auto; }
+
+  /* 1.5 — grillas inline que no colapsaban. Mismo truco de "selector por
+     atributo de style" que el proyecto ya usa para `1fr 1fr`. */
+  [style*="grid-template-columns: 2fr 1fr"],
+  [style*="grid-template-columns: repeat(3, 1fr)"],
+  [style*="minmax(350px"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* 1.2 — modal genérico (no .premium): full-width y menos padding lateral,
+     igual criterio que el bloque .premium de 640. */
+  .modal-content,
+  .modal-content.premium { max-width: 100%; }
+  .modal-content > .modal-header,
+  .modal-content > .modal-body,
+  .modal-content > .modal-footer { padding-left: 18px; padding-right: 18px; }
+
+  /* 6.1.c / 6.4.b — algunos .page-header traen alignItems:center inline, que
+     al apilar (flex-direction:column) centraba el título. */
+  .page-header { align-items: flex-start !important; }
+
+  /* 6.4.d / 8.4 — tarjetas con alto fijo + scroll interno -> se saca el
+     scroll anidado en mobile (era un scroll dentro de otro scroll). */
+  .table-container[style*="overflow"] { max-height: none !important; }
+  [style*="max-height: 360"][style*="overflow-y: auto"] {
+    max-height: none !important;
+    overflow-y: visible !important;
+  }
+
+  /* 1.6 — tablas "anchas" en fichas (Contratos / Facturas): al volverse
+     tarjeta se ocultaba el <thead>, quedaban valores sueltos sin rótulo.
+     Se antepone el nombre de la columna a cada valor. Sólo aplica a los
+     <td data-label="…">; las celdas de acciones (sin data-label) quedan igual. */
+  .table-container table tbody td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: 500;
+    color: var(--color-text-subtle);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 5.1 — CRONOGRAMA (estaba inusable en mobile: el calendario quedaba */
+  /*       aplastado en ~4 cm y sólo se veía el panel de saldo).        */
+  /* ------------------------------------------------------------------ */
+  .cronograma-layout { grid-template-columns: 1fr; height: auto; }
+  /* min-width:0 imprescindible: sin esto el grid-item no baja de su
+     contenido min (el calendario de 600px) y desborda todo el layout. */
+  .cronograma-main { overflow: visible; min-width: 0; }
+  .calendar-container.giant { min-width: 0; }
+  .cronograma-sidebar.right {
+    border-left: none;
+    border-top: 1px solid var(--color-border);
+  }
+  .panel-resize-handle, .col-resize-handle { display: none; }
+
+  .cronograma-filtros-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 16px;
+    max-width: 100%;
+  }
+  .filtro-fechas { gap: 12px; }
+  .filtro-fechas .filter-group { min-width: 0; flex: 1; }
+  .filtro-fechas input[type="date"] { width: 100%; min-width: 0; }
+  .filtro-multi-group { flex-direction: column; align-items: stretch; gap: 10px; margin-left: 0; }
+  .filtro-multiselect .filtro-trigger { width: 100%; justify-content: space-between; }
+  .filtro-multiselect .picker-dropdown { min-width: 0; max-width: min(380px, calc(100vw - 32px)); }
+
+  .calendar-toolbar { flex-wrap: wrap; gap: 12px; padding: 12px 16px; }
+  .calendar-toolbar .current-range {
+    min-width: 0;
+    flex-basis: 100%;
+    order: -1;
+    text-align: left;
+  }
+
+  .calendar-container.giant { margin: 8px 8px 0 8px; }
+  .rbc-wrapper { height: 68vh; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .rbc-time-view { min-width: 600px; }  /* semana/día: legible y con scroll lateral en vez de columnas de 45px */
+
+  /* ------------------------------------------------------------------ */
+  /* 6.1 — FACTURACIÓN (la lista de facturas quedaba fuera de pantalla, */
+  /*       aplastada contra el borde derecho).                          */
+  /* ------------------------------------------------------------------ */
+  .facturacion-layout { flex-direction: column; }
+  .facturacion-sidebar { width: 100% !important; }
+}
+
+@media (max-width: 480px) {
+  /* 3 — Dashboard: los montos entran más cómodos en 1 columna. */
+  .stat-value { font-size: 15px; }
+  .stat-card { padding: 12px 14px; }
+}
+

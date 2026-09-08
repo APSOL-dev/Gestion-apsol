@@ -207,7 +207,7 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
           top: 0,
           right: 0,
           bottom: 0,
-          width: '460px',
+          width: 'min(460px, 100vw)',
           backgroundColor: '#fff',
           boxShadow: '-4px 0 24px rgba(0, 0, 0, 0.15)',
           zIndex: 1000,
