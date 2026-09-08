@@ -2630,3 +2630,100 @@ fieldset[disabled] .herr-chip {
   .stat-card { padding: 12px 14px; }
 }
 
+/* ============================================================================
+   MODAL "SUMAR MANTENIMIENTO" (Cronograma, solo admin)
+   ========================================================================= */
+.mant-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;   /* que overflow-y:auto no fuerce scroll horizontal y tape el botón "Quitar" */
+}
+.mant-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: 13.5px;
+}
+.mant-row:last-child { border-bottom: none; }
+.mant-row--ya { opacity: 0.55; }
+.mant-row--pausado { opacity: 0.5; }
+
+.mant-nombre { flex: 1; min-width: 0; }
+.mant-nombre-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mant-pausa {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+}
+.mant-horas {
+  width: 62px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.mant-h {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.mant-ya {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mant-quitar {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-danger);
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mant-quitar:hover { background: var(--color-danger-light); border-color: var(--color-danger); }
+.mant-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: var(--color-surface2);
+  border-radius: var(--radius-sm);
+}
+.mant-add select { flex: 1; min-width: 160px; }
+
+/* Botón "Sumar mantenimiento" en la barra del calendario */
+.btn-mantenimiento {
+  background: var(--color-secondary);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-mantenimiento:hover { background: var(--color-secondary-hover); }
+.btn-mantenimiento .tilde {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+

@@ -7,7 +7,7 @@ import 'moment/dist/locale/es'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import {
   Plus, ChevronLeft, ChevronRight,
-  Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square, Copy, Clock, Search
+  Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square, Copy, Clock, Search, Wrench
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
@@ -31,6 +31,9 @@ import { calcularIndicadoresDedicacion } from '../utils/indicadoresCronograma'
 import * as filtrosCronograma from '../utils/cronogramaFiltros'
 import { leerFiltrosGuardados, guardarFiltros } from '../utils/cronogramaFiltrosPersistencia'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
+import ModalMantenimiento from '../components/ModalMantenimiento'
+import { getMantenimientoPorMes } from '../services/mantenimiento'
+import { mesActual } from '../utils/mantenimiento'
 
 moment.locale('es')
 const localizer = momentLocalizer(moment)
@@ -110,7 +113,30 @@ export default function Cronograma() {
   const {
     prospectos, loadingProspectos, refreshProspectos
   } = useData()
-  const { user, esColaborador, esTeamLead } = useAuth()
+  const { user, esColaborador, esTeamLead, esDuenio } = useAuth()
+
+  // "Sumar mantenimiento" (solo admin): modal + saber si el mes actual ya
+  // tiene mantenimiento cargado para mostrar el tilde en el botón.
+  const [modalMantAbierto, setModalMantAbierto] = useState(false)
+  const [mesMantCargado, setMesMantCargado] = useState(false)
+  // Se llama a mano tras cerrar/aplicar el modal (fuera de un effect).
+  async function refrescarEstadoMant() {
+    if (!esDuenio) return
+    try {
+      const pm = await getMantenimientoPorMes()
+      setMesMantCargado(Boolean(pm[mesActual()]))
+    } catch (e) {
+      console.error('No se pudo consultar el mantenimiento cargado:', e)
+    }
+  }
+  useEffect(() => {
+    if (!esDuenio) return undefined
+    let vivo = true
+    getMantenimientoPorMes()
+      .then(pm => { if (vivo) setMesMantCargado(Boolean(pm[mesActual()])) })
+      .catch(e => console.error('No se pudo consultar el mantenimiento cargado:', e))
+    return () => { vivo = false }
+  }, [esDuenio])
   // Quién puede agendar/editar actividades para OTRA persona: Admin o Team
   // Lead (Renata). Un colaborador raso solo se agenda a sí mismo. Está
   // espejado en la RLS de cronograma (migration_cronograma_agendar_team_lead.sql).
@@ -1038,6 +1064,17 @@ export default function Cronograma() {
             </div>
 
             <div className="action-buttons">
+              {esDuenio && (
+                <button
+                  type="button"
+                  className="btn-mantenimiento"
+                  title="Cargar las horas de mantenimiento del mes al cronograma"
+                  onClick={() => setModalMantAbierto(true)}
+                >
+                  <Wrench size={16} /> Mantenimiento
+                  {mesMantCargado && <span className="tilde">✓ {moment().format('MMM')}</span>}
+                </button>
+              )}
               {/* FIX Bug #11: Botón Teams abre teams.microsoft.com */}
               <button
                 className="btn-teams"
@@ -1203,6 +1240,14 @@ export default function Cronograma() {
           </div>
         </div>
       </aside>
+
+      {esDuenio && (
+        <ModalMantenimiento
+          abierto={modalMantAbierto}
+          onClose={() => { setModalMantAbierto(false); refrescarEstadoMant() }}
+          onAplicado={() => { cargarCronograma(); refrescarEstadoMant() }}
+        />
+      )}
 
       {/* MODAL — se cierra SOLO con la X, Escape o Guardar/Cancelar (nunca
           por un clic en el fondo, para no perder lo que se estaba tipeando). */}
