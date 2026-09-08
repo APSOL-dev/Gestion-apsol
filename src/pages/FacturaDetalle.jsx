@@ -17,7 +17,11 @@ import { esArchivoPDF } from '../utils/archivos'
 import { guardarBorrador, leerBorrador, limpiarBorrador } from '../utils/borradorFactura'
 import { reintentar, conTimeout } from '../utils/reintentar'
 import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import { armarDatosInvoice } from '../utils/invoicePdf'
+// Logo APSOL para el encabezado del Invoice: JPEG chico (~16 KB, 245x340,
+// fondo blanco) embebido como dataURL. Antes se bajaba el PNG original
+// (1183x1182 RGBA) y jsPDF lo metía descomprimido -> el PDF pesaba ~5,6 MB.
+import { LOGO_APSOL_INVOICE } from '../assets/logoApsolInvoice'
 
 export default function FacturaDetalle() {
   const { id } = useParams()
@@ -51,7 +55,8 @@ export default function FacturaDetalle() {
     redondeo_multiplo: '', // el prefill lo pone en 1000 (REDONDEO_MULTIPLO_DEFAULT) al elegir prospecto
     cuenta_bancaria_id: '',
     razon_social_id: '',
-    solo_invoice: true
+    solo_invoice: true,
+    invoice_url: ''
   })
   
   const [prospectoSeleccionado, setProspectoSeleccionado] = useState(null)
@@ -445,7 +450,8 @@ export default function FacturaDetalle() {
         cuenta_bancaria_id: data.cuenta_bancaria_id || '',
         razon_social_id: data.razon_social_id || '',
         porcentaje_descuento: data.porcentaje_descuento || 0,
-        solo_invoice: data.solo_invoice ?? true
+        solo_invoice: data.solo_invoice ?? true,
+        invoice_url: data.invoice_url || ''
       })
       setModoManualMonto(!(Number(data.tarifa_base_uva) > 0 && Number(data.valor_uva_dia) > 0))
       if (data.contacto_cobro2_id) setMostrarContacto2(true)
@@ -464,108 +470,131 @@ export default function FacturaDetalle() {
     }
   }
 
+  // Arma el PDF del Invoice ("Solo Invoice") con el layout de referencia:
+  // encabezado con logo, Fecha / N° Comprobante, Cliente, Período facturado,
+  // "Servicio Brindado Según Acuerdo" + Detalle, Monto total, Observaciones y
+  // "Cuenta a depositar". Todo el mapeo de datos vive en armarDatosInvoice
+  // (utils/invoicePdf.js, testeado); acá solo se dibuja.
   async function generarPDF(facturaData = factura) {
     try {
-      console.log('Generando PDF con datos:', facturaData)
-      const doc = new jsPDF()
-      const margin = 20
-      let y = 20
+      const cuenta = cuentas.find(c => c.id === facturaData.cuenta_bancaria_id) || null
+      const datos = armarDatosInvoice({ factura: facturaData, prospecto: prospectoSeleccionado, cuenta })
 
-      // Header
-      doc.setFontSize(22)
-      doc.setTextColor(40, 40, 40)
-      doc.text('INVOICE', margin, y)
-      
-      doc.setFontSize(10)
-      doc.setTextColor(100, 100, 100)
-      doc.text(`Número: ${facturaData.numero_factura || 'S/N'}`, 150, y)
-      y += 10
-      doc.text(`Fecha Emisión: ${facturaData.fecha_emision || '-'}`, 150, y)
-      
-      y += 15
-      doc.setDrawColor(200, 200, 200)
-      doc.line(margin, y, 190, y)
-      
-      y += 15
-      // Datos APSOL
-      doc.setFontSize(12)
-      doc.setTextColor(0, 0, 0)
-      doc.setFont('helvetica', 'bold')
-      doc.text('EMISOR:', margin, y)
+      const doc = new jsPDF() // A4 vertical, milímetros
+      const M = 20            // margen izquierdo
+      const R = 190           // borde derecho útil
       doc.setFont('helvetica', 'normal')
-      doc.text('APSOL - Soluciones Tecnológicas', margin, y + 6)
-      doc.text('Buenos Aires, Argentina', margin, y + 12)
-      
-      // Datos Cliente
-      const nombreEmpresa = prospectoSeleccionado?.empresas?.nombre || 'Cliente'
+      doc.setTextColor(20, 20, 20)
+
+      // ── Encabezado: logo + título ────────────────────────────────
+      // Logo 245x340 -> 17.3 x 24 mm mantiene el aspecto sin deformar.
+      let logoOk = false
+      try { doc.addImage(LOGO_APSOL_INVOICE, 'JPEG', M, 11, 17.3, 24); logoOk = true } catch { /* el logo es opcional */ }
       doc.setFont('helvetica', 'bold')
-      doc.text('CLIENTE:', 110, y)
-      doc.setFont('helvetica', 'normal')
-      doc.text(nombreEmpresa, 110, y + 6)
-      
-      y += 30
-      // Periodo y Concepto
-      doc.setFont('helvetica', 'bold')
-      doc.text('CONCEPTO Y PERIODO:', margin, y)
-      doc.setFont('helvetica', 'normal')
-      doc.text(`Servicios profesionales - Periodo: ${facturaData.periodo_desde || '-'} al ${facturaData.periodo_hasta || '-'}`, margin, y + 6)
-      if (facturaData.leyenda) {
-        doc.text(`Nota: ${facturaData.leyenda}`, margin, y + 12)
-      }
+      doc.setFontSize(15)
+      doc.text('INVOICE – COMPROBANTE DE SERVICIOS', logoOk ? M + 24 : M, 26)
 
-      y += 25
-      // Tabla de Items
-      const items = [
-        ['Descripción', 'Cantidad', 'Tarifa (UVA)', 'Valor UVA', 'Subtotal (ARS)'],
-        [
-          'Abono mensual de servicios', 
-          '1', 
-          (facturaData.tarifa_base_uva || 0).toString(), 
-          (facturaData.valor_uva_dia || 0).toString(), 
-          `$${(facturaData.monto_neto || 0).toLocaleString('es-AR')}`
-        ]
-      ]
-
-      autoTable(doc, {
-        startY: y,
-        head: [items[0]],
-        body: [items[1]],
-        theme: 'striped',
-        headStyles: { fillColor: [67, 97, 238] }
-      })
-
-      y = doc.lastAutoTable?.finalY || (y + 20)
-
-      // Totales
-      doc.setFontSize(14)
-      doc.setFont('helvetica', 'bold')
-      doc.text(`TOTAL A PAGAR: $${(facturaData.monto_neto || 0).toLocaleString('es-AR')} ARS`, 110, y)
-
-      y += 20
-      // Cuentas Bancarias
-      const cuenta = cuentas.find(c => c.id === facturaData.cuenta_bancaria_id)
-      if (cuenta) {
+      // Helpers de "Etiqueta: valor" (etiqueta en negrita, valor normal).
+      const labelValor = (label, valor, x, y) => {
         doc.setFontSize(10)
         doc.setFont('helvetica', 'bold')
-        doc.text('DATOS DE PAGO:', margin, y)
+        doc.text(`${label} `, x, y)
+        const w = doc.getTextWidth(`${label} `)
         doc.setFont('helvetica', 'normal')
-        doc.text(`Banco: ${cuenta.banco || '-'}`, margin, y + 6)
-        doc.text(`CBU: ${cuenta.cbu || '-'}`, margin, y + 12)
-        doc.text(`Alias: ${cuenta.alias || '-'}`, margin, y + 18)
-        doc.text(`Titular: ${cuenta.titular || '-'}`, margin, y + 24)
-      } else {
+        doc.text(String(valor || ''), x + w, y)
+      }
+      const labelValorDerecha = (label, valor, y) => {
         doc.setFontSize(10)
-        doc.setTextColor(200, 0, 0)
-        doc.text('No se seleccionó cuenta bancaria de destino.', margin, y)
+        doc.setFont('helvetica', 'normal')
+        const vw = doc.getTextWidth(String(valor || ''))
+        doc.text(String(valor || ''), R, y, { align: 'right' })
+        doc.setFont('helvetica', 'bold')
+        doc.text(`${label} `, R - vw, y, { align: 'right' })
       }
 
-      // Pie de página
-      doc.setFontSize(8)
-      doc.setTextColor(150, 150, 150)
-      doc.text('Gracias por su confianza. APSOL.', margin, 280)
+      // ── Fecha / N° Comprobante (derecha) + Cliente (izquierda) ───
+      let y = 46
+      labelValorDerecha('Fecha:', datos.fecha, y)
+      labelValorDerecha('N° Comprobante:', datos.numero, y + 6)
+      labelValor('Cliente:', datos.cliente, M, y + 12)
 
-      // Retornar objeto con el doc y un nombre sugerido
-      const nombreArchivo = `Invoice_${facturaData.numero_factura || 'BORRADOR'}.pdf`
+      // ── Período facturado ───────────────────────────────────────
+      y += 26
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Periodo facturado:', M, y)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Desde: ${datos.periodoDesde}`, M + 8, y + 6)
+      doc.text(`Hasta: ${datos.periodoHasta}`, M + 8, y + 12)
+      doc.text(`Fecha de vencimiento: ${datos.vencimiento}`, M + 8, y + 18)
+
+      // ── Servicio / Detalle ──────────────────────────────────────
+      y += 34
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Servicio Brindado Según Acuerdo', M, y)
+      y += 8
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.text('Detalle:', M, y)
+      y += 6
+      const detalleLineas = doc.splitTextToSize(datos.detalle || '-', R - M)
+      doc.text(detalleLineas, M, y)
+      y += detalleLineas.length * 5 + 4
+
+      // ── Monto total ─────────────────────────────────────────────
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Monto total: ${datos.montoTotal}`, R, y, { align: 'right' })
+
+      // ── Observaciones ───────────────────────────────────────────
+      y += 16
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Observaciones:', M, y)
+      if (datos.observaciones) {
+        y += 6
+        doc.setFont('helvetica', 'normal')
+        const obsLineas = doc.splitTextToSize(datos.observaciones, R - M)
+        doc.text(obsLineas, M, y)
+        y += obsLineas.length * 5
+      }
+
+      // ── Cuenta a depositar ──────────────────────────────────────
+      y += 12
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Cuenta a depositar:', M, y)
+      y += 7
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      if (datos.cuenta) {
+        const c = datos.cuenta
+        const filas = [
+          `- Titular: ${c.titular}`,
+          `- Banco: ${c.banco}`,
+          `- Moneda: ${c.moneda}`,
+          `- Dirección del Banco: ${c.direccionBanco}`,
+          `- Número de enrutamiento de ABA: ${c.aba}`,
+          `- Código SWIFT: ${c.swift}`,
+          `- Número de cuenta: ${c.numeroCuenta}`,
+        ]
+        filas.forEach((f, i) => doc.text(f, M + 8, y + i * 5.5))
+      } else {
+        doc.setTextColor(200, 0, 0)
+        doc.text('No se seleccionó cuenta bancaria de destino.', M + 8, y)
+        doc.setTextColor(20, 20, 20)
+      }
+
+      // ── Pie ─────────────────────────────────────────────────────
+      doc.setFontSize(9)
+      doc.setTextColor(90, 90, 90)
+      doc.text('Email:', M, 272)
+      doc.text('contacto@apsol.com.ar', M, 277)
+      doc.text('web: www.apsol.com.ar', 95, 272)
+      doc.text('Tel: +549 342 629-3881', 150, 272)
+
+      const nombreArchivo = `Invoice_${datos.numero !== 'S/N' ? datos.numero : 'BORRADOR'}.pdf`
       return { doc, nombreArchivo }
     } catch (error) {
       console.error('Error crítico en generarPDF:', error)
@@ -590,7 +619,30 @@ export default function FacturaDetalle() {
     setSaving(true)
     setError('')
     try {
-      const dataToSave = prepararFacturaParaGuardar(factura, pagos)
+      // "Solo Invoice" + alta nueva: generar el PDF del Invoice, subirlo al
+      // Storage y guardar su URL en la fila. Así el PDF queda archivado en
+      // Supabase y su URL viaja al webhook igual que los adjuntos del resto
+      // de las facturas (saveFactura manda la fila completa). Un fallo acá
+      // nunca frena el guardado.
+      let invoiceUrl = factura.invoice_url || ''
+      let invoiceFallo = false
+      if (esNueva && factura.solo_invoice) {
+        try {
+          const { doc, nombreArchivo } = await generarPDF(factura)
+          const blob = doc.output('blob')
+          const file = new File([blob], nombreArchivo, { type: 'application/pdf' })
+          invoiceUrl = await subirAdjuntoFactura(file, null)
+          doc.save(nombreArchivo) // además, descarga local (como venía haciendo)
+        } catch (pdfErr) {
+          console.error('No se pudo generar/subir el Invoice PDF:', pdfErr)
+          invoiceFallo = true
+        }
+      }
+
+      const dataToSave = prepararFacturaParaGuardar(
+        { ...factura, invoice_url: invoiceUrl || null },
+        pagos
+      )
 
       const saved = await saveFactura(dataToSave)
 
@@ -622,16 +674,6 @@ export default function FacturaDetalle() {
         console.error('No se pudo refrescar el listado de facturación:', refreshErr)
       }
 
-      // Generar y descargar PDF si es solo invoice
-      if (factura.solo_invoice) {
-        try {
-          const { doc, nombreArchivo } = await generarPDF(saved)
-          doc.save(nombreArchivo)
-        } catch (pdfErr) {
-          console.error('Error al generar PDF tras guardar:', pdfErr)
-        }
-      }
-
       if (esNueva) {
         // BUG real: si el webhook de n8n fallaba (caído, red, etc.) al
         // avisar por WhatsApp/mail, se navegaba igual sin decir nada — la
@@ -639,6 +681,9 @@ export default function FacturaDetalle() {
         // cliente. Ahora se frena un momento para mostrarlo antes de salir.
         if (saved.notificacionEnviada === false) {
           setAdvertencia('Factura guardada, pero no se pudo avisar por WhatsApp/mail (el webhook no respondió). Avisá al cliente manualmente.')
+          setTimeout(() => navigate('/facturacion'), 3000)
+        } else if (invoiceFallo) {
+          setAdvertencia('Factura guardada, pero no se pudo generar/subir el PDF del Invoice. Podés regenerarlo desde la factura con "Ver/Descargar PDF".')
           setTimeout(() => navigate('/facturacion'), 3000)
         } else {
           navigate('/facturacion')
@@ -837,8 +882,20 @@ export default function FacturaDetalle() {
         <div style={{ display: 'flex', gap: '12px' }}>
           {!esNueva && (
             <>
-              <button 
-                className="btn btn-secondary" 
+              {factura.invoice_url && (
+                <a
+                  className="btn btn-secondary"
+                  href={factura.invoice_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Descargar el PDF del Invoice archivado en Supabase"
+                >
+                  <Download size={18} />
+                  Descargar Invoice
+                </a>
+              )}
+              <button
+                className="btn btn-secondary"
                 onClick={async () => {
                   try {
                     const { doc, nombreArchivo } = await generarPDF()

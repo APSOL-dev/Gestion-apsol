@@ -412,12 +412,20 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
               )}
 
               {/* Sección de Documentos Adjuntos */}
-              {((factura.comprobantes_adjuntos || []).some(Boolean) || factura.documento_general) && (
+              {((factura.comprobantes_adjuntos || []).some(Boolean) || factura.documento_general || factura.invoice_url) && (
                 <div style={{ backgroundColor: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '16px' }}>
                   <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: '#444', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <FileText size={15} /> Documentos
                   </h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {factura.invoice_url && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ color: '#555' }}>Invoice (PDF)</span>
+                        <a href={factura.invoice_url} target="_blank" rel="noopener noreferrer" style={{ color: '#385723', fontWeight: '600', textDecoration: 'none' }}>
+                          Ver / Descargar
+                        </a>
+                      </div>
+                    )}
                     {(factura.comprobantes_adjuntos || []).map((url, idx) => url && (
                       <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
                         <span style={{ color: '#555' }}>Factura Fiscal {idx + 1}</span>
