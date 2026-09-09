@@ -412,9 +412,9 @@ export default function Facturacion() {
                           {getFechaCobro(factura)}
                         </td>
 
-                        {/* Monto Bruto */}
+                        {/* Monto realmente facturado (neto, ya con descuento y redondeo aplicados) */}
                         <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 'bold', color: '#333', fontSize: '13px' }}>
-                          ${Number(factura.monto_bruto || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                          ${Number(factura.monto_neto ?? factura.monto_bruto ?? 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                         </td>
 
                         {/* Icono de navegación */}

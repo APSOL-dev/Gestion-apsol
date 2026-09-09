@@ -92,13 +92,31 @@ export default function ProspectoDrawer({ id, onClose, onChanged }) {
     e.preventDefault()
     setSavingTarea(true)
     try {
+      const proxima_tarea = componerProximaTarea(tareaEdit.tipo, tareaEdit.comentario)
       const saved = await saveProspecto({
         id,
-        proxima_tarea: componerProximaTarea(tareaEdit.tipo, tareaEdit.comentario),
+        proxima_tarea,
         fecha_proxima_tarea: tareaEdit.fecha || null
       })
       setProspecto(prev => ({ ...prev, ...saved }))
       setEditandoTarea(false)
+
+      // Queda registrada abajo en Observaciones (antes se pisaba sin dejar
+      // rastro de qué próxima tarea se había definido y para cuándo).
+      if (proxima_tarea) {
+        const fechaTxt = tareaEdit.fecha
+          ? ` — para el ${new Date(tareaEdit.fecha + 'T00:00:00').toLocaleDateString('es-AR')}`
+          : ''
+        try {
+          const creada = await saveObservacion({
+            prospecto_id: id,
+            observacion: `Próxima tarea: ${proxima_tarea}${fechaTxt}`
+          })
+          setProspecto(prev => ({ ...prev, observaciones: [creada, ...(prev.observaciones || [])] }))
+        } catch (obsErr) {
+          console.error('No se pudo registrar la observación de próxima tarea:', obsErr)
+        }
+      }
       if (onChanged) onChanged()
     } catch (err) {
       console.error('Error al actualizar la próxima tarea:', err)

@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import SprintDetalle from '../SprintDetalle'
 import {
   getSprintById, crearItem, actualizarItem, agregarAdjunto,
-  crearNotaSprint, eliminarNotaSprint,
+  crearNotaSprint, eliminarNotaSprint, eliminarSprint,
 } from '../../services/sprints'
 import { useAuth } from '../../context/AuthContext'
 
@@ -30,6 +30,7 @@ vi.mock('../../services/sprints', () => ({
   eliminarAdjunto: vi.fn(),
   crearNotaSprint: vi.fn(),
   eliminarNotaSprint: vi.fn(),
+  eliminarSprint: vi.fn(),
 }))
 
 vi.mock('../../services/storage', () => ({ uploadFile: vi.fn() }))
@@ -79,7 +80,7 @@ describe('SprintDetalle — puntos', () => {
 
     renderSprint()
 
-    const input = await screen.findByPlaceholderText('Escribí un punto y apretá Enter…')
+    const input = await screen.findByPlaceholderText('Escribí un punto…')
     fireEvent.change(input, { target: { value: 'Probar el flujo de pago' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
@@ -92,10 +93,27 @@ describe('SprintDetalle — puntos', () => {
 
   test('un título en blanco no agrega nada', async () => {
     renderSprint()
-    const input = await screen.findByPlaceholderText('Escribí un punto y apretá Enter…')
+    const input = await screen.findByPlaceholderText('Escribí un punto…')
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(screen.getByDisplayValue('Punto existente')).toBeInTheDocument())
     expect(crearItem).not.toHaveBeenCalled()
+  })
+
+  // En el celular la tecla Enter del teclado virtual no dispara el alta;
+  // por eso ahora hay un botón "Agregar" explícito.
+  test('el botón "Agregar" suma el punto sin depender de Enter', async () => {
+    const nuevoItem = { id: 'item-3', sprint_id: 'sprint-1', orden: 1, titulo: 'Desde el botón', estado: 'pendiente', adjuntos: [] }
+    crearItem.mockResolvedValue(nuevoItem)
+    renderSprint()
+
+    const input = await screen.findByPlaceholderText('Escribí un punto…')
+    fireEvent.change(input, { target: { value: 'Desde el botón' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Agregar$/i }))
+
+    await waitFor(() => {
+      expect(crearItem).toHaveBeenCalledWith({ sprint_id: 'sprint-1', orden: 1, titulo: 'Desde el botón' })
+      expect(screen.getByDisplayValue('Desde el botón')).toBeInTheDocument()
+    })
   })
 
   test('click en el colorcito avanza al siguiente estado del semáforo', async () => {
@@ -182,5 +200,52 @@ describe('SprintDetalle — notas', () => {
       expect(eliminarNotaSprint).toHaveBeenCalledWith('nota-propia')
       expect(screen.queryByText('Nota mía')).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('SprintDetalle — eliminar sprint', () => {
+  const sprintVacio = { ...mockSprint, items: [], notas_items: [] }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+  })
+
+  test('un Dueño puede eliminar un sprint vacío', async () => {
+    getSprintById.mockResolvedValue(sprintVacio)
+    useAuth.mockReturnValue({ user: { id: 'otro' }, esDuenio: true })
+    eliminarSprint.mockResolvedValue()
+    renderSprint()
+
+    const btn = await screen.findByRole('button', { name: /^Eliminar$/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(eliminarSprint).toHaveBeenCalledWith('sprint-1'))
+  })
+
+  test('el autor del sprint también puede eliminarlo si está vacío', async () => {
+    getSprintById.mockResolvedValue({ ...sprintVacio, creado_por: 'user-1' })
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esDuenio: false })
+    renderSprint()
+
+    expect(await screen.findByRole('button', { name: /^Eliminar$/i })).toBeInTheDocument()
+  })
+
+  test('no aparece el botón si el sprint tiene puntos', async () => {
+    getSprintById.mockResolvedValue({ ...mockSprint, notas_items: [] }) // conserva 1 item
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esDuenio: true })
+    renderSprint()
+
+    await screen.findByDisplayValue('Punto existente')
+    expect(screen.queryByRole('button', { name: /^Eliminar$/i })).not.toBeInTheDocument()
+  })
+
+  test('no aparece el botón para quien no es Dueño ni autor', async () => {
+    getSprintById.mockResolvedValue({ ...sprintVacio, creado_por: 'otro' })
+    useAuth.mockReturnValue({ user: { id: 'user-1' }, esDuenio: false })
+    renderSprint()
+
+    await screen.findByRole('heading', { name: /Carrito y stock/ })
+    expect(screen.queryByRole('button', { name: /^Eliminar$/i })).not.toBeInTheDocument()
   })
 })

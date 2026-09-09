@@ -79,6 +79,35 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
     return Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)))
   }
 
+  // Acción rápida: salda la factura de una, sin abrir el formulario.
+  // Registra un único pago por el saldo pendiente exacto; el estado pasa
+  // a "Cobrada total" solo (lo recalcula el trigger de la DB).
+  async function handlePagoCompleto() {
+    const saldo = Number(factura?.saldo_pendiente || 0)
+    if (saldo <= 0 || savingPago) return
+    const saldoTxt = saldo.toLocaleString('es-AR', { minimumFractionDigits: 2 })
+    if (!window.confirm(`¿Registrar el pago completo de $${saldoTxt} y dar la factura por cobrada?`)) return
+
+    setSavingPago(true)
+    try {
+      await savePago({
+        facturacion_id: id,
+        fecha: fechaLocalISO(),
+        monto: saldo,
+        observaciones: 'Pago completo (acción rápida)'
+      })
+      setNuevoPago({ fecha: fechaLocalISO(), monto: '', observaciones: '' })
+      setMostrandoFormPago(false)
+      await cargarDetalle()
+      if (onPagoRegistrado) onPagoRegistrado()
+    } catch (err) {
+      console.error('Error al registrar pago completo:', err)
+      alert('Error al guardar el pago.')
+    } finally {
+      setSavingPago(false)
+    }
+  }
+
   // Manejar guardado de pago rápido
   async function handleSubmitPago(e) {
     e.preventDefault()
@@ -448,30 +477,54 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
 
               {/* Sección de Historial de Pagos */}
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
                   <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: '#444', margin: 0 }}>Historial de Pagos</h3>
                   {factura.saldo_pendiente > 0 && (
-                    <button 
-                      onClick={() => setMostrandoFormPago(!mostrandoFormPago)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        backgroundColor: 'transparent',
-                        color: '#385723',
-                        border: '1px solid #385723',
-                        borderRadius: '4px',
-                        padding: '4px 8px',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        cursor: 'pointer',
-                        transition: 'background-color 0.2s'
-                      }}
-                      className="btn-pago-toggle"
-                    >
-                      <Plus size={12} />
-                      Registrar Pago
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        onClick={handlePagoCompleto}
+                        disabled={savingPago}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          backgroundColor: '#385723',
+                          color: '#fff',
+                          border: '1px solid #385723',
+                          borderRadius: '4px',
+                          padding: '4px 8px',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          cursor: savingPago ? 'default' : 'pointer',
+                          opacity: savingPago ? 0.6 : 1,
+                        }}
+                        title="Registra un pago por el saldo pendiente y da la factura por cobrada"
+                      >
+                        <Plus size={12} />
+                        Pago completo
+                      </button>
+                      <button
+                        onClick={() => setMostrandoFormPago(!mostrandoFormPago)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          backgroundColor: 'transparent',
+                          color: '#385723',
+                          border: '1px solid #385723',
+                          borderRadius: '4px',
+                          padding: '4px 8px',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.2s'
+                        }}
+                        className="btn-pago-toggle"
+                      >
+                        <Plus size={12} />
+                        Pago parcial
+                      </button>
+                    </div>
                   )}
                 </div>
 

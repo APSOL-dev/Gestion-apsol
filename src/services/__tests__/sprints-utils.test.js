@@ -13,8 +13,11 @@ import {
   resumenParaCierre,
   siguienteEstadoCiclo,
   puedeEditarSprint,
+  puedeEliminarSprint,
   esImagenUrl,
   dominioDeUrl,
+  esArchivoStorage,
+  urlDescargaAdjunto,
 } from '../sprints-utils'
 
 // ──────────────────────────────────────────────────────────────
@@ -225,5 +228,67 @@ describe('dominioDeUrl', () => {
 
   test('vacío -> vacío', () => {
     expect(dominioDeUrl('')).toBe('')
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Un sprint solo se borra si está vacío (sin puntos ni notas) y lo
+// pide un Dueño o quien lo creó.
+// ──────────────────────────────────────────────────────────────
+describe('puedeEliminarSprint', () => {
+  const vacio = { id: 's1', creado_por: 'user-1' }
+
+  test('Dueño puede borrar un sprint vacío aunque no sea el autor', () => {
+    expect(puedeEliminarSprint(vacio, { userId: 'otro', esDuenio: true, items: [], notas: [] })).toBe(true)
+  })
+
+  test('el autor puede borrar su sprint vacío sin ser Dueño', () => {
+    expect(puedeEliminarSprint(vacio, { userId: 'user-1', esDuenio: false, items: [], notas: [] })).toBe(true)
+  })
+
+  test('con puntos o notas, nadie lo borra', () => {
+    expect(puedeEliminarSprint(vacio, { userId: 'user-1', esDuenio: true, items: [{ id: 'i1' }], notas: [] })).toBe(false)
+    expect(puedeEliminarSprint(vacio, { userId: 'user-1', esDuenio: true, items: [], notas: [{ id: 'n1' }] })).toBe(false)
+  })
+
+  test('ni Dueño ni autor -> no', () => {
+    expect(puedeEliminarSprint(vacio, { userId: 'otro', esDuenio: false, items: [], notas: [] })).toBe(false)
+  })
+
+  test('sprint viejo sin autor: solo Dueño', () => {
+    const viejo = { id: 's2', creado_por: null }
+    expect(puedeEliminarSprint(viejo, { userId: 'user-1', esDuenio: false, items: [], notas: [] })).toBe(false)
+    expect(puedeEliminarSprint(viejo, { userId: 'user-1', esDuenio: true, items: [], notas: [] })).toBe(true)
+  })
+
+  test('sin sprint -> false', () => {
+    expect(puedeEliminarSprint(null, { esDuenio: true })).toBe(false)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Forzar la descarga de archivos servidos desde Supabase Storage
+// (un .html si no, se abre en el navegador en vez de bajarse).
+// ──────────────────────────────────────────────────────────────
+describe('esArchivoStorage / urlDescargaAdjunto', () => {
+  const enStorage = 'https://x.supabase.co/storage/v1/object/public/Bucket%20Publico/sprints/s1/i1/1690000000000/reporte.html'
+  const externo = 'https://github.com/apsol/repo/pull/12'
+
+  test('detecta un archivo de Storage', () => {
+    expect(esArchivoStorage(enStorage)).toBe(true)
+    expect(esArchivoStorage(externo)).toBe(false)
+    expect(esArchivoStorage(null)).toBe(false)
+  })
+
+  test('agrega ?download a los archivos de Storage', () => {
+    expect(urlDescargaAdjunto(enStorage)).toBe(enStorage + '?download')
+  })
+
+  test('si ya tiene query, usa &download', () => {
+    expect(urlDescargaAdjunto(enStorage + '?token=abc')).toBe(enStorage + '?token=abc&download')
+  })
+
+  test('un link externo se devuelve intacto (no se puede forzar)', () => {
+    expect(urlDescargaAdjunto(externo)).toBe(externo)
   })
 })

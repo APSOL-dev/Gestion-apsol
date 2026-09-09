@@ -106,6 +106,16 @@ export function puedeEditarSprint(sprint) {
   return sprint?.estado !== 'cerrado'
 }
 
+// Un sprint solo se puede eliminar si está VACÍO (sin puntos ni notas) y
+// lo pide un Dueño/Admin o quien lo creó. Los sprints previos a la
+// columna `creado_por` (autor null) solo los borra un Dueño.
+export function puedeEliminarSprint(sprint, { userId, esDuenio = false, items = [], notas = [] } = {}) {
+  if (!sprint) return false
+  if ((items?.length || 0) > 0 || (notas?.length || 0) > 0) return false
+  if (esDuenio) return true
+  return Boolean(sprint.creado_por) && sprint.creado_por === userId
+}
+
 // No hay columna "tipo" en apsol_sprint_item_adjuntos: una imagen subida y
 // un link pegado a mano se guardan igual (solo url + nombre). Para pintar
 // la fila (miniatura vs. chip de link) se infiere por la extensión.
@@ -123,4 +133,18 @@ export function dominioDeUrl(url) {
   } catch {
     return url
   }
+}
+
+// Archivos servidos desde Supabase Storage abren en el navegador según su
+// tipo (un .html se renderiza, un .txt se muestra…). Agregar `download` a
+// la URL pública hace que Storage responda con Content-Disposition:
+// attachment y el navegador lo baje en vez de abrirlo. En links externos
+// pegados a mano no se puede forzar, se devuelven igual.
+const RE_STORAGE_PUBLICO = /\/storage\/v1\/object\/public\//
+export function esArchivoStorage(url) {
+  return typeof url === 'string' && RE_STORAGE_PUBLICO.test(url)
+}
+export function urlDescargaAdjunto(url) {
+  if (!esArchivoStorage(url)) return url
+  return url + (url.includes('?') ? '&' : '?') + 'download'
 }

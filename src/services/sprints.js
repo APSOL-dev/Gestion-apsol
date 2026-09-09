@@ -48,10 +48,10 @@ export async function getSprintById(id) {
   return data
 }
 
-export async function crearSprint({ proyecto_id, numero, nombre = '', objetivo = '', fecha_inicio = null, fecha_fin = null }) {
+export async function crearSprint({ proyecto_id, numero, nombre = '', objetivo = '', fecha_inicio = null, fecha_fin = null, creado_por = null }) {
   const { data, error } = await supabase
     .from('apsol_sprints')
-    .insert([{ proyecto_id, numero, nombre, objetivo, fecha_inicio, fecha_fin, estado: 'planificado' }])
+    .insert([{ proyecto_id, numero, nombre, objetivo, fecha_inicio, fecha_fin, estado: 'planificado', creado_por }])
     .select()
     .single()
 

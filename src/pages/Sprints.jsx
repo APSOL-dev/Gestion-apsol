@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Activity, RefreshCw, Plus, CalendarClock, X } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 import {
   getSprintsActivos, getSprintsPlanificados, getSprintsDeProyecto, crearSprint,
 } from '../services/sprints'
@@ -57,6 +58,7 @@ function TablaSprints({ sprints, onRowClick }) {
 
 export default function Sprints() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [activos, setActivos] = useState([])
   const [planificados, setPlanificados] = useState([])
   const [loading, setLoading] = useState(true)
@@ -103,7 +105,7 @@ export default function Sprints() {
     setCreando(true)
     try {
       const existentes = await getSprintsDeProyecto(proyectoNuevo)
-      const s = await crearSprint({ proyecto_id: proyectoNuevo, numero: siguienteNumeroSprint(existentes) })
+      const s = await crearSprint({ proyecto_id: proyectoNuevo, numero: siguienteNumeroSprint(existentes), creado_por: user?.id || null })
       navigate(`/sprints/${s.id}`)
     } catch (err) {
       console.error(err)

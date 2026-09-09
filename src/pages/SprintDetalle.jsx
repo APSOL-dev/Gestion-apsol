@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Trash2, ChevronUp, ChevronDown, Lock, Unlock,
-  Paperclip, Link2, X, Loader2, ListChecks
+  Paperclip, Link2, X, Loader2, ListChecks, Plus, Download,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { uploadFile } from '../services/storage'
@@ -10,11 +10,13 @@ import {
   getSprintById, actualizarSprint, cerrarSprint, reabrirSprint,
   crearItem, actualizarItem, eliminarItem, guardarOrdenItems,
   agregarAdjunto, eliminarAdjunto, crearNotaSprint, eliminarNotaSprint,
+  eliminarSprint,
 } from '../services/sprints'
 import {
   ESTADOS_ITEM, ORDEN_ESTADOS, contarEstados, porcentajeAvance,
   siguienteOrden, moverItemEnLista, renumerarOrden, puedeEditarSprint,
-  siguienteEstadoCiclo, esImagenUrl, dominioDeUrl,
+  puedeEliminarSprint, siguienteEstadoCiclo, esImagenUrl, dominioDeUrl,
+  esArchivoStorage, urlDescargaAdjunto,
 } from '../services/sprints-utils'
 
 const ESTADO_SPRINT_BADGE = {
@@ -26,7 +28,7 @@ const ESTADO_SPRINT_BADGE = {
 export default function SprintDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, esDuenio } = useAuth()
 
   const [sprint, setSprint] = useState(null)
   const [items, setItems] = useState([])
@@ -56,6 +58,7 @@ export default function SprintDetalle() {
   const editable = sprint ? puedeEditarSprint(sprint) : false
   const conteo = contarEstados(items)
   const avance = porcentajeAvance(items)
+  const puedeBorrar = puedeEliminarSprint(sprint, { userId: user?.id, esDuenio, items, notas })
 
   // ── Encabezado del sprint ──────────────────────────────────
   function patchSprintLocal(campos) {
@@ -87,6 +90,20 @@ export default function SprintDetalle() {
       console.error(err)
       alert('No se pudo cambiar el estado del sprint.')
       cargar()
+    }
+  }
+
+  async function borrarSprint() {
+    if (!puedeBorrar) return
+    if (!window.confirm(
+      `¿Eliminar el Sprint ${sprint.numero}? El sprint está vacío y esta acción no se puede deshacer.`
+    )) return
+    try {
+      await eliminarSprint(id)
+      navigate(sprint.proyecto ? `/proyectos/${sprint.proyecto.id}` : '/sprints')
+    } catch (err) {
+      console.error(err)
+      alert('No se pudo eliminar el sprint.')
     }
   }
 
@@ -257,6 +274,16 @@ export default function SprintDetalle() {
               <Unlock size={16} /> Reabrir
             </button>
           )}
+          {puedeBorrar && (
+            <button
+              className="btn btn-secondary"
+              onClick={borrarSprint}
+              title="El sprint no tiene puntos ni notas: se puede eliminar"
+              style={{ color: 'var(--color-danger)' }}
+            >
+              <Trash2 size={16} /> Eliminar
+            </button>
+          )}
         </div>
       </div>
 
@@ -364,20 +391,33 @@ export default function SprintDetalle() {
         )}
 
         {editable && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 2px', marginTop: items.length > 0 ? 4 : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px', marginTop: items.length > 0 ? 4 : 0 }}>
             <span style={{ width: 16, height: 16, borderRadius: '50%', border: '1px dashed var(--color-border)', flexShrink: 0 }} />
             <input
               ref={nuevoInputRef}
               type="text"
-              placeholder="Escribí un punto y apretá Enter…"
+              placeholder="Escribí un punto…"
               value={nuevoTitulo}
               disabled={agregando}
               onChange={(e) => setNuevoTitulo(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); agregarPunto(nuevoTitulo) }
               }}
-              style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 14, padding: '4px 0' }}
+              style={{
+                flex: 1, minWidth: 0, fontSize: 14, padding: '6px 8px',
+                border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)',
+              }}
             />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ flexShrink: 0, padding: '6px 12px' }}
+              disabled={agregando || !nuevoTitulo.trim()}
+              onClick={() => agregarPunto(nuevoTitulo)}
+            >
+              {agregando ? <Loader2 size={14} style={{ animation: 'spin 0.75s linear infinite' }} /> : <Plus size={16} />}
+              Agregar
+            </button>
           </div>
         )}
       </div>
@@ -450,10 +490,9 @@ export default function SprintDetalle() {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Fila de un punto: una línea. Colorcito (click = siguiente estado),
-// título editable, adjuntar (imagen o link) y mover arriba/abajo.
-// Sin textareas, sin "expandir" — lo que no entra en la línea va como
-// adjunto.
+// Fila de un punto: colorcito (click = siguiente estado), título
+// editable, adjuntar (archivo o link) y mover arriba/abajo. El título
+// muestra hasta 3 líneas; si hay más, una flechita lo despliega entero.
 // ──────────────────────────────────────────────────────────────
 function iconBtnStyle(danger) {
   return {
@@ -462,6 +501,63 @@ function iconBtnStyle(danger) {
     borderRadius: 6, cursor: 'pointer', flexShrink: 0,
     color: danger ? 'var(--color-danger)' : 'var(--color-text-muted)',
   }
+}
+
+// Título de un punto: <textarea> que autocrece. En reposo muestra como
+// máximo 3 líneas; si el texto es más largo aparece ▾ para verlo
+// completo (sin scroll) y ▴ para volver a colapsarlo. Enter guarda y no
+// mete salto de línea (el punto sigue siendo "un renglón").
+const TITULO_LINEA_PX = 20                      // ~fontSize 14 * line-height 1.4
+const TITULO_MAX_COLAPSADO = TITULO_LINEA_PX * 3
+
+function TituloPunto({ value, editable, tachado, onPatch, onPersist }) {
+  const taRef = useRef(null)
+  const [expandido, setExpandido] = useState(false)
+  const [desborda, setDesborda] = useState(false)
+
+  const ajustarAlto = useCallback(() => {
+    const ta = taRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    const completo = ta.scrollHeight
+    setDesborda(completo > TITULO_MAX_COLAPSADO + 2)
+    ta.style.height = (expandido ? completo : Math.min(completo, TITULO_MAX_COLAPSADO)) + 'px'
+  }, [expandido])
+
+  useEffect(() => { ajustarAlto() }, [value, ajustarAlto])
+
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+      <textarea
+        ref={taRef}
+        rows={1}
+        value={value || ''}
+        disabled={!editable}
+        onChange={(e) => onPatch({ titulo: e.target.value })}
+        onFocus={() => setExpandido(true)}
+        onBlur={(e) => { onPersist({ titulo: e.target.value }); setExpandido(false) }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
+        style={{
+          flex: 1, minWidth: 0, resize: 'none', overflow: 'hidden',
+          border: 'none', background: 'transparent', fontSize: 14, lineHeight: 1.4,
+          fontFamily: 'inherit', padding: '4px 0',
+          color: tachado ? 'var(--color-text-muted)' : 'inherit',
+          textDecoration: tachado ? 'line-through' : 'none',
+        }}
+      />
+      {desborda && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setExpandido((v) => !v)}
+          title={expandido ? 'Colapsar' : 'Ver todo'}
+          style={{ ...iconBtnStyle(), width: 20, height: 22, marginTop: 2 }}
+        >
+          {expandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      )}
+    </div>
+  )
 }
 
 function PuntoRow({
@@ -475,7 +571,7 @@ function PuntoRow({
   const meta = ESTADOS_ITEM[item.estado] || ESTADOS_ITEM.pendiente
   const adjuntos = item.adjuntos || []
 
-  async function subirImagen(e) {
+  async function subirArchivo(e) {
     const file = e.target.files?.[0]
     if (!file) return
     setSubiendo(true)
@@ -485,7 +581,7 @@ function PuntoRow({
       onAdjuntosChange([...adjuntos, adj])
     } catch (err) {
       console.error(err)
-      alert('No se pudo subir la imagen.')
+      alert('No se pudo subir el archivo.')
     } finally {
       setSubiendo(false)
       if (fileRef.current) fileRef.current.value = ''
@@ -517,9 +613,9 @@ function PuntoRow({
 
   return (
     <div style={{ borderBottom: '1px solid var(--color-border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 2px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 2px' }}>
         {editable ? (
-          <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, marginTop: 4 }}>
             <button style={{ ...iconBtnStyle(), width: 16, height: 14 }} disabled={primero} onClick={() => onMover('arriba')} title="Subir">
               <ChevronUp size={12} />
             </button>
@@ -534,39 +630,33 @@ function PuntoRow({
           disabled={!editable}
           onClick={() => onPersist({ estado: siguienteEstadoCiclo(item.estado) })}
           style={{
-            width: 16, height: 16, borderRadius: '50%', border: 'none', flexShrink: 0,
+            width: 16, height: 16, borderRadius: '50%', border: 'none', flexShrink: 0, marginTop: 7,
             background: meta.color, cursor: editable ? 'pointer' : 'default', padding: 0,
           }}
         />
 
-        <input
-          type="text"
-          value={item.titulo || ''}
-          disabled={!editable}
-          onChange={(e) => onPatch({ titulo: e.target.value })}
-          onBlur={(e) => onPersist({ titulo: e.target.value })}
-          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-          style={{
-            flex: 1, minWidth: 0, border: 'none', background: 'transparent', fontSize: 14, padding: '4px 0',
-            color: item.estado === 'verde' ? 'var(--color-text-muted)' : 'inherit',
-            textDecoration: item.estado === 'verde' ? 'line-through' : 'none',
-          }}
+        <TituloPunto
+          value={item.titulo}
+          editable={editable}
+          tachado={item.estado === 'verde'}
+          onPatch={onPatch}
+          onPersist={onPersist}
         />
 
         {editable && (
           <>
-            <input ref={fileRef} type="file" accept="image/*" hidden onChange={subirImagen} />
-            <button style={iconBtnStyle()} title="Adjuntar imagen" disabled={subiendo} onClick={() => fileRef.current?.click()}>
+            <input ref={fileRef} type="file" hidden onChange={subirArchivo} />
+            <button style={{ ...iconBtnStyle(), marginTop: 2 }} title="Adjuntar archivo" disabled={subiendo} onClick={() => fileRef.current?.click()}>
               {subiendo ? <Loader2 size={14} style={{ animation: 'spin 0.75s linear infinite' }} /> : <Paperclip size={14} />}
             </button>
             <button
-              style={iconBtnStyle()}
+              style={{ ...iconBtnStyle(), marginTop: 2 }}
               title="Adjuntar link"
               onClick={() => { setPidiendoLink((v) => !v); setTimeout(() => linkRef.current?.focus(), 0) }}
             >
               <Link2 size={14} />
             </button>
-            <button style={iconBtnStyle(true)} title="Eliminar punto" onClick={onBorrar}>
+            <button style={{ ...iconBtnStyle(true), marginTop: 2 }} title="Eliminar punto" onClick={onBorrar}>
               <Trash2 size={14} />
             </button>
           </>
@@ -591,31 +681,37 @@ function PuntoRow({
 
       {adjuntos.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 2px 8px 42px' }}>
-          {adjuntos.map((a) => (
-            esImagenUrl(a.url) ? (
-              <span key={a.id} style={{ position: 'relative', display: 'inline-flex' }}>
-                <a href={a.url} target="_blank" rel="noreferrer">
-                  <img
-                    src={a.url}
-                    alt={a.nombre || 'adjunto'}
-                    style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--color-border)' }}
-                  />
-                </a>
-                {editable && (
-                  <button
-                    onClick={() => quitarAdjunto(a.id)}
-                    title="Quitar"
-                    style={{
-                      position: 'absolute', top: -5, right: -5, width: 15, height: 15, borderRadius: '50%',
-                      background: 'var(--color-danger)', color: '#fff', border: 'none', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
-                    }}
-                  >
-                    <X size={9} />
-                  </button>
-                )}
-              </span>
-            ) : (
+          {adjuntos.map((a) => {
+            if (esImagenUrl(a.url)) {
+              return (
+                <span key={a.id} style={{ position: 'relative', display: 'inline-flex' }}>
+                  <a href={a.url} target="_blank" rel="noreferrer">
+                    <img
+                      src={a.url}
+                      alt={a.nombre || 'adjunto'}
+                      style={{ width: 30, height: 30, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                    />
+                  </a>
+                  {editable && (
+                    <button
+                      onClick={() => quitarAdjunto(a.id)}
+                      title="Quitar"
+                      style={{
+                        position: 'absolute', top: -5, right: -5, width: 15, height: 15, borderRadius: '50%',
+                        background: 'var(--color-danger)', color: '#fff', border: 'none', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                      }}
+                    >
+                      <X size={9} />
+                    </button>
+                  )}
+                </span>
+              )
+            }
+            // Archivo subido (pdf, html, zip…): forzamos la descarga.
+            // Link externo pegado a mano: se abre en pestaña.
+            const esArchivo = esArchivoStorage(a.url)
+            return (
               <span
                 key={a.id}
                 style={{
@@ -624,8 +720,14 @@ function PuntoRow({
                   background: 'var(--color-surface2)',
                 }}
               >
-                <Link2 size={11} />
-                <a href={a.url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+                {esArchivo ? <Download size={11} /> : <Link2 size={11} />}
+                <a
+                  href={esArchivo ? urlDescargaAdjunto(a.url) : a.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  download={esArchivo ? (a.nombre || '') : undefined}
+                  style={{ color: 'inherit' }}
+                >
                   {a.nombre || dominioDeUrl(a.url)}
                 </a>
                 {editable && (
@@ -635,7 +737,7 @@ function PuntoRow({
                 )}
               </span>
             )
-          ))}
+          })}
         </div>
       )}
     </div>

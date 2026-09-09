@@ -6,6 +6,7 @@ import {
   getSprintsActivos, getSprintsPlanificados, getSprintsDeProyecto, crearSprint,
 } from '../../services/sprints'
 import { getProyectos } from '../../services/proyectos'
+import { useAuth } from '../../context/AuthContext'
 
 vi.mock('../../services/sprints', () => ({
   getSprintsActivos: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('../../services/sprints', () => ({
 vi.mock('../../services/proyectos', () => ({
   getProyectos: vi.fn(),
 }))
+vi.mock('../../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
 const mockSprint = {
   id: 'sprint-1',
@@ -41,6 +43,7 @@ describe('Sprints — fila clickeable', () => {
     vi.clearAllMocks()
     getSprintsActivos.mockResolvedValue([mockSprint])
     getSprintsPlanificados.mockResolvedValue([])
+    useAuth.mockReturnValue({ user: { id: 'user-1' } })
   })
 
   test('clic en la celda del proyecto (no en el link) navega al detalle del sprint', async () => {
@@ -67,6 +70,7 @@ describe('Sprints — planificados y alta directa', () => {
     vi.clearAllMocks()
     getSprintsActivos.mockResolvedValue([mockSprint])
     getSprintsPlanificados.mockResolvedValue([])
+    useAuth.mockReturnValue({ user: { id: 'user-1' } })
   })
 
   test('los sprints planificados aparecen en su propia sección (no quedan escondidos)', async () => {
@@ -107,7 +111,7 @@ describe('Sprints — planificados y alta directa', () => {
     await waitFor(() => {
       expect(getSprintsDeProyecto).toHaveBeenCalledWith('proy-7')
       // numero siguiente = 3 (había 1 y 2)
-      expect(crearSprint).toHaveBeenCalledWith({ proyecto_id: 'proy-7', numero: 3 })
+      expect(crearSprint).toHaveBeenCalledWith({ proyecto_id: 'proy-7', numero: 3, creado_por: 'user-1' })
       expect(screen.getByText('Detalle del sprint')).toBeInTheDocument()
     })
   })

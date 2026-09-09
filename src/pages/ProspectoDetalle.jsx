@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, FolderKanban, Star, Plus, Clock, User, Building2, X, Link, Upload, DownloadCloud, ChevronDown, Calendar, DollarSign, RefreshCw, Users, CreditCard, Activity, Mail, ExternalLink } from 'lucide-react'
 import CreatableSelect from 'react-select/creatable'
@@ -142,6 +142,7 @@ export default function ProspectoDetalle() {
 
   const [observaciones, setObservaciones] = useState([])
   const [nuevaObsTexto, setNuevaObsTexto] = useState('')
+  const historialRef = useRef(null)
   const [cuentasBancarias, setCuentasBancarias] = useState([])
   
   const [loading, setLoading] = useState(true)
@@ -410,6 +411,25 @@ export default function ProspectoDetalle() {
       const saved = await saveProspecto(toSave)
       setProspecto(prev => ({ ...prev, ...saved }))
       invalidarCacheProspectos()
+
+      // Dejar registro en el historial: cada vez que se guarda la próxima
+      // tarea, queda anotada abajo con quién la definió y para cuándo (antes
+      // se pisaba sin dejar rastro).
+      if (p_tarea) {
+        const fechaTxt = prospecto.fecha_proxima_tarea
+          ? ` — para el ${new Date(prospecto.fecha_proxima_tarea + 'T00:00:00').toLocaleDateString('es-AR')}`
+          : ''
+        try {
+          const newObs = await saveObservacion({
+            prospecto_id: id,
+            observacion: `Próxima tarea: ${p_tarea}${fechaTxt}`
+          })
+          setObservaciones(prev => [newObs, ...prev])
+          historialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        } catch (obsErr) {
+          console.error('No se pudo registrar la observación de próxima tarea:', obsErr)
+        }
+      }
     } catch (err) {
       console.error(err)
       setError('Error al actualizar la tarea.')
@@ -1071,7 +1091,7 @@ export default function ProspectoDetalle() {
             </div>
 
             {/* HISTORIAL DE OBSERVACIONES */}
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+            <div ref={historialRef} className="card" style={{ display: 'flex', flexDirection: 'column', flex: 1, scrollMarginTop: '16px' }}>
               <h3 style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Clock size={20} className="text-primary" />
                 Historial de Observaciones

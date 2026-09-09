@@ -5,6 +5,7 @@ import { getProyectoById, saveProyecto, deleteProyecto } from '../services/proye
 import { getProspectos } from '../services/prospectos'
 import { getColaboradores } from '../services/colaboradores'
 import { useData } from '../context/DataContext'
+import { useAuth } from '../context/AuthContext'
 import { filtrarProspectosParaProyecto } from '../utils/prospectos'
 import { getSprintsDeProyecto, crearSprint } from '../services/sprints'
 import { contarEstados, porcentajeAvance, siguienteNumeroSprint, ESTADOS_ITEM, ORDEN_ESTADOS } from '../services/sprints-utils'
@@ -13,6 +14,7 @@ export default function ProyectoDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { refreshProyectos } = useData()
+  const { user } = useAuth()
   const esNuevo = id === 'nuevo'
 
   const [proyecto, setProyecto] = useState({
@@ -67,7 +69,7 @@ export default function ProyectoDetalle() {
   async function nuevoSprint() {
     setCreandoSprint(true)
     try {
-      const s = await crearSprint({ proyecto_id: id, numero: siguienteNumeroSprint(sprints) })
+      const s = await crearSprint({ proyecto_id: id, numero: siguienteNumeroSprint(sprints), creado_por: user?.id || null })
       navigate(`/sprints/${s.id}`)
     } catch (err) {
       console.error(err)
