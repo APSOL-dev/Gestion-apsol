@@ -1,15 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Activity, RefreshCw, Plus, CalendarClock, X } from 'lucide-react'
+import { AlertTriangle, Activity, RefreshCw, Plus, CalendarClock, X, Filter, Briefcase, Target, Building2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import FiltroMultiSelect from '../components/FiltroMultiSelect'
+import ModalPortal from '../components/ModalPortal'
 import {
   getSprintsActivos, getSprintsPlanificados, getSprintsDeProyecto, crearSprint,
 } from '../services/sprints'
 import { getProyectos } from '../services/proyectos'
+import { getMiFichaColaborador } from '../services/colaboradores'
 import {
   ESTADOS_ITEM, ORDEN_ESTADOS, contarEstados, porcentajeAvance, itemsEnRojo,
   siguienteNumeroSprint,
 } from '../services/sprints-utils'
+import { opcionesDeFiltro, filtrarSprints } from '../services/sprints-filtros'
+import { puedeVerTodo, filtrarPorAsignacion, proyectoVisiblePara } from '../services/sprints-permisos'
+import { textoPlano } from '../services/sprint-item-formato'
 
 // Tabla de sprints reutilizada por "Sprints activos" y "Planificados".
 function TablaSprints({ sprints, onRowClick }) {
@@ -58,11 +64,19 @@ function TablaSprints({ sprints, onRowClick }) {
 
 export default function Sprints() {
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, esDuenio, esTeamLead } = useAuth()
+  const verTodo = puedeVerTodo({ esDuenio, esTeamLead })
+
   const [activos, setActivos] = useState([])
   const [planificados, setPlanificados] = useState([])
+  const [prospectosAsignados, setProspectosAsignados] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // Filtros (no se persisten entre recargas, es a propósito).
+  const [proyectoIds, setProyectoIds] = useState([])
+  const [prospectoIds, setProspectoIds] = useState([])
+  const [empresaIds, setEmpresaIds] = useState([])
 
   const [modalNuevo, setModalNuevo] = useState(false)
   const [proyectos, setProyectos] = useState([])
@@ -72,9 +86,14 @@ export default function Sprints() {
   async function cargar() {
     setLoading(true)
     try {
-      const [a, p] = await Promise.all([getSprintsActivos(), getSprintsPlanificados()])
-      setActivos(a)
-      setPlanificados(p)
+      const tareas = [getSprintsActivos(), getSprintsPlanificados()]
+      if (!verTodo && user?.id) tareas.push(getMiFichaColaborador(user.id))
+      const [a, p, ficha] = await Promise.all(tareas)
+      const asignados = verTodo ? [] : (ficha?.prospectos_asignados || [])
+      setProspectosAsignados(asignados)
+      const opts = { verTodo, prospectosAsignados: asignados }
+      setActivos(filtrarPorAsignacion(a, opts))
+      setPlanificados(filtrarPorAsignacion(p, opts))
       setError('')
     } catch (err) {
       console.error(err)
@@ -85,7 +104,22 @@ export default function Sprints() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [verTodo, user?.id])
+
+  const opciones = useMemo(
+    () => opcionesDeFiltro([...activos, ...planificados]),
+    [activos, planificados],
+  )
+  const filtros = { proyectoIds, prospectoIds, empresaIds }
+  const hayFiltro = proyectoIds.length + prospectoIds.length + empresaIds.length > 0
+  const activosFiltrados = useMemo(() => filtrarSprints(activos, filtros), [activos, proyectoIds, prospectoIds, empresaIds])
+  const planificadosFiltrados = useMemo(() => filtrarSprints(planificados, filtros), [planificados, proyectoIds, prospectoIds, empresaIds])
+
+  function limpiarFiltros() {
+    setProyectoIds([])
+    setProspectoIds([])
+    setEmpresaIds([])
+  }
 
   async function abrirModalNuevo() {
     setProyectoNuevo('')
@@ -99,6 +133,10 @@ export default function Sprints() {
       }
     }
   }
+
+  const proyectosParaElegir = verTodo
+    ? proyectos
+    : proyectos.filter((p) => proyectoVisiblePara(p, { verTodo, prospectosAsignados }))
 
   async function confirmarNuevoSprint() {
     if (!proyectoNuevo || creando) return
@@ -115,7 +153,7 @@ export default function Sprints() {
     }
   }
 
-  const rojos = activos.flatMap((s) =>
+  const rojos = activosFiltrados.flatMap((s) =>
     itemsEnRojo(s.items || []).map((it) => ({
       ...it,
       sprintId: s.id,
@@ -148,6 +186,33 @@ export default function Sprints() {
 
       {error && <div className="alert alert-error" style={{ marginBottom: 20 }}>{error}</div>}
 
+      {/* Filtros: proyecto / prospecto / empresa, combinables */}
+      <div className="card" style={{ marginBottom: 20, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--color-text-muted)' }}>
+          <Filter size={15} /> Filtrar
+        </span>
+        <FiltroMultiSelect
+          icon={<Briefcase size={14} />} label="Proyecto"
+          options={opciones.proyectos} selectedIds={proyectoIds} onChange={setProyectoIds}
+          emptyMessage="Sin proyectos"
+        />
+        <FiltroMultiSelect
+          icon={<Target size={14} />} label="Prospecto"
+          options={opciones.prospectos} selectedIds={prospectoIds} onChange={setProspectoIds}
+          emptyMessage="Sin prospectos"
+        />
+        <FiltroMultiSelect
+          icon={<Building2 size={14} />} label="Empresa"
+          options={opciones.empresas} selectedIds={empresaIds} onChange={setEmpresaIds}
+          emptyMessage="Sin empresas"
+        />
+        {hayFiltro && (
+          <button className="btn btn-secondary" style={{ fontSize: 12, padding: '4px 10px' }} onClick={limpiarFiltros}>
+            <X size={13} /> Limpiar
+          </button>
+        )}
+      </div>
+
       {/* Rojo ahora mismo */}
       <div className="card" style={{ marginBottom: 20, borderColor: rojos.length ? 'var(--color-danger)' : 'var(--color-border)' }}>
         <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -164,7 +229,7 @@ export default function Sprints() {
                 to={`/sprints/${r.sprintId}`}
                 style={{ display: 'block', padding: 10, borderRadius: 6, background: 'var(--color-danger-light)', color: 'inherit', textDecoration: 'none' }}
               >
-                <strong>{r.proyecto}</strong> · {r.sprintNombre} — {r.titulo}
+                <strong>{r.proyecto}</strong> · {r.sprintNombre} — {textoPlano(r.titulo)}
                 {r.comentario && (
                   <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>{r.comentario}</div>
                 )}
@@ -177,67 +242,71 @@ export default function Sprints() {
       {/* Sprints activos */}
       <div className="card" style={{ marginBottom: 20 }}>
         <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Activity size={20} className="text-primary" /> Sprints activos ({activos.length})
+          <Activity size={20} className="text-primary" /> Sprints activos ({activosFiltrados.length})
         </h3>
-        {activos.length === 0 ? (
+        {activosFiltrados.length === 0 ? (
           <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
-            No hay sprints activos. Creá uno con “Nuevo Sprint” y tocá “Iniciar sprint”.
+            {hayFiltro
+              ? 'Ningún sprint activo coincide con los filtros.'
+              : 'No hay sprints activos. Creá uno con “Nuevo Sprint” y tocá “Iniciar sprint”.'}
           </p>
         ) : (
-          <TablaSprints sprints={activos} onRowClick={(id) => navigate(`/sprints/${id}`)} />
+          <TablaSprints sprints={activosFiltrados} onRowClick={(id) => navigate(`/sprints/${id}`)} />
         )}
       </div>
 
       {/* Planificados: creados pero todavía sin iniciar */}
-      {planificados.length > 0 && (
+      {planificadosFiltrados.length > 0 && (
         <div className="card">
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <CalendarClock size={20} style={{ color: 'var(--color-text-muted)' }} /> Planificados ({planificados.length})
+            <CalendarClock size={20} style={{ color: 'var(--color-text-muted)' }} /> Planificados ({planificadosFiltrados.length})
           </h3>
           <p style={{ color: 'var(--color-text-muted)', fontSize: 13, marginBottom: 12 }}>
             Todavía sin iniciar. Entrá y tocá “Iniciar sprint” para que pase a activo.
           </p>
-          <TablaSprints sprints={planificados} onRowClick={(id) => navigate(`/sprints/${id}`)} />
+          <TablaSprints sprints={planificadosFiltrados} onRowClick={(id) => navigate(`/sprints/${id}`)} />
         </div>
       )}
 
       {/* Modal: nuevo sprint para un proyecto */}
       {modalNuevo && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: 440 }}>
-            <div className="modal-header">
-              <h3>Nuevo Sprint</h3>
-              <button className="btn-close" onClick={() => setModalNuevo(false)}><X size={20} /></button>
-            </div>
-            <div style={{ padding: 20 }}>
-              <div className="field">
-                <label htmlFor="sprint-proyecto">Proyecto</label>
-                <select
-                  id="sprint-proyecto"
-                  value={proyectoNuevo}
-                  onChange={(e) => setProyectoNuevo(e.target.value)}
-                >
-                  <option value="">-- Elegí un proyecto --</option>
-                  {proyectos.map((p) => (
-                    <option key={p.id} value={p.id}>{p.nombre}</option>
-                  ))}
-                </select>
+        <ModalPortal>
+          <div className="modal-overlay">
+            <div className="modal-content" style={{ maxWidth: 440 }}>
+              <div className="modal-header">
+                <h3>Nuevo Sprint</h3>
+                <button className="btn-close" onClick={() => setModalNuevo(false)}><X size={20} /></button>
               </div>
-              <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 8 }}>
-                Se crea como “planificado”. Lo vas a poder completar y arrancar desde su ficha.
-              </p>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ width: '100%', marginTop: 16 }}
-                onClick={confirmarNuevoSprint}
-                disabled={!proyectoNuevo || creando}
-              >
-                {creando ? 'Creando…' : 'Crear Sprint'}
-              </button>
+              <div style={{ padding: 20 }}>
+                <div className="field">
+                  <label htmlFor="sprint-proyecto">Proyecto</label>
+                  <select
+                    id="sprint-proyecto"
+                    value={proyectoNuevo}
+                    onChange={(e) => setProyectoNuevo(e.target.value)}
+                  >
+                    <option value="">-- Elegí un proyecto --</option>
+                    {proyectosParaElegir.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 8 }}>
+                  Se crea como “planificado”. Lo vas a poder completar y arrancar desde su ficha.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ width: '100%', marginTop: 16 }}
+                  onClick={confirmarNuevoSprint}
+                  disabled={!proyectoNuevo || creando}
+                >
+                  {creando ? 'Creando…' : 'Crear Sprint'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   )

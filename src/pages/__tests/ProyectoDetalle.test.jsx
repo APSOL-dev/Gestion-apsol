@@ -3,9 +3,10 @@ import { vi, describe, test, expect, beforeEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ProyectoDetalle from '../ProyectoDetalle'
 import { useData } from '../../context/DataContext'
+import { useAuth } from '../../context/AuthContext'
 import { getProyectoById, saveProyecto, deleteProyecto } from '../../services/proyectos'
 import { getProspectos } from '../../services/prospectos'
-import { getColaboradores } from '../../services/colaboradores'
+import { getColaboradores, getMiFichaColaborador } from '../../services/colaboradores'
 import { getSprintsDeProyecto } from '../../services/sprints'
 
 // Al guardar un proyecto, la lista de /proyectos (cacheada en DataContext)
@@ -15,6 +16,8 @@ import { getSprintsDeProyecto } from '../../services/sprints'
 vi.mock('../../context/DataContext', () => ({
   useData: vi.fn(),
 }))
+
+vi.mock('../../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
 vi.mock('../../services/proyectos', () => ({
   getProyectoById: vi.fn(),
@@ -28,6 +31,7 @@ vi.mock('../../services/prospectos', () => ({
 
 vi.mock('../../services/colaboradores', () => ({
   getColaboradores: vi.fn(),
+  getMiFichaColaborador: vi.fn(),
 }))
 
 vi.mock('../../services/sprints', () => ({
@@ -67,6 +71,8 @@ describe('ProyectoDetalle — refresco de caché al guardar', () => {
     vi.clearAllMocks()
     refreshProyectos = vi.fn()
     useData.mockReturnValue({ refreshProyectos })
+    useAuth.mockReturnValue({ user: { id: 'u1' }, esDuenio: true, esTeamLead: false })
+    getMiFichaColaborador.mockResolvedValue({ prospectos_asignados: [] })
     getProyectoById.mockResolvedValue(mockProyecto)
     getProspectos.mockResolvedValue([
       { id: 'prospecto-1', nombre: 'Open Pack Final', estado: '6A', empresas: { nombre: 'Open Pack' } },
@@ -103,5 +109,33 @@ describe('ProyectoDetalle — refresco de caché al guardar', () => {
 
     const opciones = screen.getAllByText('Open Pack Final (Open Pack)')
     expect(opciones).toHaveLength(1)
+  })
+})
+
+describe('ProyectoDetalle — acceso por prospecto asignado', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useData.mockReturnValue({ refreshProyectos: vi.fn() })
+    getProyectoById.mockResolvedValue(mockProyecto)
+    getProspectos.mockResolvedValue([])
+    getColaboradores.mockResolvedValue([])
+    getSprintsDeProyecto.mockResolvedValue([])
+  })
+
+  test('un colaborador sin el prospecto asignado ve "no tenés acceso"', async () => {
+    useAuth.mockReturnValue({ user: { id: 'u2' }, esDuenio: false, esTeamLead: false })
+    getMiFichaColaborador.mockResolvedValue({ prospectos_asignados: ['otro'] })
+    renderDetalle()
+
+    expect(await screen.findByText(/No tenés acceso a este proyecto/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /guardar cambios/i })).not.toBeInTheDocument()
+  })
+
+  test('un colaborador con el prospecto asignado entra normal', async () => {
+    useAuth.mockReturnValue({ user: { id: 'u2' }, esDuenio: false, esTeamLead: false })
+    getMiFichaColaborador.mockResolvedValue({ prospectos_asignados: ['prospecto-1'] })
+    renderDetalle()
+
+    expect(await screen.findByRole('button', { name: /guardar cambios/i })).toBeInTheDocument()
   })
 })

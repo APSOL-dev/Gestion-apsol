@@ -6,12 +6,25 @@ import { resumenParaCierre } from './sprints-utils'
 // semáforo vive en sprints-utils.js (pura y testeada).
 // ──────────────────────────────────────────────────────────────
 
+// `responsable_id` se guarda plano; el nombre lo resuelve la pantalla con
+// la lista de colaboradores (embeber la vista apsol_colaboradores por FK
+// es frágil, ver proyectos.js).
 const SELECT_ITEM_COMPLETO = `
   *,
-  adjuntos:apsol_sprint_item_adjuntos(*)
+  adjuntos:apsol_sprint_item_adjuntos(*),
+  comentarios:apsol_sprint_item_comentarios(*, autor:apsol_usuarios(nombre, apellido))
 `
 
 // ── SPRINTS ───────────────────────────────────────────────────
+
+// proyecto -> prospecto -> empresa, para poder filtrar /sprints por esos
+// tres ejes y para saber qué prospecto "gobierna" el acceso al sprint.
+const EMBED_PROYECTO = `
+  proyecto:apsol_proyectos(
+    id, nombre,
+    prospecto:apsol_prospectos(id, nombre, empresa:apsol_empresas(id, nombre))
+  )
+`
 
 // Lista para un proyecto, con lo justo para pintar el semáforo del encabezado.
 export async function getSprintsDeProyecto(proyectoId) {
@@ -30,7 +43,7 @@ export async function getSprintById(id) {
     .from('apsol_sprints')
     .select(`
       *,
-      proyecto:apsol_proyectos(id, nombre),
+      ${EMBED_PROYECTO},
       items:apsol_sprint_items(${SELECT_ITEM_COMPLETO}),
       notas_items:apsol_sprint_notas(*, autor:apsol_usuarios(nombre, apellido))
     `)
@@ -42,6 +55,7 @@ export async function getSprintById(id) {
     data.items.sort((a, b) => (a.orden || 0) - (b.orden || 0))
     for (const it of data.items) {
       it.adjuntos?.sort((a, b) => new Date(a.creado_en || 0) - new Date(b.creado_en || 0))
+      it.comentarios?.sort((a, b) => new Date(a.fecha || 0) - new Date(b.fecha || 0))
     }
   }
   data?.notas_items?.sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0))
@@ -177,13 +191,33 @@ export async function eliminarNotaSprint(id) {
   if (error) throw error
 }
 
+// ── COMENTARIOS POR PUNTO ─────────────────────────────────────
+// Hilo por cada apsol_sprint_item (autor + fecha), aparte de la nota
+// del sprint entero.
+
+export async function crearComentarioItem({ item_id, creado_por, texto }) {
+  const { data, error } = await supabase
+    .from('apsol_sprint_item_comentarios')
+    .insert([{ item_id, creado_por, texto }])
+    .select('*, autor:apsol_usuarios(nombre, apellido)')
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function eliminarComentarioItem(id) {
+  const { error } = await supabase.from('apsol_sprint_item_comentarios').delete().eq('id', id)
+  if (error) throw error
+}
+
 // ── VISTA GLOBAL (todos los proyectos) ────────────────────────
 
 // Sprints activos de toda la operación, con sus puntos, para el tablero
 // "qué está en rojo ahora mismo".
 const SELECT_SPRINT_TABLERO = `
   *,
-  proyecto:apsol_proyectos(id, nombre),
+  ${EMBED_PROYECTO},
   items:apsol_sprint_items(id, titulo, estado, comentario)
 `
 

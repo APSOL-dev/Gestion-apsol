@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Calendar, Trash2, X, FolderKanban } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import ModalPortal from '../components/ModalPortal'
 import { crearPlan, eliminarPlan } from '../services/planificacion'
 
 export default function Planificacion() {
@@ -206,6 +207,7 @@ export default function Planificacion() {
 
       {/* MODAL CREAR PLAN */}
       {showModal && (
+        <ModalPortal>
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '450px' }}>
             <div className="modal-header">
@@ -266,6 +268,7 @@ export default function Planificacion() {
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   )

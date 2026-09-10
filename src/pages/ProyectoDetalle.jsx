@@ -3,18 +3,20 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, FileText, Target, Activity, Wrench, ListChecks, Plus } from 'lucide-react'
 import { getProyectoById, saveProyecto, deleteProyecto } from '../services/proyectos'
 import { getProspectos } from '../services/prospectos'
-import { getColaboradores } from '../services/colaboradores'
+import { getColaboradores, getMiFichaColaborador } from '../services/colaboradores'
 import { useData } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
 import { filtrarProspectosParaProyecto } from '../utils/prospectos'
 import { getSprintsDeProyecto, crearSprint } from '../services/sprints'
 import { contarEstados, porcentajeAvance, siguienteNumeroSprint, ESTADOS_ITEM, ORDEN_ESTADOS } from '../services/sprints-utils'
+import { puedeVerTodo, proyectoVisiblePara } from '../services/sprints-permisos'
 
 export default function ProyectoDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { refreshProyectos } = useData()
-  const { user } = useAuth()
+  const { user, esDuenio, esTeamLead } = useAuth()
+  const verTodo = puedeVerTodo({ esDuenio, esTeamLead })
   const esNuevo = id === 'nuevo'
 
   const [proyecto, setProyecto] = useState({
@@ -49,6 +51,7 @@ export default function ProyectoDetalle() {
   const [loading, setLoading] = useState(!esNuevo)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [sinAcceso, setSinAcceso] = useState(false)
 
   useEffect(() => {
     cargarDependencias()
@@ -99,6 +102,17 @@ export default function ProyectoDetalle() {
     setLoading(true)
     try {
       const data = await getProyectoById(id)
+
+      if (!verTodo) {
+        const ficha = user?.id ? await getMiFichaColaborador(user.id) : null
+        if (!proyectoVisiblePara(data, { verTodo: false, prospectosAsignados: ficha?.prospectos_asignados || [] })) {
+          setSinAcceso(true)
+          setLoading(false)
+          return
+        }
+      }
+      setSinAcceso(false)
+
       setProyecto({
         ...data,
         fecha_inicio: data.fecha_inicio ? data.fecha_inicio.split('T')[0] : '',
@@ -156,6 +170,19 @@ export default function ProyectoDetalle() {
       <div className="loading-screen">
         <div className="loading-spinner" />
         <p>Cargando proyecto...</p>
+      </div>
+    )
+  }
+
+  if (sinAcceso) {
+    return (
+      <div className="page" style={{ maxWidth: 900 }}>
+        <div className="alert alert-error">
+          No tenés acceso a este proyecto. Pertenece a un prospecto que no tenés asignado.
+        </div>
+        <button className="btn btn-secondary" onClick={() => navigate('/proyectos')} style={{ marginTop: 16 }}>
+          <ArrowLeft size={18} /> Ir a Proyectos
+        </button>
       </div>
     )
   }

@@ -9,6 +9,7 @@ import {
   ordenarItems,
   itemsEnRojo,
   moverItemEnLista,
+  moverItemAntesDe,
   renumerarOrden,
   resumenParaCierre,
   siguienteEstadoCiclo,
@@ -134,6 +135,27 @@ describe('moverItemEnLista', () => {
   test('no muta la lista original', () => {
     moverItemEnLista(base, 'a', 'abajo')
     expect(base.map(i => i.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('moverItemAntesDe (drag & drop)', () => {
+  const base = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
+
+  test('arrastrar el primero sobre el tercero lo inserta ahí', () => {
+    expect(moverItemAntesDe(base, 'a', 'c').map(i => i.id)).toEqual(['b', 'c', 'a', 'd'])
+  })
+  test('arrastrar el último sobre el primero', () => {
+    expect(moverItemAntesDe(base, 'd', 'a').map(i => i.id)).toEqual(['d', 'a', 'b', 'c'])
+  })
+  test('soltar sobre sí mismo no cambia nada', () => {
+    expect(moverItemAntesDe(base, 'b', 'b').map(i => i.id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+  test('id inexistente => lista igual', () => {
+    expect(moverItemAntesDe(base, 'x', 'a').map(i => i.id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+  test('no muta la lista original', () => {
+    moverItemAntesDe(base, 'a', 'd')
+    expect(base.map(i => i.id)).toEqual(['a', 'b', 'c', 'd'])
   })
 })
 

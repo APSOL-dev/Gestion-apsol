@@ -3,21 +3,36 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Trash2, ChevronUp, ChevronDown, Lock, Unlock,
   Paperclip, Link2, X, Loader2, ListChecks, Plus, Download,
+  GripVertical, MessageSquare, UserPlus, List,
 } from 'lucide-react'
+import {
+  DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
+  useSensor, useSensors,
+} from '@dnd-kit/core'
+import {
+  SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useAuth } from '../context/AuthContext'
 import { uploadFile } from '../services/storage'
 import {
   getSprintById, actualizarSprint, cerrarSprint, reabrirSprint,
   crearItem, actualizarItem, eliminarItem, guardarOrdenItems,
   agregarAdjunto, eliminarAdjunto, crearNotaSprint, eliminarNotaSprint,
-  eliminarSprint,
+  eliminarSprint, crearComentarioItem, eliminarComentarioItem,
 } from '../services/sprints'
+import { getMiFichaColaborador, getColaboradoresLista } from '../services/colaboradores'
 import {
   ESTADOS_ITEM, ORDEN_ESTADOS, contarEstados, porcentajeAvance,
-  siguienteOrden, moverItemEnLista, renumerarOrden, puedeEditarSprint,
+  siguienteOrden, moverItemEnLista, moverItemAntesDe, renumerarOrden, puedeEditarSprint,
   puedeEliminarSprint, siguienteEstadoCiclo, esImagenUrl, dominioDeUrl,
   esArchivoStorage, urlDescargaAdjunto,
 } from '../services/sprints-utils'
+import { puedeVerTodo, sprintVisiblePara } from '../services/sprints-permisos'
+import {
+  autoformatearVineta, parsearItemFormato, insertarSalto, insertarVinetaEnLinea,
+} from '../services/sprint-item-formato'
 
 const ESTADO_SPRINT_BADGE = {
   planificado: 'badge-gray',
@@ -28,22 +43,45 @@ const ESTADO_SPRINT_BADGE = {
 export default function SprintDetalle() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { user, esDuenio } = useAuth()
+  const { user, esDuenio, esTeamLead } = useAuth()
+  const verTodo = puedeVerTodo({ esDuenio, esTeamLead })
 
   const [sprint, setSprint] = useState(null)
   const [items, setItems] = useState([])
   const [notas, setNotas] = useState([])
+  const [colaboradores, setColaboradores] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [sinAcceso, setSinAcceso] = useState(false)
 
   async function cargar() {
     setLoading(true)
     try {
       const data = await getSprintById(id)
+
+      // Acceso: un colaborador solo ve sprints de sus prospectos asignados.
+      if (!verTodo) {
+        const ficha = user?.id ? await getMiFichaColaborador(user.id) : null
+        const ok = sprintVisiblePara(data, {
+          verTodo: false,
+          prospectosAsignados: ficha?.prospectos_asignados || [],
+        })
+        if (!ok) {
+          setSinAcceso(true)
+          setSprint(null)
+          setLoading(false)
+          return
+        }
+      }
+      setSinAcceso(false)
+
       setSprint(data)
       setItems(data.items || [])
       setNotas(data.notas_items || [])
       setError('')
+      if (colaboradores.length === 0) {
+        getColaboradoresLista().then(setColaboradores).catch((e) => console.error(e))
+      }
     } catch (err) {
       console.error(err)
       setError('No se pudo cargar el sprint.')
@@ -160,12 +198,11 @@ export default function SprintDetalle() {
     }
   }
 
-  async function mover(itemId, direccion) {
-    const reordenado = moverItemEnLista(items, itemId, direccion)
-    if (reordenado === items || reordenado.map((i) => i.id).join() === items.map((i) => i.id).join()) return
+  // Persiste un reordenamiento (viene de las flechitas ↑/↓ o del drag).
+  async function persistirOrden(reordenado) {
+    if (reordenado.map((i) => i.id).join() === items.map((i) => i.id).join()) return
     const cambios = renumerarOrden(reordenado)
-    const conOrden = reordenado.map((it, idx) => ({ ...it, orden: idx }))
-    setItems(conOrden)
+    setItems(reordenado.map((it, idx) => ({ ...it, orden: idx })))
     try {
       await guardarOrdenItems(cambios)
     } catch (err) {
@@ -174,6 +211,57 @@ export default function SprintDetalle() {
       cargar()
     }
   }
+
+  async function mover(itemId, direccion) {
+    await persistirOrden(moverItemEnLista(items, itemId, direccion))
+  }
+
+  async function onDragEnd(evento) {
+    const { active, over } = evento
+    if (!over || active.id === over.id) return
+    await persistirOrden(moverItemAntesDe(items, active.id, over.id))
+  }
+
+  // ── Responsable + comentarios por punto ────────────────────
+  function setResponsablePunto(itemId, colaboradorId) {
+    persistirPunto(itemId, { responsable_id: colaboradorId || null })
+  }
+
+  async function agregarComentarioPunto(itemId, texto) {
+    const limpio = (texto || '').trim()
+    if (!limpio || !user?.id) return null
+    try {
+      const creado = await crearComentarioItem({ item_id: itemId, creado_por: user.id, texto: limpio })
+      setItems((prev) => prev.map((it) => (
+        it.id === itemId ? { ...it, comentarios: [...(it.comentarios || []), creado] } : it
+      )))
+      return creado
+    } catch (err) {
+      console.error(err)
+      alert('No se pudo agregar el comentario.')
+      return null
+    }
+  }
+
+  async function borrarComentarioPunto(itemId, comentarioId) {
+    const previo = items
+    setItems((prev) => prev.map((it) => (
+      it.id === itemId ? { ...it, comentarios: (it.comentarios || []).filter((c) => c.id !== comentarioId) } : it
+    )))
+    try {
+      await eliminarComentarioItem(comentarioId)
+    } catch (err) {
+      console.error(err)
+      alert('No se pudo eliminar el comentario.')
+      setItems(previo)
+    }
+  }
+
+  const sensores = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   // ── Notas ──────────────────────────────────────────────────
   const [nuevaNota, setNuevaNota] = useState('')
@@ -213,6 +301,19 @@ export default function SprintDetalle() {
       <div className="loading-screen">
         <div className="loading-spinner" />
         <p>Cargando sprint...</p>
+      </div>
+    )
+  }
+
+  if (sinAcceso) {
+    return (
+      <div className="page" style={{ maxWidth: 900 }}>
+        <div className="alert alert-error">
+          No tenés acceso a este sprint. Pertenece a un prospecto que no tenés asignado.
+        </div>
+        <button className="btn btn-secondary" onClick={() => navigate('/sprints')} style={{ marginTop: 16 }}>
+          <ArrowLeft size={18} /> Ir a Sprints
+        </button>
       </div>
     )
   }
@@ -371,23 +472,31 @@ export default function SprintDetalle() {
         )}
 
         {items.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {items.map((it, idx) => (
-              <PuntoRow
-                key={it.id}
-                item={it}
-                editable={editable}
-                primero={idx === 0}
-                ultimo={idx === items.length - 1}
-                userId={user?.id}
-                onPatch={(campos) => actualizarPuntoLocal(it.id, campos)}
-                onPersist={(campos) => persistirPunto(it.id, campos)}
-                onMover={(dir) => mover(it.id, dir)}
-                onBorrar={() => borrarPunto(it.id)}
-                onAdjuntosChange={(adjuntos) => actualizarPuntoLocal(it.id, { adjuntos })}
-              />
-            ))}
-          </div>
+          <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={items.map((it) => it.id)} strategy={verticalListSortingStrategy}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {items.map((it, idx) => (
+                  <SortablePuntoRow
+                    key={it.id}
+                    item={it}
+                    editable={editable}
+                    primero={idx === 0}
+                    ultimo={idx === items.length - 1}
+                    userId={user?.id}
+                    colaboradores={colaboradores}
+                    onPatch={(campos) => actualizarPuntoLocal(it.id, campos)}
+                    onPersist={(campos) => persistirPunto(it.id, campos)}
+                    onMover={(dir) => mover(it.id, dir)}
+                    onBorrar={() => borrarPunto(it.id)}
+                    onAdjuntosChange={(adjuntos) => actualizarPuntoLocal(it.id, { adjuntos })}
+                    onResponsable={(colId) => setResponsablePunto(it.id, colId)}
+                    onComentar={(texto) => agregarComentarioPunto(it.id, texto)}
+                    onBorrarComentario={(cId) => borrarComentarioPunto(it.id, cId)}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
 
         {editable && (
@@ -503,73 +612,188 @@ function iconBtnStyle(danger) {
   }
 }
 
-// Título de un punto: <textarea> que autocrece. En reposo muestra como
-// máximo 3 líneas; si el texto es más largo aparece ▾ para verlo
-// completo (sin scroll) y ▴ para volver a colapsarlo. Enter guarda y no
-// mete salto de línea (el punto sigue siendo "un renglón").
-const TITULO_LINEA_PX = 20                      // ~fontSize 14 * line-height 1.4
-const TITULO_MAX_COLAPSADO = TITULO_LINEA_PX * 3
+const LINEA_PX = 20                    // ~fontSize 14 * line-height 1.4
+const MAX_COLAPSADO = LINEA_PX * 3
 
-function TituloPunto({ value, editable, tachado, onPatch, onPersist }) {
+// Renderiza el texto ya con formato: **negrita** y viñetas con sangría.
+function TextoFormateado({ value, tachado }) {
+  const lineas = parsearItemFormato(value || '')
+  return (
+    <div style={{
+      fontSize: 14, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+      color: tachado ? 'var(--color-text-muted)' : 'inherit',
+      textDecoration: tachado ? 'line-through' : 'none',
+    }}>
+      {lineas.map((ln, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, paddingLeft: ln.sangria * 16 }}>
+          {ln.vineta && <span style={{ flexShrink: 0 }}>•</span>}
+          <span>
+            {ln.partes.length === 0 ? ' ' : ln.partes.map((p, j) => (
+              p.negrita ? <strong key={j}>{p.texto}</strong> : <span key={j}>{p.texto}</span>
+            ))}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Texto de un punto. En reposo: se ve con formato, máx. 3 líneas y una
+// flechita para expandir. Al tocarlo (si es editable): se abre un
+// <textarea>. **x** = negrita, "- " = viñeta, botón • mete viñeta,
+// Ctrl/⇧+Enter = renglón nuevo, Enter solo = confirma.
+function TextoPunto({ value, editable, tachado, onPatch, onPersist }) {
   const taRef = useRef(null)
+  const contRef = useRef(null)
+  const [editando, setEditando] = useState(false)
   const [expandido, setExpandido] = useState(false)
   const [desborda, setDesborda] = useState(false)
+  const cursorPendiente = useRef(null)
 
-  const ajustarAlto = useCallback(() => {
-    const ta = taRef.current
-    if (!ta) return
-    ta.style.height = 'auto'
-    const completo = ta.scrollHeight
-    setDesborda(completo > TITULO_MAX_COLAPSADO + 2)
-    ta.style.height = (expandido ? completo : Math.min(completo, TITULO_MAX_COLAPSADO)) + 'px'
-  }, [expandido])
+  const medir = useCallback(() => {
+    const el = editando ? taRef.current : contRef.current
+    if (!el) return
+    if (editando) {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    } else {
+      setDesborda(el.scrollHeight > MAX_COLAPSADO + 2)
+    }
+  }, [editando])
 
-  useEffect(() => { ajustarAlto() }, [value, ajustarAlto])
+  useEffect(() => { medir() }, [value, editando, medir])
+
+  useEffect(() => {
+    if (editando && cursorPendiente.current != null && taRef.current) {
+      taRef.current.selectionStart = taRef.current.selectionEnd = cursorPendiente.current
+      cursorPendiente.current = null
+    }
+  }, [editando, value])
+
+  function cambiar(e) {
+    onPatch({ titulo: autoformatearVineta(e.target.value) })
+  }
+  function teclado(e) {
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault()
+      e.currentTarget.blur()
+      return
+    }
+    if (e.key === 'Enter') { // Ctrl/Cmd/Shift + Enter
+      e.preventDefault()
+      const el = e.currentTarget
+      const r = insertarSalto(el.value, el.selectionStart, el.selectionEnd)
+      cursorPendiente.current = r.cursor
+      onPatch({ titulo: r.texto })
+    }
+  }
+  function meterVineta() {
+    const el = taRef.current
+    if (!el) return
+    const r = insertarVinetaEnLinea(el.value, el.selectionStart, el.selectionEnd)
+    cursorPendiente.current = r.cursor
+    onPatch({ titulo: r.texto })
+    el.focus()
+  }
+
+  if (!editable) {
+    return (
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          ref={contRef}
+          style={{ overflow: 'hidden', maxHeight: expandido ? 'none' : MAX_COLAPSADO }}
+        >
+          <TextoFormateado value={value} tachado={tachado} />
+        </div>
+        {desborda && (
+          <button type="button" onClick={() => setExpandido((v) => !v)}
+            style={{ ...iconBtnStyle(), width: 'auto', height: 18, fontSize: 12, gap: 4 }}>
+            {expandido ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {expandido ? 'Menos' : 'Ver todo'}
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  if (!editando) {
+    return (
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          ref={contRef}
+          onClick={() => setEditando(true)}
+          style={{ overflow: 'hidden', maxHeight: expandido ? 'none' : MAX_COLAPSADO, cursor: 'text', padding: '4px 0' }}
+        >
+          {value ? <TextoFormateado value={value} tachado={tachado} />
+            : <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>—</span>}
+        </div>
+        {desborda && (
+          <button type="button" onClick={() => setExpandido((v) => !v)}
+            style={{ ...iconBtnStyle(), width: 'auto', height: 18, fontSize: 12, gap: 4 }}>
+            {expandido ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {expandido ? 'Menos' : 'Ver todo'}
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 4 }}>
       <textarea
         ref={taRef}
+        autoFocus
         rows={1}
         value={value || ''}
-        disabled={!editable}
-        onChange={(e) => onPatch({ titulo: e.target.value })}
-        onFocus={() => setExpandido(true)}
-        onBlur={(e) => { onPersist({ titulo: e.target.value }); setExpandido(false) }}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
+        onChange={cambiar}
+        onBlur={(e) => { onPersist({ titulo: e.target.value }); setEditando(false); setExpandido(false) }}
+        onKeyDown={teclado}
         style={{
           flex: 1, minWidth: 0, resize: 'none', overflow: 'hidden',
           border: 'none', background: 'transparent', fontSize: 14, lineHeight: 1.4,
           fontFamily: 'inherit', padding: '4px 0',
-          color: tachado ? 'var(--color-text-muted)' : 'inherit',
-          textDecoration: tachado ? 'line-through' : 'none',
         }}
       />
-      {desborda && (
-        <button
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setExpandido((v) => !v)}
-          title={expandido ? 'Colapsar' : 'Ver todo'}
-          style={{ ...iconBtnStyle(), width: 20, height: 22, marginTop: 2 }}
-        >
-          {expandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-      )}
+      <button type="button" title="Viñeta" onMouseDown={(e) => e.preventDefault()} onClick={meterVineta}
+        style={{ ...iconBtnStyle(), width: 22, height: 22, marginTop: 2 }}>
+        <List size={14} />
+      </button>
+    </div>
+  )
+}
+
+// Envuelve la fila con el sortable de dnd-kit y le pasa el "handle" de
+// arrastre (solo el ⠿; el resto de la fila no arrastra para no pelear con
+// editar texto / tocar botones).
+function SortablePuntoRow(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.item.id, disabled: !props.editable })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    background: isDragging ? 'var(--color-surface2)' : undefined,
+  }
+  return (
+    <div ref={setNodeRef} style={style}>
+      <PuntoRow {...props} dragHandleProps={{ ...attributes, ...listeners }} />
     </div>
   )
 }
 
 function PuntoRow({
-  item, editable, primero, ultimo, userId,
+  item, editable, primero, ultimo, userId, colaboradores, dragHandleProps,
   onPatch, onPersist, onMover, onBorrar, onAdjuntosChange,
+  onResponsable, onComentar, onBorrarComentario,
 }) {
   const [subiendo, setSubiendo] = useState(false)
   const [pidiendoLink, setPidiendoLink] = useState(false)
+  const [mostrarComentarios, setMostrarComentarios] = useState(false)
   const fileRef = useRef(null)
   const linkRef = useRef(null)
   const meta = ESTADOS_ITEM[item.estado] || ESTADOS_ITEM.pendiente
   const adjuntos = item.adjuntos || []
+  const comentarios = item.comentarios || []
 
   async function subirArchivo(e) {
     const file = e.target.files?.[0]
@@ -615,7 +839,14 @@ function PuntoRow({
     <div style={{ borderBottom: '1px solid var(--color-border)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 2px' }}>
         {editable ? (
-          <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, marginTop: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, marginTop: 4 }}>
+            <span
+              {...dragHandleProps}
+              title="Arrastrar para reordenar"
+              style={{ ...iconBtnStyle(), width: 16, height: 16, cursor: 'grab', touchAction: 'none' }}
+            >
+              <GripVertical size={13} />
+            </span>
             <button style={{ ...iconBtnStyle(), width: 16, height: 14 }} disabled={primero} onClick={() => onMover('arriba')} title="Subir">
               <ChevronUp size={12} />
             </button>
@@ -635,13 +866,29 @@ function PuntoRow({
           }}
         />
 
-        <TituloPunto
+        <TextoPunto
           value={item.titulo}
           editable={editable}
           tachado={item.estado === 'verde'}
           onPatch={onPatch}
           onPersist={onPersist}
         />
+
+        <ResponsableChip
+          responsableId={item.responsable_id}
+          colaboradores={colaboradores}
+          editable={editable}
+          onChange={onResponsable}
+        />
+
+        <button
+          style={{ ...iconBtnStyle(), marginTop: 2, width: 'auto', gap: 2, padding: '0 4px', color: comentarios.length ? 'var(--color-primary)' : 'var(--color-text-muted)' }}
+          title={comentarios.length ? `${comentarios.length} comentario(s)` : 'Comentarios'}
+          onClick={() => setMostrarComentarios((v) => !v)}
+        >
+          <MessageSquare size={14} />
+          {comentarios.length > 0 && <span style={{ fontSize: 11 }}>{comentarios.length}</span>}
+        </button>
 
         {editable && (
           <>
@@ -662,6 +909,16 @@ function PuntoRow({
           </>
         )}
       </div>
+
+      {mostrarComentarios && (
+        <ComentariosPanel
+          comentarios={comentarios}
+          userId={userId}
+          editable={editable}
+          onComentar={onComentar}
+          onBorrar={onBorrarComentario}
+        />
+      )}
 
       {pidiendoLink && (
         <div style={{ padding: '0 2px 8px 42px' }}>
@@ -738,6 +995,153 @@ function PuntoRow({
               </span>
             )
           })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Responsable de un punto: chip con iniciales; al tocar, un menú para
+// asignar/cambiar/quitar. Discreto — si no hay responsable es un
+// ícono tenue.
+// ──────────────────────────────────────────────────────────────
+function iniciales(nombre = '', apellido = '') {
+  return ((nombre.trim()[0] || '') + (apellido.trim()[0] || '')).toUpperCase() || '?'
+}
+
+function ResponsableChip({ responsableId, colaboradores, editable, onChange }) {
+  const [abierto, setAbierto] = useState(false)
+  const rootRef = useRef(null)
+  const col = colaboradores.find((c) => c.id === responsableId)
+
+  useEffect(() => {
+    if (!abierto) return
+    function fuera(e) {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setAbierto(false)
+    }
+    document.addEventListener('mousedown', fuera)
+    return () => document.removeEventListener('mousedown', fuera)
+  }, [abierto])
+
+  const chip = col ? (
+    <span
+      title={`Responsable: ${col.nombre} ${col.apellido}`}
+      style={{
+        width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+        background: 'var(--color-primary)', color: '#fff',
+        fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {iniciales(col.nombre, col.apellido)}
+    </span>
+  ) : (
+    <span style={{ ...iconBtnStyle(), width: 22, height: 22, opacity: 0.5 }} title="Sin responsable">
+      <UserPlus size={13} />
+    </span>
+  )
+
+  if (!editable) return <span style={{ marginTop: 3, flexShrink: 0 }}>{chip}</span>
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', marginTop: 3, flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex' }}
+      >
+        {chip}
+      </button>
+      {abierto && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 20, minWidth: 200, maxHeight: 260, overflowY: 'auto',
+            background: 'var(--color-bg2)', border: '1px solid var(--color-border)', borderRadius: 8,
+            boxShadow: '0 10px 28px rgba(0,0,0,0.25)', padding: 4,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => { onChange(null); setAbierto(false) }}
+            style={{ width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13, color: 'var(--color-text-muted)' }}
+          >
+            Sin responsable
+          </button>
+          {colaboradores.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => { onChange(c.id); setAbierto(false) }}
+              style={{
+                width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', cursor: 'pointer', fontSize: 13,
+                background: c.id === responsableId ? 'var(--color-surface2)' : 'transparent',
+                borderRadius: 6,
+              }}
+            >
+              {c.nombre} {c.apellido}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Hilo de comentarios de un punto: lista con autor + fecha + alta
+// rápida. Se muestra debajo de la fila cuando se toca el 💬.
+// ──────────────────────────────────────────────────────────────
+function ComentariosPanel({ comentarios, userId, editable, onComentar, onBorrar }) {
+  const [texto, setTexto] = useState('')
+  const [enviando, setEnviando] = useState(false)
+
+  async function enviar() {
+    const limpio = texto.trim()
+    if (!limpio || enviando) return
+    setEnviando(true)
+    const ok = await onComentar(limpio)
+    setEnviando(false)
+    if (ok) setTexto('')
+  }
+
+  return (
+    <div style={{ padding: '4px 2px 10px 42px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {comentarios.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: 0 }}>Sin comentarios.</p>
+      ) : (
+        comentarios.map((c) => (
+          <div key={c.id} style={{ fontSize: 13, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontWeight: 600 }}>
+                {c.autor ? `${c.autor.nombre} ${c.autor.apellido}` : 'Usuario'}
+              </span>
+              <span style={{ color: 'var(--color-text-muted)', fontSize: 11, marginLeft: 6 }}>
+                {c.fecha ? new Date(c.fecha).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : ''}
+              </span>
+              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.texto}</div>
+            </div>
+            {editable && userId === c.creado_por && (
+              <button title="Borrar" onClick={() => onBorrar(c.id)} style={{ ...iconBtnStyle(true), width: 18, height: 18 }}>
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        ))
+      )}
+      {editable && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            type="text"
+            value={texto}
+            placeholder="Escribí un comentario…"
+            disabled={enviando}
+            onChange={(e) => setTexto(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); enviar() } }}
+            style={{ flex: 1, minWidth: 0, fontSize: 13, padding: '5px 8px', border: '1px solid var(--color-border)', borderRadius: 6 }}
+          />
+          <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} disabled={enviando || !texto.trim()} onClick={enviar}>
+            {enviando ? '…' : 'Enviar'}
+          </button>
         </div>
       )}
     </div>

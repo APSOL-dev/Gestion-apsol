@@ -78,6 +78,20 @@ export function moverItemEnLista(items, id, direccion) {
   return arr
 }
 
+// Reordena por drag & drop: saca `activeId` y lo inserta en la posición
+// que ocupa `overId`. Devuelve una lista nueva (no muta). Si algo no
+// existe o es el mismo, devuelve la lista igual.
+export function moverItemAntesDe(items, activeId, overId) {
+  const arr = [...(Array.isArray(items) ? items : [])]
+  if (activeId === overId) return arr
+  const from = arr.findIndex((it) => it?.id === activeId)
+  const to = arr.findIndex((it) => it?.id === overId)
+  if (from === -1 || to === -1) return arr
+  const [movido] = arr.splice(from, 1)
+  arr.splice(to, 0, movido)
+  return arr
+}
+
 // Tras un movimiento, reasigna orden = índice. Devuelve SOLO los puntos
 // que cambiaron de orden, para persistir el mínimo de updates.
 export function renumerarOrden(items) {

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { X, Wrench, Trash2, Plus } from 'lucide-react'
 import moment from 'moment'
 import { useData } from '../context/DataContext'
+import ModalPortal from './ModalPortal'
 import {
   getConfigMantenimiento, guardarItemMantenimiento, borrarItemMantenimiento,
   getMantenimientoPorMes, crearMantenimientoMes, borrarMantenimientoMes,
@@ -192,6 +193,7 @@ export default function ModalMantenimiento({ abierto, onClose, onAplicado }) {
   }
 
   return (
+    <ModalPortal>
     <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="modal-content premium" style={{ maxWidth: 640 }}>
         <div className="modal-header">
@@ -315,5 +317,6 @@ export default function ModalMantenimiento({ abierto, onClose, onAplicado }) {
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

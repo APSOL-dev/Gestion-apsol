@@ -32,6 +32,7 @@ import * as filtrosCronograma from '../utils/cronogramaFiltros'
 import { leerFiltrosGuardados, guardarFiltros } from '../utils/cronogramaFiltrosPersistencia'
 import FiltroMultiSelect from '../components/FiltroMultiSelect'
 import ModalMantenimiento from '../components/ModalMantenimiento'
+import ModalPortal from '../components/ModalPortal'
 import { getMantenimientoPorMes } from '../services/mantenimiento'
 import { mesActual } from '../utils/mantenimiento'
 
@@ -1252,6 +1253,7 @@ export default function Cronograma() {
       {/* MODAL — se cierra SOLO con la X, Escape o Guardar/Cancelar (nunca
           por un clic en el fondo, para no perder lo que se estaba tipeando). */}
       {showModal && (
+        <ModalPortal>
         <div className="modal-overlay">
           <div className="modal-content premium">
             <div className="modal-header">
@@ -1513,6 +1515,7 @@ export default function Cronograma() {
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   )

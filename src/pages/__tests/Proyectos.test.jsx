@@ -3,6 +3,7 @@ import { vi, describe, test, expect, beforeEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import Proyectos from '../Proyectos'
 import { useData } from '../../context/DataContext'
+import { useAuth } from '../../context/AuthContext'
 
 // Mismo bug que en Sprints.jsx: el clic solo navegaba si caía justo sobre el
 // texto del link del nombre del proyecto, no en el resto de la fila/celda.
@@ -10,6 +11,8 @@ import { useData } from '../../context/DataContext'
 vi.mock('../../context/DataContext', () => ({
   useData: vi.fn(),
 }))
+vi.mock('../../context/AuthContext', () => ({ useAuth: vi.fn() }))
+vi.mock('../../services/colaboradores', () => ({ getMiFichaColaborador: vi.fn().mockResolvedValue({ prospectos_asignados: [] }) }))
 
 const mockProyecto = {
   id: 'proy-1',
@@ -35,6 +38,7 @@ function renderProyectos() {
 describe('Proyectos — fila clickeable', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useAuth.mockReturnValue({ user: { id: 'u1' }, esDuenio: true, esTeamLead: false })
     useData.mockReturnValue({
       proyectos: [mockProyecto],
       loadingProyectos: false,

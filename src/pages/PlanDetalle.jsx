@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, Plus, Calendar, Trash2, X, AlertCircle } from 'lucide-react'
+import ModalPortal from '../components/ModalPortal'
 import {
   getPlanById,
   actualizarPlan,
@@ -1171,6 +1172,7 @@ export default function PlanDetalle() {
 
       {/* MODAL FECHAS DEL PLAN */}
       {showDatesModal && (
+        <ModalPortal>
         <div className="modal-overlay" onClick={() => setShowDatesModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
             <div className="modal-header">
@@ -1212,6 +1214,7 @@ export default function PlanDetalle() {
             </form>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   )

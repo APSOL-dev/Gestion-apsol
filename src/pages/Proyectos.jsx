@@ -2,19 +2,39 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, FileText, Target, Calendar } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { useAuth } from '../context/AuthContext'
+import { getMiFichaColaborador } from '../services/colaboradores'
+import { puedeVerTodo, proyectoVisiblePara } from '../services/sprints-permisos'
 
 export default function Proyectos() {
   const navigate = useNavigate()
   const { proyectos, loadingProyectos, refreshProyectos } = useData()
+  const { user, esDuenio, esTeamLead } = useAuth()
+  const verTodo = puedeVerTodo({ esDuenio, esTeamLead })
   const [search, setSearch] = useState('')
   const [filtroEstado, setFiltroEstado] = useState('Activo')
+  const [prospectosAsignados, setProspectosAsignados] = useState(null) // null = todavía sin resolver
 
   useEffect(() => {
     const esSilencioso = proyectos.length > 0
     refreshProyectos(esSilencioso)
   }, [])
 
-  const proyectosFiltrados = proyectos.filter(p => {
+  useEffect(() => {
+    if (verTodo) { setProspectosAsignados([]); return }
+    if (!user?.id) return
+    getMiFichaColaborador(user.id)
+      .then((f) => setProspectosAsignados(f?.prospectos_asignados || []))
+      .catch((e) => { console.error(e); setProspectosAsignados([]) })
+  }, [verTodo, user?.id])
+
+  const proyectosVisibles = verTodo
+    ? proyectos
+    : (prospectosAsignados === null
+      ? []
+      : proyectos.filter(p => proyectoVisiblePara(p, { verTodo: false, prospectosAsignados })))
+
+  const proyectosFiltrados = proyectosVisibles.filter(p => {
     const matchSearch = 
       (p.nombre && p.nombre.toLowerCase().includes(search.toLowerCase())) ||
       (p.prospectos?.nombre && p.prospectos.nombre.toLowerCase().includes(search.toLowerCase())) ||

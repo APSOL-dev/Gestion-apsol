@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, FolderKanban, Star, Plus, Clock, User, Building2, X, Link, Upload, DownloadCloud, ChevronDown, Calendar, DollarSign, RefreshCw, Users, CreditCard, Activity, Mail, ExternalLink } from 'lucide-react'
 import CreatableSelect from 'react-select/creatable'
 
+import ModalPortal from '../components/ModalPortal'
 import { getProspectoById, saveProspecto, deleteProspecto, saveObservacion, uploadFile, normalizarContactoId, construirCambioEstado, construirPayloadProspecto, guardarServiciosProspecto, normalizarServicios } from '../services/prospectos'
 import { getEmpresas, saveEmpresa, construirPayloadEmpresa } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
@@ -1407,6 +1408,7 @@ export default function ProspectoDetalle() {
 
       {/* MODAL DE CAMBIO DE ESTADO */}
       {showStatusModal && (
+        <ModalPortal>
         <div className="modal-overlay" style={{ zIndex: 1000 }}>
           <div className="modal-content" style={{ maxWidth: '600px' }}>
             <div className="modal-header">
@@ -1589,6 +1591,7 @@ export default function ProspectoDetalle() {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   )
