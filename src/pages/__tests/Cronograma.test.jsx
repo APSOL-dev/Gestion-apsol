@@ -1589,4 +1589,57 @@ describe('Cronograma', () => {
       })
     })
   })
+
+  // ─── Botón Teams: elegir sala ──────────────────────────────────────────────
+
+  describe('Botón Teams', () => {
+    test('al hacer click despliega las dos salas', async () => {
+      render(<Cronograma />)
+      await esperarCargaInicial()
+
+      expect(screen.queryByText('Sala Adrian')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Teams/ }))
+
+      expect(screen.getByText('Sala Adrian')).toBeInTheDocument()
+      expect(screen.getByText('Sala Renata')).toBeInTheDocument()
+    })
+
+    test('"Sala Adrian" abre el link de Adrian en una pestaña nueva', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      render(<Cronograma />)
+      await esperarCargaInicial()
+
+      fireEvent.click(screen.getByRole('button', { name: /Teams/ }))
+      fireEvent.click(screen.getByText('Sala Adrian'))
+
+      expect(openSpy).toHaveBeenCalledWith('https://teams.live.com/meet/9383050901412?p=QyyQxYjU3rEeQGYXMe', '_blank')
+      // El menú se cierra después de elegir.
+      expect(screen.queryByText('Sala Adrian')).not.toBeInTheDocument()
+    })
+
+    test('"Sala Renata" abre el link de Renata en una pestaña nueva', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      render(<Cronograma />)
+      await esperarCargaInicial()
+
+      fireEvent.click(screen.getByRole('button', { name: /Teams/ }))
+      fireEvent.click(screen.getByText('Sala Renata'))
+
+      expect(openSpy).toHaveBeenCalledWith('https://teams.live.com/meet/9392993299338?p=h1MiJvj4Jyym4VfsWO', '_blank')
+    })
+
+    test('click afuera cierra el desplegable sin abrir ninguna sala', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      render(<Cronograma />)
+      await esperarCargaInicial()
+
+      fireEvent.click(screen.getByRole('button', { name: /Teams/ }))
+      expect(screen.getByText('Sala Adrian')).toBeInTheDocument()
+
+      fireEvent.mouseDown(document.body)
+
+      expect(screen.queryByText('Sala Adrian')).not.toBeInTheDocument()
+      expect(openSpy).not.toHaveBeenCalled()
+    })
+  })
 })

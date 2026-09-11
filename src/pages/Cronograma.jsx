@@ -6,7 +6,7 @@ import moment from 'moment'
 import 'moment/dist/locale/es'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import {
-  Plus, ChevronLeft, ChevronRight,
+  Plus, ChevronLeft, ChevronRight, ChevronDown,
   Users, Target, Edit3, X, Video, Trash2, CheckSquare, Square, Copy, Clock, Search, Wrench
 } from 'lucide-react'
 import { useData } from '../context/DataContext'
@@ -39,6 +39,13 @@ import { mesActual } from '../utils/mantenimiento'
 moment.locale('es')
 const localizer = momentLocalizer(moment)
 const DnDCalendar = (withDragAndDrop.default || withDragAndDrop)(Calendar)
+
+// Salas fijas de Teams: el botón "Teams" del cronograma deja elegir con
+// cuál de las dos reunirse en vez de mandar siempre a teams.microsoft.com.
+const SALAS_TEAMS = [
+  { nombre: 'Sala Adrian', url: 'https://teams.live.com/meet/9383050901412?p=QyyQxYjU3rEeQGYXMe' },
+  { nombre: 'Sala Renata', url: 'https://teams.live.com/meet/9392993299338?p=h1MiJvj4Jyym4VfsWO' },
+]
 
 const messages = {
   allDay: 'Todo el día',
@@ -115,6 +122,18 @@ export default function Cronograma() {
     prospectos, loadingProspectos, refreshProspectos
   } = useData()
   const { user, esColaborador, esTeamLead, esDuenio } = useAuth()
+
+  // Botón "Teams": desplegable para elegir entre las dos salas fijas.
+  const [teamsMenuAbierto, setTeamsMenuAbierto] = useState(false)
+  const teamsMenuRef = useRef(null)
+  useEffect(() => {
+    if (!teamsMenuAbierto) return
+    function alClickAfuera(e) {
+      if (teamsMenuRef.current && !teamsMenuRef.current.contains(e.target)) setTeamsMenuAbierto(false)
+    }
+    document.addEventListener('mousedown', alClickAfuera)
+    return () => document.removeEventListener('mousedown', alClickAfuera)
+  }, [teamsMenuAbierto])
 
   // "Sumar mantenimiento" (solo admin): modal + saber si el mes actual ya
   // tiene mantenimiento cargado para mostrar el tilde en el botón.
@@ -1076,14 +1095,30 @@ export default function Cronograma() {
                   {mesMantCargado && <span className="tilde">✓ {moment().format('MMM')}</span>}
                 </button>
               )}
-              {/* FIX Bug #11: Botón Teams abre teams.microsoft.com */}
-              <button
-                className="btn-teams"
-                title="Ir a Microsoft Teams"
-                onClick={() => window.open('https://teams.microsoft.com', '_blank')}
-              >
-                <Video size={16} /> Teams
-              </button>
+              {/* Botón Teams: elegir sala (Adrian / Renata) en vez de ir siempre a
+                  teams.microsoft.com. */}
+              <div style={{ position: 'relative' }} ref={teamsMenuRef}>
+                <button
+                  className="btn-teams"
+                  title="Elegir sala de Teams"
+                  onClick={() => setTeamsMenuAbierto(v => !v)}
+                >
+                  <Video size={16} /> Teams <ChevronDown size={14} />
+                </button>
+                {teamsMenuAbierto && (
+                  <div className="picker-dropdown" style={{ width: 200, right: 0, left: 'auto' }}>
+                    {SALAS_TEAMS.map(sala => (
+                      <div
+                        key={sala.nombre}
+                        className="picker-option"
+                        onClick={() => { window.open(sala.url, '_blank'); setTeamsMenuAbierto(false) }}
+                      >
+                        {sala.nombre}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               {/* FIX Bug #6: Botón + limpia el formulario antes de abrir el modal */}
               <button
                 className="btn-add-event"
