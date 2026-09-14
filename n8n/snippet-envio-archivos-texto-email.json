@@ -1,0 +1,390 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  f.id,\n  f.numero_factura,\n  f.fecha_emision,\n  f.fecha_vencimiento,\n  f.monto,\n  f.leyenda,\n  f.periodo_desde,\n  f.periodo_hasta,\n  f.proxima_notificacion,\n  f.proxima_notificacion_whatsapp,\n  f.recordatorios_enviados,\n  f.comprobantes_adjuntos,\n  f.documento_general,\n  p.nombre                                AS prospecto_nombre,\n  e.nombre                                AS empresa_nombre,\n  COALESCE(e.dias_espera_facturacion, 4)  AS dias_espera_facturacion,\n  c1.nombre                               AS contacto_nombre,\n  c1.apellido                             AS contacto_apellido,\n  c1.telefono                             AS contacto_telefono,\n  c1.email                                AS contacto_email,\n  c2.email                                AS contacto2_email,\n  cb.banco                                AS cuenta_banco,\n  cb.cbu                                  AS cuenta_cbu,\n  cb.alias                                AS cuenta_alias,\n  cb.titular                              AS cuenta_titular\nFROM apsol_private.facturacion f\nJOIN      apsol_private.prospectos  p  ON p.id  = f.prospecto_id\nJOIN      apsol_private.empresas    e  ON e.id  = p.empresa_id\nLEFT JOIN apsol_private.contactos   c1 ON c1.id = f.contacto_cobro_id\nLEFT JOIN apsol_private.contactos   c2 ON c2.id = f.contacto_cobro2_id\nLEFT JOIN apsol_private.cuentas_bancarias cb ON cb.id = f.cuenta_bancaria_id\nWHERE f.estado <> 'Cobrada total'\n  AND (\n    (f.proxima_notificacion IS NULL OR f.proxima_notificacion <= CURRENT_DATE)\n    OR\n    (f.proxima_notificacion_whatsapp IS NULL OR f.proxima_notificacion_whatsapp <= CURRENT_DATE)\n  );",
+        "options": {}
+      },
+      "id": "d0a58849-123c-4741-a997-eaeb364043f2",
+      "name": "Leer facturas a recordar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-6608, 4752],
+      "credentials": { "postgres": { "id": "JAR6PFmr11r7Thek", "name": "Adrian Personal" } },
+      "notes": "Trae facturas donde venció la próxima notificación de EMAIL (proxima_notificacion) o la de WHATSAPP (proxima_notificacion_whatsapp) -- pueden vencer en días distintos. El Code de al lado decide, por factura, cuál de los dos toca mandar hoy."
+    },
+    {
+      "parameters": { "options": {} },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-6384, 4752],
+      "id": "c788dea6-f8ee-4e71-af8c-1ad26e7b1759",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all()\n\nfunction fechaCorta(fechaStr) {\n  if (!fechaStr) return '-'\n  const [y, m, d] = String(fechaStr).slice(0, 10).split('-')\n  if (!y || !m || !d) return fechaStr\n  return `${d}/${m}/${y.slice(2)}`\n}\n\nfunction telAR(raw) {\n  let d = String(raw || '').replace(/\\D/g, '')\n  if (!d) return null\n  d = d.replace(/^00/, '')\n  if (d.startsWith('54')) {\n    if (!d.startsWith('549')) d = '549' + d.slice(2)\n  } else if (d.startsWith('0')) {\n    d = '549' + d.slice(1)\n  } else {\n    d = '549' + d\n  }\n  return d\n}\n\n// Una fecha vencida (<= hoy) o directamente sin cargar (null = todavía\n// no se le mandó nada por ese canal) significa 'toca mandar hoy'.\nfunction vencida(fecha) {\n  if (!fecha) return true\n  const hoy = new Date()\n  hoy.setHours(0, 0, 0, 0)\n  const d = new Date(fecha)\n  d.setHours(0, 0, 0, 0)\n  return d <= hoy\n}\n\nreturn items.map(item => {\n  const f = item.json\n\n  const montoFmt = Number(f.monto || 0).toLocaleString('es-AR')\n\n  const hayAdjuntos = !!(\n    (Array.isArray(f.comprobantes_adjuntos) && f.comprobantes_adjuntos.length > 0) ||\n    f.documento_general\n  )\n\n  const camposCuenta = [\n    f.cuenta_cbu ? `· CBU: ${f.cuenta_cbu}` : null,\n    f.cuenta_alias ? `· Alias: ${f.cuenta_alias}` : null,\n    f.cuenta_banco ? `· Banco: ${f.cuenta_banco}` : null,\n    f.cuenta_titular ? `· Titular: ${f.cuenta_titular}` : null\n  ].filter(Boolean)\n  const datosCuenta = camposCuenta.length > 0 ? camposCuenta.join('\\n') : '· No se encontraron datos de la cuenta'\n\n  const notaAdjunto = hayAdjuntos ? 'Adjunto encontrarás la factura para tu referencia.\\n\\n' : ''\n\n  const mensaje_whatsapp = `Hola ${f.contacto_nombre || ''}! 👋\nEspero que todo esté yendo bien. Quisiera recordarte que aún no hemos recibido el pago correspondiente a la factura N° ${f.numero_factura || ''} emitida el ${fechaCorta(f.fecha_emision)}.\n\n📄 Detalles de la factura:\n· Número: ${f.numero_factura || '-'}\n· Vencimiento: ${fechaCorta(f.fecha_vencimiento)}\n· Monto total: $${montoFmt}\n\n🏦 Cuenta a depositar:\n${datosCuenta}\n\n${notaAdjunto}Si ya has realizado el pago, por favor, ignora este mensaje.\n\nGracias por tu pronta atención a este asunto.\n\nAPSOL - Consultoría Empresarial`\n\n  return {\n    json: {\n      ...f,\n      telefono_wa: telAR(f.contacto_telefono),\n      monto_fmt: montoFmt,\n      mensaje_whatsapp,\n      enviar_email: vencida(f.proxima_notificacion),\n      enviar_whatsapp: vencida(f.proxima_notificacion_whatsapp)\n    }\n  }\n})"
+      },
+      "id": "b5a52b3b-2424-4ee3-9634-2c10e88469da",
+      "name": "Armar mensaje recordatorio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-6144, 4768]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "cond-wa",
+              "leftValue": "={{ $('Armar mensaje recordatorio').item.json.enviar_whatsapp }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4a1a-8001-enviarwaif0001",
+      "name": "Enviar WhatsApp?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-5960, 5020]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "instancia-1", "name": "Instancia", "value": "ApsolOficial", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fb86e599-2c86-4967-a7dd-9835a56956cf",
+      "name": "Instancia Evolution2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-5904, 4752]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "cond-a1",
+              "leftValue": "={{ $('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[0] || \".\" }}",
+              "rightValue": ".",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f2272b39-55ff-4791-82c2-e12c79594000",
+      "name": "Archivo 1?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-5632, 4752]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-document",
+        "instanceName": "={{ $('Instancia Evolution2').item.json.Instancia }}",
+        "remoteJid": "={{ $('Armar mensaje recordatorio').item.json.telefono_wa }}@s.whatsapp.net",
+        "media": "={{ $('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[0] }}",
+        "fileName": "={{ decodeURIComponent($('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[0].split('/').pop().split('?')[0]) }}",
+        "options_message": {}
+      },
+      "id": "302c966d-8ff7-4fbf-8cde-0942ee6ac160",
+      "name": "Enviar Archivo 1",
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [-5376, 4624],
+      "retryOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": { "evolutionApi": { "id": "IMcO9yyyF5UknQiD", "name": "Evolution account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "cond-a2",
+              "leftValue": "={{ $('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[1] || \".\" }}",
+              "rightValue": ".",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f29026df-d715-49b9-a08a-73bad4c0173f",
+      "name": "Archivo 2?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-5120, 4752]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-document",
+        "instanceName": "={{ $('Instancia Evolution2').item.json.Instancia }}",
+        "remoteJid": "={{ $('Armar mensaje recordatorio').item.json.telefono_wa }}@s.whatsapp.net",
+        "media": "={{ $('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[1] }}",
+        "fileName": "={{ decodeURIComponent($('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[1].split('/').pop().split('?')[0]) }}",
+        "options_message": {}
+      },
+      "id": "748aa453-06df-406b-b6d6-4b7d92f26828",
+      "name": "Enviar Archivo 2",
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [-4864, 4624],
+      "retryOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": { "evolutionApi": { "id": "IMcO9yyyF5UknQiD", "name": "Evolution account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "cond-a3",
+              "leftValue": "={{ $('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[2] || \".\" }}",
+              "rightValue": ".",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "61bdc8b7-63be-427c-a2ab-64a4f84d8e3f",
+      "name": "Archivo 3?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-4592, 4752]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-document",
+        "instanceName": "={{ $('Instancia Evolution2').item.json.Instancia }}",
+        "remoteJid": "={{ $('Armar mensaje recordatorio').item.json.telefono_wa }}@s.whatsapp.net",
+        "media": "={{ $('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[2] }}",
+        "fileName": "={{ decodeURIComponent($('Armar mensaje recordatorio').item.json.comprobantes_adjuntos[2].split('/').pop().split('?')[0]) }}",
+        "options_message": {}
+      },
+      "id": "440d30e4-79f0-44a6-a0e0-a12ffcc4967e",
+      "name": "Enviar Archivo 3",
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [-4336, 4624],
+      "retryOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": { "evolutionApi": { "id": "IMcO9yyyF5UknQiD", "name": "Evolution account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "cond-doc",
+              "leftValue": "={{ $('Armar mensaje recordatorio').item.json.documento_general || \".\" }}",
+              "rightValue": ".",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3b950f11-fac6-4698-8b55-40682a99aec2",
+      "name": "Documento?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-4080, 4752]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-document",
+        "instanceName": "={{ $('Instancia Evolution2').item.json.Instancia }}",
+        "remoteJid": "={{ $('Armar mensaje recordatorio').item.json.telefono_wa }}@s.whatsapp.net",
+        "media": "={{ $('Armar mensaje recordatorio').item.json.documento_general }}",
+        "fileName": "={{ decodeURIComponent($('Armar mensaje recordatorio').item.json.documento_general.split('/').pop().split('?')[0]) }}",
+        "options_message": {}
+      },
+      "id": "b54a5abc-cffa-4064-a10d-f7fa509b6cd2",
+      "name": "Enviar Documento",
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [-3824, 4624],
+      "retryOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": { "evolutionApi": { "id": "IMcO9yyyF5UknQiD", "name": "Evolution account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Instancia Evolution2').item.json.Instancia }}",
+        "remoteJid": "={{ $('Armar mensaje recordatorio').item.json.telefono_wa }}@s.whatsapp.net",
+        "messageText": "={{ $('Armar mensaje recordatorio').item.json.mensaje_whatsapp }}",
+        "options_message": {}
+      },
+      "id": "d4bbb064-3d9c-4247-a3c3-875ef1051ffb",
+      "name": "Enviar Texto WhatsApp",
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [-3552, 4752],
+      "retryOnFail": true,
+      "credentials": { "evolutionApi": { "id": "IMcO9yyyF5UknQiD", "name": "Evolution account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE apsol_private.facturacion\nSET proxima_notificacion_whatsapp = public.apsol_sumar_dias_habiles(CURRENT_DATE, {{ $('Armar mensaje recordatorio').item.json.dias_espera_facturacion }} + 2),\n    ultima_notificacion           = CURRENT_DATE,\n    recordatorios_enviados        = recordatorios_enviados + 1\nWHERE id = {{ $('Armar mensaje recordatorio').item.json.id }};",
+        "options": {}
+      },
+      "id": "c2d3e4f5-0002-4a1a-8002-actualizarwap1",
+      "name": "Actualizar próx. WhatsApp",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-3296, 4980],
+      "credentials": { "postgres": { "id": "JAR6PFmr11r7Thek", "name": "Adrian Personal" } },
+      "notes": "WhatsApp es más invasivo: usa dias_espera_facturacion + 2 días hábiles (en vez del valor de empresa tal cual, que es el de email)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "cond-email",
+              "leftValue": "={{ $('Armar mensaje recordatorio').item.json.enviar_email }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d3e4f5a6-0003-4a1a-8003-enviaremailif1",
+      "name": "Enviar Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-3040, 4980]
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $('Armar mensaje recordatorio').item.json\n\nconst emailsDestino = [f.contacto_email, f.contacto2_email].filter(e => e && typeof e === 'string' && e.trim() !== '')\nconst emails_to = emailsDestino.join(', ')\n\nconst email_asunto = `Recordatorio de Pago: Factura N° ${f.numero_factura || ''} - ${f.empresa_nombre || 'APSOL'}`\n\nconst conceptoTexto = f.leyenda || `Prestación de servicios profesionales durante el período ${f.periodo_desde || ''} a ${f.periodo_hasta || ''}.`\n\nfunction extraerNombreReal(url, fallback) {\n  if (!url || typeof url !== 'string') return ''\n  try {\n    const limpia = url.split('?')[0].split('#')[0]\n    const partes = limpia.split('/')\n    const ultimo = partes.pop() || ''\n    const decodificado = decodeURIComponent(ultimo).trim()\n    return decodificado || fallback\n  } catch (e) {\n    return fallback\n  }\n}\n\nconst comp = Array.isArray(f.comprobantes_adjuntos) ? f.comprobantes_adjuntos : []\nconst linksAdjuntos = [\n  ...comp.map((url, i) => ({ url, nombre: extraerNombreReal(url, `Factura_${i + 1}.pdf`) })),\n  { url: f.documento_general, nombre: extraerNombreReal(f.documento_general, 'Documento.pdf') }\n].filter(a => a.url)\n\nlet adjuntosHtml = ''\nif (linksAdjuntos.length > 0) {\n  adjuntosHtml = `\n  <div style=\"margin: 25px 0; padding: 18px; background-color: #fff7ed; border-left: 4px solid #ea580c; border-radius: 4px;\">\n    <p style=\"margin: 0 0 12px 0; color: #9a3412; font-weight: bold; font-size: 14px;\">📎 Comprobantes y Documentos Adjuntos:</p>\n    <div>\n      ${linksAdjuntos.map(a => `\n        <a href=\"${a.url}\" target=\"_blank\" style=\"display: inline-block; margin-right: 8px; margin-bottom: 8px; padding: 8px 16px; background-color: #ea580c; color: #ffffff; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px;\">\n          Descargar ${a.nombre}\n        </a>\n      `).join('')}\n    </div>\n  </div>`\n}\n\nconst email_html = `\n<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"margin:0;padding:20px;font-family:Arial,Helvetica,sans-serif;background-color:#f8fafc;color:#1e293b;\">\n  <table align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"max-width:600px;background-color:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 2px 4px rgba(0,0,0,0.04);\">\n    <tr>\n      <td style=\"padding:24px 30px;background:linear-gradient(135deg, #ea580c 0%, #c2410c 100%);text-align:left;\">\n        <span style=\"font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;\">apsol</span>\n      </td>\n    </tr>\n    <tr>\n      <td style=\"padding:30px;font-size:14px;line-height:1.6;\">\n        <p style=\"margin:0 0 16px 0;font-size:15px;\">Buen día <strong>${f.contacto_nombre || ''}</strong>,</p>\n        <p style=\"margin:0 0 24px 0;\">Quisiera recordarte que aún no hemos registrado el pago correspondiente a la factura N° ${f.numero_factura || ''} emitida el ${f.fecha_emision || ''}.</p>\n        <div style=\"margin-bottom:20px;\">\n          <p style=\"margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;\">Detalles de la factura:</p>\n          <ul style=\"margin:0;padding-left:20px;color:#334155;\">\n            <li style=\"margin-bottom:4px;\"><strong>Número:</strong> ${f.numero_factura || '-'}</li>\n            <li style=\"margin-bottom:4px;\"><strong>Fecha de Emisión:</strong> ${f.fecha_emision || '-'}</li>\n            <li style=\"margin-bottom:4px;\"><strong>Fecha de Vencimiento:</strong> ${f.fecha_vencimiento || '-'}</li>\n            <li style=\"margin-bottom:4px;\"><strong>Monto Total:</strong> <span style=\"color:#ea580c;font-weight:bold;\">$${f.monto_fmt}</span></li>\n            <li style=\"margin-bottom:4px;\"><strong>Concepto:</strong> ${conceptoTexto}</li>\n          </ul>\n        </div>\n        ${adjuntosHtml}\n        <div style=\"margin-top:25px;padding:18px;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;\">\n          <p style=\"margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#ea580c;text-transform:uppercase;letter-spacing:0.5px;\">Cuenta a depositar:</p>\n          <div style=\"font-size:13px;color:#334155;line-height:1.6;\">\n            <div>- <strong>Titular:</strong> ${f.cuenta_titular || '-'}</div>\n            <div>- <strong>Cbu:</strong> <code style=\"background-color:#e2e8f0;padding:2px 5px;border-radius:3px;\">${f.cuenta_cbu || '-'}</code></div>\n            <div>- <strong>Alias:</strong> <strong style=\"color:#1d5fb8;\">${f.cuenta_alias || '-'}</strong></div>\n            <div>- <strong>Banco:</strong> ${f.cuenta_banco || '-'}</div>\n          </div>\n        </div>\n        <p style=\"margin:25px 0 0 0;font-size:13px;color:#64748b;\">Agradecemos confirmar la recepción y fecha estimada de pago.</p>\n      </td>\n    </tr>\n    <tr>\n      <td style=\"padding:16px 30px;background-color:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;text-align:center;\">\n        APSOL Consultora · Soluciones y Procesos de Gestión\n      </td>\n    </tr>\n  </table>\n</body>\n</html>`\n\nreturn [{ json: { ...f, emails_to, email_asunto, email_html } }]"
+      },
+      "id": "323efe5c-9819-4ad7-9f35-03039a7f7434",
+      "name": "Armar Email Recordatorio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2784, 4752]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "oM8T5GV0IbElXiM8",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/oM8T5GV0IbElXiM8",
+          "cachedResultName": "Enviador de emails"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "from": "APSOL Facturación",
+            "to": "={{ $json.emails_to }}",
+            "Asunto": "={{ $json.email_asunto }}",
+            "Cuerpo_HTML": "={{ $json.email_html }}",
+            "CCO": "apatriarca.apsol@gmail.com"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "from", "displayName": "from", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "to", "displayName": "to", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "Asunto", "displayName": "Asunto", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "Cuerpo_HTML", "displayName": "Cuerpo_HTML", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false },
+            { "id": "CCO", "displayName": "CCO", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "4966e01a-8316-425b-8144-c5cd0f1fed52",
+      "name": "Enviar Email",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [-2528, 4752]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE apsol_private.facturacion\nSET proxima_notificacion    = public.apsol_sumar_dias_habiles(CURRENT_DATE, {{ $('Armar mensaje recordatorio').item.json.dias_espera_facturacion }}),\n    ultima_notificacion    = CURRENT_DATE,\n    recordatorios_enviados = recordatorios_enviados + 1\nWHERE id = {{ $('Armar mensaje recordatorio').item.json.id }};",
+        "options": {}
+      },
+      "id": "8b1e6c2a-9d4f-4a11-8c3a-actualizarprox1",
+      "name": "Actualizar próx. Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-2272, 4752],
+      "credentials": { "postgres": { "id": "JAR6PFmr11r7Thek", "name": "Adrian Personal" } },
+      "notes": "apsol_sumar_dias_habiles(fecha, n) suma n días hábiles (salta sáb/dom). dias_espera_facturacion viene de la empresa (default 4 si es null)."
+    }
+  ],
+  "connections": {
+    "Leer facturas a recordar": { "main": [[{ "node": "Loop Over Items1", "type": "main", "index": 0 }]] },
+    "Loop Over Items1": { "main": [[], [{ "node": "Armar mensaje recordatorio", "type": "main", "index": 0 }]] },
+    "Armar mensaje recordatorio": { "main": [[{ "node": "Enviar WhatsApp?", "type": "main", "index": 0 }]] },
+    "Enviar WhatsApp?": {
+      "main": [
+        [{ "node": "Instancia Evolution2", "type": "main", "index": 0 }],
+        [{ "node": "Enviar Email?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Instancia Evolution2": { "main": [[{ "node": "Archivo 1?", "type": "main", "index": 0 }]] },
+    "Archivo 1?": { "main": [[{ "node": "Enviar Archivo 1", "type": "main", "index": 0 }], [{ "node": "Archivo 2?", "type": "main", "index": 0 }]] },
+    "Enviar Archivo 1": { "main": [[{ "node": "Archivo 2?", "type": "main", "index": 0 }]] },
+    "Archivo 2?": { "main": [[{ "node": "Enviar Archivo 2", "type": "main", "index": 0 }], [{ "node": "Archivo 3?", "type": "main", "index": 0 }]] },
+    "Enviar Archivo 2": { "main": [[{ "node": "Archivo 3?", "type": "main", "index": 0 }]] },
+    "Archivo 3?": { "main": [[{ "node": "Enviar Archivo 3", "type": "main", "index": 0 }], [{ "node": "Documento?1", "type": "main", "index": 0 }]] },
+    "Enviar Archivo 3": { "main": [[{ "node": "Documento?1", "type": "main", "index": 0 }]] },
+    "Documento?1": { "main": [[{ "node": "Enviar Documento", "type": "main", "index": 0 }], [{ "node": "Enviar Texto WhatsApp", "type": "main", "index": 0 }]] },
+    "Enviar Documento": { "main": [[{ "node": "Enviar Texto WhatsApp", "type": "main", "index": 0 }]] },
+    "Enviar Texto WhatsApp": { "main": [[{ "node": "Actualizar próx. WhatsApp", "type": "main", "index": 0 }]] },
+    "Actualizar próx. WhatsApp": { "main": [[{ "node": "Enviar Email?", "type": "main", "index": 0 }]] },
+    "Enviar Email?": {
+      "main": [
+        [{ "node": "Armar Email Recordatorio", "type": "main", "index": 0 }],
+        [{ "node": "Loop Over Items1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Armar Email Recordatorio": { "main": [[{ "node": "Enviar Email", "type": "main", "index": 0 }]] },
+    "Enviar Email": { "main": [[{ "node": "Actualizar próx. Email", "type": "main", "index": 0 }]] },
+    "Actualizar próx. Email": { "main": [[{ "node": "Loop Over Items1", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9357e85d2ddfa9c74331038bb10f411a6fc5c9178a802d0f74ae2a201437b0cd"
+  }
+}

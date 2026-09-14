@@ -1245,7 +1245,7 @@ export default function FacturaDetalle() {
               {!esNueva && (
                 <div className="field">
                   <label>
-                    Próximo recordatorio de cobro{' '}
+                    Próximo recordatorio · Email{' '}
                     <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(automático)</span>
                   </label>
                   <input
@@ -1259,6 +1259,20 @@ export default function FacturaDetalle() {
                       Último aviso enviado: {String(factura.ultima_notificacion).split('T')[0]}
                     </small>
                   )}
+                </div>
+              )}
+              {!esNueva && (
+                <div className="field">
+                  <label>
+                    Próximo recordatorio · WhatsApp{' '}
+                    <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(automático)</span>
+                  </label>
+                  <input
+                    type="date"
+                    disabled
+                    value={factura.proxima_notificacion_whatsapp ? String(factura.proxima_notificacion_whatsapp).split('T')[0] : ''}
+                    title="Días hábiles de espera de la empresa + 2 (WhatsApp es más invasivo, sale unos días después que el email). Lo recalcula el flujo de recordatorios tras cada aviso."
+                  />
                 </div>
               )}
               <div className="field">

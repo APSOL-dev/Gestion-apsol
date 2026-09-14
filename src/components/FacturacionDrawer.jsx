@@ -385,8 +385,12 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
                   <span style={{ fontWeight: '500', color: '#333' }}>{formatFecha(factura.ultima_notificacion)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-                  <span style={{ color: '#777' }}>Próxima Notificación</span>
+                  <span style={{ color: '#777' }}>Próx. Notif. Email</span>
                   <span style={{ fontWeight: '500', color: '#333' }}>{formatFecha(factura.proxima_notificacion)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span style={{ color: '#777' }}>Próx. Notif. WhatsApp</span>
+                  <span style={{ fontWeight: '500', color: '#333' }}>{formatFecha(factura.proxima_notificacion_whatsapp)}</span>
                 </div>
                 {factura.contactos && (
                   <>
