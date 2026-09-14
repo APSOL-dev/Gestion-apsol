@@ -111,10 +111,10 @@ export async function reabrirSprint(id) {
 
 // ── PUNTOS DEL SPRINT ─────────────────────────────────────────
 
-export async function crearItem({ sprint_id, orden, titulo = 'Nuevo punto' }) {
+export async function crearItem({ sprint_id, orden, titulo = 'Nuevo punto', es_seccion = false }) {
   const { data, error } = await supabase
     .from('apsol_sprint_items')
-    .insert([{ sprint_id, orden, titulo }])
+    .insert([{ sprint_id, orden, titulo, es_seccion }])
     .select(SELECT_ITEM_COMPLETO)
     .single()
 

@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Trash2, ChevronUp, ChevronDown, Lock, Unlock,
   Paperclip, Link2, X, Loader2, ListChecks, Plus, Download,
-  GripVertical, MessageSquare, UserPlus, List,
+  GripVertical, MessageSquare, UserPlus, List, Heading,
 } from 'lucide-react'
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
@@ -28,6 +28,7 @@ import {
   siguienteOrden, moverItemEnLista, moverItemAntesDe, renumerarOrden, puedeEditarSprint,
   puedeEliminarSprint, siguienteEstadoCiclo, esImagenUrl, dominioDeUrl,
   esArchivoStorage, urlDescargaAdjunto,
+  agruparPorSeccion, bloqueDeSeccion, moverBloqueAntesDe, moverBloqueAdyacente,
 } from '../services/sprints-utils'
 import { puedeVerTodo, sprintVisiblePara } from '../services/sprints-permisos'
 import {
@@ -96,6 +97,7 @@ export default function SprintDetalle() {
   const editable = sprint ? puedeEditarSprint(sprint) : false
   const conteo = contarEstados(items)
   const avance = porcentajeAvance(items)
+  const grupos = agruparPorSeccion(items)
   const puedeBorrar = puedeEliminarSprint(sprint, { userId: user?.id, esDuenio, items, notas })
 
   // ── Encabezado del sprint ──────────────────────────────────
@@ -169,6 +171,23 @@ export default function SprintDetalle() {
     }
   }
 
+  // Sección nueva: se agrega al final (bajo la última) y arranca en modo
+  // edición para escribir el título de una.
+  const [agregandoSeccion, setAgregandoSeccion] = useState(false)
+  async function agregarSeccion() {
+    if (agregandoSeccion) return
+    setAgregandoSeccion(true)
+    try {
+      const nueva = await crearItem({ sprint_id: id, orden: siguienteOrden(items), titulo: '', es_seccion: true })
+      setItems((prev) => [...prev, nueva])
+    } catch (err) {
+      console.error(err)
+      alert('No se pudo crear la sección.')
+    } finally {
+      setAgregandoSeccion(false)
+    }
+  }
+
   // Update optimista: pinta ya y persiste atrás; si falla, revierte.
   function actualizarPuntoLocal(itemId, campos) {
     setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...campos } : it)))
@@ -185,17 +204,28 @@ export default function SprintDetalle() {
     }
   }
 
-  async function borrarPunto(itemId) {
-    if (!window.confirm('¿Eliminar este punto del sprint?')) return
+  async function eliminarPuntoOSeccion(itemId) {
     const previo = items
     setItems((prev) => prev.filter((it) => it.id !== itemId))
     try {
       await eliminarItem(itemId)
     } catch (err) {
       console.error(err)
-      alert('No se pudo eliminar el punto.')
+      alert('No se pudo eliminar.')
       setItems(previo)
     }
+  }
+
+  async function borrarPunto(itemId) {
+    if (!window.confirm('¿Eliminar este punto del sprint?')) return
+    await eliminarPuntoOSeccion(itemId)
+  }
+
+  // Borrar una sección borra solo el título: sus puntos NO se tocan, quedan
+  // en el grupo que haya quedado antes (o sueltos si era la primera).
+  async function borrarSeccion(itemId) {
+    if (!window.confirm('¿Eliminar esta sección? Sus puntos no se borran, quedan sueltos.')) return
+    await eliminarPuntoOSeccion(itemId)
   }
 
   // Persiste un reordenamiento (viene de las flechitas ↑/↓ o del drag).
@@ -212,14 +242,24 @@ export default function SprintDetalle() {
     }
   }
 
+  // Sobre el título de una sección, ↑/↓ mueve el bloque entero (título +
+  // sus puntos); sobre un punto normal, el intercambio de siempre.
   async function mover(itemId, direccion) {
-    await persistirOrden(moverItemEnLista(items, itemId, direccion))
+    const item = items.find((it) => it.id === itemId)
+    const reordenado = item?.es_seccion
+      ? moverBloqueAdyacente(items, itemId, direccion)
+      : moverItemEnLista(items, itemId, direccion)
+    await persistirOrden(reordenado)
   }
 
   async function onDragEnd(evento) {
     const { active, over } = evento
     if (!over || active.id === over.id) return
-    await persistirOrden(moverItemAntesDe(items, active.id, over.id))
+    const activo = items.find((it) => it.id === active.id)
+    const reordenado = activo?.es_seccion
+      ? moverBloqueAntesDe(items, bloqueDeSeccion(items, active.id).map((it) => it.id), over.id)
+      : moverItemAntesDe(items, active.id, over.id)
+    await persistirOrden(reordenado)
   }
 
   // ── Responsable + comentarios por punto ────────────────────
@@ -475,32 +515,55 @@ export default function SprintDetalle() {
           <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={items.map((it) => it.id)} strategy={verticalListSortingStrategy}>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {items.map((it, idx) => (
-                  <SortablePuntoRow
-                    key={it.id}
-                    item={it}
-                    editable={editable}
-                    primero={idx === 0}
-                    ultimo={idx === items.length - 1}
-                    userId={user?.id}
-                    colaboradores={colaboradores}
-                    onPatch={(campos) => actualizarPuntoLocal(it.id, campos)}
-                    onPersist={(campos) => persistirPunto(it.id, campos)}
-                    onMover={(dir) => mover(it.id, dir)}
-                    onBorrar={() => borrarPunto(it.id)}
-                    onAdjuntosChange={(adjuntos) => actualizarPuntoLocal(it.id, { adjuntos })}
-                    onResponsable={(colId) => setResponsablePunto(it.id, colId)}
-                    onComentar={(texto) => agregarComentarioPunto(it.id, texto)}
-                    onBorrarComentario={(cId) => borrarComentarioPunto(it.id, cId)}
-                  />
-                ))}
+                {grupos.map((grupo, gi) => {
+                  return (
+                    <div key={grupo.seccion?.id || `sin-seccion-${gi}`}>
+                      {grupo.seccion && (
+                        <SortableSeccionRow
+                          item={grupo.seccion}
+                          editable={editable}
+                          primero={gi === 0}
+                          ultimo={gi === grupos.length - 1}
+                          onPatch={(campos) => actualizarPuntoLocal(grupo.seccion.id, campos)}
+                          onPersist={(campos) => persistirPunto(grupo.seccion.id, campos)}
+                          onMover={(dir) => mover(grupo.seccion.id, dir)}
+                          onBorrar={() => borrarSeccion(grupo.seccion.id)}
+                        />
+                      )}
+                      <div style={grupo.seccion ? { borderLeft: '2px solid var(--color-border)', marginLeft: 7, paddingLeft: 9 } : undefined}>
+                        {grupo.puntos.map((it) => {
+                          const idx = items.findIndex((i) => i.id === it.id)
+                          return (
+                            <SortablePuntoRow
+                              key={it.id}
+                              item={it}
+                              editable={editable}
+                              primero={idx === 0}
+                              ultimo={idx === items.length - 1}
+                              userId={user?.id}
+                              colaboradores={colaboradores}
+                              onPatch={(campos) => actualizarPuntoLocal(it.id, campos)}
+                              onPersist={(campos) => persistirPunto(it.id, campos)}
+                              onMover={(dir) => mover(it.id, dir)}
+                              onBorrar={() => borrarPunto(it.id)}
+                              onAdjuntosChange={(adjuntos) => actualizarPuntoLocal(it.id, { adjuntos })}
+                              onResponsable={(colId) => setResponsablePunto(it.id, colId)}
+                              onComentar={(texto) => agregarComentarioPunto(it.id, texto)}
+                              onBorrarComentario={(cId) => borrarComentarioPunto(it.id, cId)}
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </SortableContext>
           </DndContext>
         )}
 
         {editable && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px', marginTop: items.length > 0 ? 4 : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px', marginTop: items.length > 0 ? 4 : 0, flexWrap: 'wrap' }}>
             <span style={{ width: 16, height: 16, borderRadius: '50%', border: '1px dashed var(--color-border)', flexShrink: 0 }} />
             <input
               ref={nuevoInputRef}
@@ -513,7 +576,7 @@ export default function SprintDetalle() {
                 if (e.key === 'Enter') { e.preventDefault(); agregarPunto(nuevoTitulo) }
               }}
               style={{
-                flex: 1, minWidth: 0, fontSize: 14, padding: '6px 8px',
+                flex: 1, minWidth: 120, fontSize: 14, padding: '6px 8px',
                 border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)',
               }}
             />
@@ -526,6 +589,17 @@ export default function SprintDetalle() {
             >
               {agregando ? <Loader2 size={14} style={{ animation: 'spin 0.75s linear infinite' }} /> : <Plus size={16} />}
               Agregar
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              title="Agregar un título de sección para agrupar puntos"
+              style={{ flexShrink: 0, padding: '6px 12px' }}
+              disabled={agregandoSeccion}
+              onClick={agregarSeccion}
+            >
+              {agregandoSeccion ? <Loader2 size={14} style={{ animation: 'spin 0.75s linear infinite' }} /> : <Heading size={16} />}
+              Sección
             </button>
           </div>
         )}
@@ -777,6 +851,90 @@ function SortablePuntoRow(props) {
   return (
     <div ref={setNodeRef} style={style}>
       <PuntoRow {...props} dragHandleProps={{ ...attributes, ...listeners }} />
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Título de sección: agrupa visualmente los puntos que vienen debajo,
+// hasta la próxima sección. Es un punto más (es_seccion=true) así que
+// arrastra/reordena con el mismo mecanismo — al arrastrarlo o subirlo/
+// bajarlo con las flechas se mueve el bloque completo (ver mover() /
+// onDragEnd() en SprintDetalle). Sin semáforo, responsable ni
+// comentarios: es solo un título.
+// ──────────────────────────────────────────────────────────────
+function SortableSeccionRow(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.item.id, disabled: !props.editable })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    background: isDragging ? 'var(--color-surface2)' : undefined,
+  }
+  return (
+    <div ref={setNodeRef} style={style}>
+      <SeccionRow {...props} dragHandleProps={{ ...attributes, ...listeners }} />
+    </div>
+  )
+}
+
+function SeccionRow({ item, editable, primero, ultimo, dragHandleProps, onPatch, onPersist, onMover, onBorrar }) {
+  const [editando, setEditando] = useState(false)
+  const inputRef = useRef(null)
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 2px 6px' }}>
+      {editable ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+          <span
+            {...dragHandleProps}
+            title="Arrastrar para mover la sección (con sus puntos)"
+            style={{ ...iconBtnStyle(), width: 16, height: 16, cursor: 'grab', touchAction: 'none' }}
+          >
+            <GripVertical size={13} />
+          </span>
+          <button style={{ ...iconBtnStyle(), width: 16, height: 14 }} disabled={primero} onClick={() => onMover('arriba')} title="Subir sección">
+            <ChevronUp size={12} />
+          </button>
+          <button style={{ ...iconBtnStyle(), width: 16, height: 14 }} disabled={ultimo} onClick={() => onMover('abajo')} title="Bajar sección">
+            <ChevronDown size={12} />
+          </button>
+        </div>
+      ) : <span style={{ width: 16, flexShrink: 0 }} />}
+
+      <Heading size={14} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
+
+      {editable && editando ? (
+        <input
+          ref={inputRef}
+          autoFocus
+          type="text"
+          value={item.titulo || ''}
+          placeholder="Título de la sección…"
+          onChange={(e) => onPatch({ titulo: e.target.value })}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => { onPersist({ titulo: e.target.value }); setEditando(false) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
+          style={{
+            flex: 1, minWidth: 0, fontSize: 15, fontWeight: 700, padding: '2px 0',
+            border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', fontFamily: 'inherit',
+          }}
+        />
+      ) : (
+        <div
+          onClick={() => editable && setEditando(true)}
+          style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 700, cursor: editable ? 'text' : 'default', padding: '2px 0' }}
+        >
+          {item.titulo || <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>Sin título — tocá para escribirlo</span>}
+        </div>
+      )}
+
+      {editable && (
+        <button style={iconBtnStyle(true)} title="Eliminar sección" onClick={onBorrar}>
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   )
 }

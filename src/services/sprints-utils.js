@@ -28,10 +28,12 @@ function normalizarEstado(estado) {
 }
 
 // Conteo por estado + total. Base de todos los "semáforos" y dashboards.
+// Los títulos de sección (es_seccion) no son tareas -> no entran acá.
 export function contarEstados(items) {
   const base = { pendiente: 0, en_progreso: 0, verde: 0, amarillo: 0, rojo: 0, total: 0 }
   if (!Array.isArray(items)) return base
   for (const it of items) {
+    if (it?.es_seccion) continue
     base[normalizarEstado(it?.estado)] += 1
     base.total += 1
   }
@@ -64,7 +66,7 @@ export function ordenarItems(items) {
 }
 
 export function itemsEnRojo(items) {
-  return (Array.isArray(items) ? items : []).filter((it) => it?.estado === 'rojo')
+  return (Array.isArray(items) ? items : []).filter((it) => !it?.es_seccion && it?.estado === 'rojo')
 }
 
 // Mueve un punto una posición ↑/↓. Devuelve una lista nueva (no muta).
@@ -90,6 +92,76 @@ export function moverItemAntesDe(items, activeId, overId) {
   const [movido] = arr.splice(from, 1)
   arr.splice(to, 0, movido)
   return arr
+}
+
+// ──────────────────────────────────────────────────────────────
+// Secciones dentro de un sprint: un punto con es_seccion=true actúa
+// como título de grupo. Vive en el mismo `orden` que los puntos
+// normales -> la agrupación se arma solo mirando la posición, sin
+// tabla ni relación aparte. Cada punto "pertenece" a la sección más
+// cercana que lo precede; si no hay ninguna antes, cae en un grupo
+// sin título (compatibilidad con sprints que nunca usaron secciones).
+// ──────────────────────────────────────────────────────────────
+
+export function agruparPorSeccion(items) {
+  const arr = Array.isArray(items) ? items : []
+  const grupos = []
+  let actual = { seccion: null, puntos: [] }
+  for (const it of arr) {
+    if (it?.es_seccion) {
+      grupos.push(actual)
+      actual = { seccion: it, puntos: [] }
+    } else {
+      actual.puntos.push(it)
+    }
+  }
+  grupos.push(actual)
+  return grupos.filter((g) => g.seccion || g.puntos.length > 0)
+}
+
+// El "bloque" de una sección: su título + los puntos hasta la próxima
+// sección (o el final de la lista). Es lo que se mueve junto al
+// arrastrar o subir/bajar el título.
+export function bloqueDeSeccion(items, seccionId) {
+  const arr = Array.isArray(items) ? items : []
+  const i = arr.findIndex((it) => it?.id === seccionId && it?.es_seccion)
+  if (i === -1) return []
+  const bloque = [arr[i]]
+  for (let j = i + 1; j < arr.length; j++) {
+    if (arr[j]?.es_seccion) break
+    bloque.push(arr[j])
+  }
+  return bloque
+}
+
+// Arrastrar una sección: saca todo `idsBloque` (título + sus puntos, ya
+// contiguos) y lo inserta junto, antes de `overId`. Igual que
+// moverItemAntesDe pero moviendo varios ítems como una unidad.
+export function moverBloqueAntesDe(items, idsBloque, overId) {
+  const arr = Array.isArray(items) ? items : []
+  const idsSet = new Set(idsBloque)
+  if (idsSet.has(overId)) return [...arr]
+  const bloque = arr.filter((it) => idsSet.has(it.id))
+  const resto = arr.filter((it) => !idsSet.has(it.id))
+  const to = resto.findIndex((it) => it.id === overId)
+  if (to === -1) return [...arr]
+  resto.splice(to, 0, ...bloque)
+  return resto
+}
+
+// Flechitas ↑/↓ sobre el título de una sección: en vez de intercambiar
+// una fila con la de al lado (rompería el bloque), intercambia el
+// bloque completo con el grupo adyacente (anterior o siguiente).
+export function moverBloqueAdyacente(items, seccionId, direccion) {
+  const arr = Array.isArray(items) ? items : []
+  const grupos = agruparPorSeccion(arr)
+  const i = grupos.findIndex((g) => g.seccion?.id === seccionId)
+  if (i === -1) return [...arr]
+  const j = direccion === 'arriba' ? i - 1 : i + 1
+  if (j < 0 || j >= grupos.length) return [...arr]
+  const copia = [...grupos]
+  ;[copia[i], copia[j]] = [copia[j], copia[i]]
+  return copia.flatMap((g) => (g.seccion ? [g.seccion, ...g.puntos] : g.puntos))
 }
 
 // Tras un movimiento, reasigna orden = índice. Devuelve SOLO los puntos

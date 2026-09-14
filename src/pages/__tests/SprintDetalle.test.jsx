@@ -3,7 +3,7 @@ import { vi, describe, test, expect, beforeEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import SprintDetalle from '../SprintDetalle'
 import {
-  getSprintById, crearItem, actualizarItem, agregarAdjunto, guardarOrdenItems,
+  getSprintById, crearItem, actualizarItem, eliminarItem, agregarAdjunto, guardarOrdenItems,
   crearNotaSprint, eliminarNotaSprint, eliminarSprint,
   crearComentarioItem, eliminarComentarioItem,
 } from '../../services/sprints'
@@ -349,5 +349,94 @@ describe('SprintDetalle — acceso por prospecto asignado', () => {
     renderSprint()
 
     expect(await screen.findByRole('heading', { name: /Carrito y stock/ })).toBeInTheDocument()
+  })
+})
+
+describe('SprintDetalle — secciones', () => {
+  const sprintConSecciones = {
+    ...mockSprint,
+    items: [
+      { id: 's1', sprint_id: 'sprint-1', orden: 0, es_seccion: true, titulo: 'Formulario', estado: 'pendiente', adjuntos: [], comentarios: [] },
+      { id: 'p1', sprint_id: 'sprint-1', orden: 1, titulo: 'Enviador de SMS', estado: 'pendiente', adjuntos: [], comentarios: [] },
+      { id: 's2', sprint_id: 'sprint-1', orden: 2, es_seccion: true, titulo: 'Mejoras', estado: 'pendiente', adjuntos: [], comentarios: [] },
+      { id: 'p2', sprint_id: 'sprint-1', orden: 3, titulo: 'Otra cosa', estado: 'pendiente', adjuntos: [], comentarios: [] },
+    ],
+  }
+
+  test('"Sección" crea un título de sección al final del sprint', async () => {
+    crearItem.mockResolvedValue({ id: 's-nueva', sprint_id: 'sprint-1', orden: 1, es_seccion: true, titulo: '', estado: 'pendiente' })
+    renderSprint()
+    await screen.findByText('Punto existente')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Sección$/i }))
+
+    await waitFor(() => {
+      expect(crearItem).toHaveBeenCalledWith({ sprint_id: 'sprint-1', orden: 1, titulo: '', es_seccion: true })
+      expect(screen.getByText('Sin título — tocá para escribirlo')).toBeInTheDocument()
+    })
+  })
+
+  test('los puntos aparecen agrupados debajo de su sección, en orden', async () => {
+    getSprintById.mockResolvedValue(sprintConSecciones)
+    const { container } = renderSprint()
+
+    await screen.findByText('Formulario')
+    expect(screen.getByText('Enviador de SMS')).toBeInTheDocument()
+    expect(screen.getByText('Mejoras')).toBeInTheDocument()
+    expect(screen.getByText('Otra cosa')).toBeInTheDocument()
+
+    const orden = ['Formulario', 'Enviador de SMS', 'Mejoras', 'Otra cosa']
+      .map((t) => container.textContent.indexOf(t))
+    expect(orden).toEqual([...orden].sort((a, b) => a - b))
+  })
+
+  test('editar el título de una sección lo persiste', async () => {
+    actualizarItem.mockResolvedValue({})
+    getSprintById.mockResolvedValue(sprintConSecciones)
+    renderSprint()
+    await screen.findByText('Formulario')
+
+    fireEvent.click(screen.getByText('Formulario'))
+    const input = screen.getByPlaceholderText('Título de la sección…')
+    fireEvent.change(input, { target: { value: 'Formulario web' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(actualizarItem).toHaveBeenCalledWith('s1', { titulo: 'Formulario web' }, 'user-1')
+    })
+  })
+
+  test('borrar una sección elimina solo el título: sus puntos quedan', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    getSprintById.mockResolvedValue(sprintConSecciones)
+    renderSprint()
+    await screen.findByText('Formulario')
+
+    fireEvent.click(screen.getAllByTitle('Eliminar sección')[0]) // la primera sección (Formulario)
+
+    await waitFor(() => {
+      expect(eliminarItem).toHaveBeenCalledWith('s1')
+      expect(screen.queryByText('Formulario')).not.toBeInTheDocument()
+      expect(screen.getByText('Enviador de SMS')).toBeInTheDocument()
+    })
+  })
+
+  test('subir una sección con la flecha mueve el bloque completo (título + sus puntos)', async () => {
+    guardarOrdenItems.mockResolvedValue()
+    getSprintById.mockResolvedValue(sprintConSecciones)
+    renderSprint()
+    await screen.findByText('Mejoras')
+
+    const btnSubir = screen.getAllByTitle('Subir sección').find((b) => !b.disabled)
+    fireEvent.click(btnSubir)
+
+    await waitFor(() => {
+      expect(guardarOrdenItems).toHaveBeenCalled()
+      const cambios = guardarOrdenItems.mock.calls[0][0]
+      const porId = Object.fromEntries(cambios.map((c) => [c.id, c.orden]))
+      // s2+p2 (el bloque que subió) deben quedar antes que s1+p1
+      expect(porId.s2).toBeLessThan(porId.s1)
+      expect(porId.p2).toBeLessThan(porId.p1)
+    })
   })
 })

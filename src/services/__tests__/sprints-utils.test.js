@@ -19,6 +19,10 @@ import {
   dominioDeUrl,
   esArchivoStorage,
   urlDescargaAdjunto,
+  agruparPorSeccion,
+  bloqueDeSeccion,
+  moverBloqueAntesDe,
+  moverBloqueAdyacente,
 } from '../sprints-utils'
 
 // ──────────────────────────────────────────────────────────────
@@ -61,6 +65,15 @@ describe('contarEstados', () => {
   test('lista vacía / no-array devuelve todo en cero', () => {
     expect(contarEstados([])).toEqual({ pendiente: 0, en_progreso: 0, verde: 0, amarillo: 0, rojo: 0, total: 0 })
     expect(contarEstados(undefined)).toEqual({ pendiente: 0, en_progreso: 0, verde: 0, amarillo: 0, rojo: 0, total: 0 })
+  })
+
+  test('un título de sección no cuenta en el semáforo', () => {
+    const items = [
+      { estado: 'verde' }, { es_seccion: true, estado: 'pendiente' }, { estado: 'rojo' },
+    ]
+    expect(contarEstados(items)).toEqual({
+      pendiente: 0, en_progreso: 0, verde: 1, amarillo: 0, rojo: 1, total: 2,
+    })
   })
 })
 
@@ -110,6 +123,10 @@ describe('itemsEnRojo', () => {
   test('devuelve solo los puntos que no se pudieron hacer', () => {
     const items = [{ id: 1, estado: 'rojo' }, { id: 2, estado: 'verde' }, { id: 3, estado: 'rojo' }]
     expect(itemsEnRojo(items).map(i => i.id)).toEqual([1, 3])
+  })
+  test('un título de sección nunca cuenta como rojo, aunque tenga ese estado a mano', () => {
+    const items = [{ id: 1, es_seccion: true, estado: 'rojo' }, { id: 2, estado: 'rojo' }]
+    expect(itemsEnRojo(items).map(i => i.id)).toEqual([2])
   })
 })
 
@@ -312,5 +329,156 @@ describe('esArchivoStorage / urlDescargaAdjunto', () => {
 
   test('un link externo se devuelve intacto (no se puede forzar)', () => {
     expect(urlDescargaAdjunto(externo)).toBe(externo)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Secciones: un punto con es_seccion=true actúa como título de grupo.
+// La agrupación se calcula solo mirando el orden: cada punto normal
+// "pertenece" a la sección más cercana que lo precede.
+// ──────────────────────────────────────────────────────────────
+describe('agruparPorSeccion', () => {
+  test('sin ninguna sección, es un solo grupo sin título (lista plana de siempre)', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+    const grupos = agruparPorSeccion(items)
+    expect(grupos).toHaveLength(1)
+    expect(grupos[0].seccion).toBeNull()
+    expect(grupos[0].puntos.map(p => p.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  test('puntos sueltos antes de la primera sección quedan en un grupo sin título', () => {
+    const items = [
+      { id: 'p1' },
+      { id: 's1', es_seccion: true, titulo: 'Formulario' },
+      { id: 'p2' }, { id: 'p3' },
+    ]
+    const grupos = agruparPorSeccion(items)
+    expect(grupos).toHaveLength(2)
+    expect(grupos[0]).toMatchObject({ seccion: null })
+    expect(grupos[0].puntos.map(p => p.id)).toEqual(['p1'])
+    expect(grupos[1].seccion.id).toBe('s1')
+    expect(grupos[1].puntos.map(p => p.id)).toEqual(['p2', 'p3'])
+  })
+
+  test('si el primer punto ya es una sección, no hay grupo sin título', () => {
+    const items = [
+      { id: 's1', es_seccion: true, titulo: 'Formulario' },
+      { id: 'p1' }, { id: 'p2' },
+    ]
+    const grupos = agruparPorSeccion(items)
+    expect(grupos).toHaveLength(1)
+    expect(grupos[0].seccion.id).toBe('s1')
+  })
+
+  test('varias secciones seguidas, cada punto va a la más cercana', () => {
+    const items = [
+      { id: 's1', es_seccion: true, titulo: 'Formulario' },
+      { id: 'p1' },
+      { id: 's2', es_seccion: true, titulo: 'Mejoras' },
+      { id: 'p2' }, { id: 'p3' },
+    ]
+    const grupos = agruparPorSeccion(items)
+    expect(grupos.map(g => g.seccion.titulo)).toEqual(['Formulario', 'Mejoras'])
+    expect(grupos[0].puntos.map(p => p.id)).toEqual(['p1'])
+    expect(grupos[1].puntos.map(p => p.id)).toEqual(['p2', 'p3'])
+  })
+
+  test('una sección sin puntos debajo igual se muestra (grupo vacío)', () => {
+    const items = [
+      { id: 's1', es_seccion: true, titulo: 'Formulario' },
+      { id: 's2', es_seccion: true, titulo: 'Vacía' },
+    ]
+    const grupos = agruparPorSeccion(items)
+    expect(grupos.map(g => g.seccion.titulo)).toEqual(['Formulario', 'Vacía'])
+    expect(grupos[1].puntos).toEqual([])
+  })
+
+  test('lista vacía / no-array -> sin grupos', () => {
+    expect(agruparPorSeccion([])).toEqual([])
+    expect(agruparPorSeccion(undefined)).toEqual([])
+  })
+})
+
+describe('bloqueDeSeccion', () => {
+  const items = [
+    { id: 'p0' },
+    { id: 's1', es_seccion: true },
+    { id: 'p1' }, { id: 'p2' },
+    { id: 's2', es_seccion: true },
+    { id: 'p3' },
+  ]
+
+  test('el bloque de una sección es su título + los puntos hasta la próxima sección', () => {
+    expect(bloqueDeSeccion(items, 's1').map(i => i.id)).toEqual(['s1', 'p1', 'p2'])
+  })
+
+  test('la última sección arrastra hasta el final de la lista', () => {
+    expect(bloqueDeSeccion(items, 's2').map(i => i.id)).toEqual(['s2', 'p3'])
+  })
+
+  test('un id que no es sección (o no existe) da bloque vacío', () => {
+    expect(bloqueDeSeccion(items, 'p1')).toEqual([])
+    expect(bloqueDeSeccion(items, 'no-existe')).toEqual([])
+  })
+})
+
+describe('moverBloqueAntesDe (arrastrar una sección entera)', () => {
+  const items = [
+    { id: 'p0' },
+    { id: 's1', es_seccion: true },
+    { id: 'p1' }, { id: 'p2' },
+    { id: 's2', es_seccion: true },
+    { id: 'p3' },
+  ]
+
+  test('mueve el título y sus puntos juntos, como un bloque, a la nueva posición', () => {
+    const bloque = bloqueDeSeccion(items, 's2').map(i => i.id) // ['s2','p3']
+    const resultado = moverBloqueAntesDe(items, bloque, 'p0')
+    expect(resultado.map(i => i.id)).toEqual(['s2', 'p3', 'p0', 's1', 'p1', 'p2'])
+  })
+
+  test('soltar sobre un punto del propio bloque no hace nada', () => {
+    const bloque = bloqueDeSeccion(items, 's1').map(i => i.id) // ['s1','p1','p2']
+    expect(moverBloqueAntesDe(items, bloque, 'p1').map(i => i.id)).toEqual(items.map(i => i.id))
+  })
+
+  test('no muta la lista original', () => {
+    const bloque = bloqueDeSeccion(items, 's2').map(i => i.id)
+    moverBloqueAntesDe(items, bloque, 'p0')
+    expect(items.map(i => i.id)).toEqual(['p0', 's1', 'p1', 'p2', 's2', 'p3'])
+  })
+})
+
+describe('moverBloqueAdyacente (flechitas ↑/↓ sobre el título de una sección)', () => {
+  const items = [
+    { id: 'p0' },
+    { id: 's1', es_seccion: true, titulo: 'Formulario' },
+    { id: 'p1' },
+    { id: 's2', es_seccion: true, titulo: 'Mejoras' },
+    { id: 'p2' }, { id: 'p3' },
+  ]
+
+  test('subir intercambia el bloque completo con el grupo anterior', () => {
+    const resultado = moverBloqueAdyacente(items, 's2', 'arriba')
+    expect(resultado.map(i => i.id)).toEqual(['p0', 's2', 'p2', 'p3', 's1', 'p1'])
+  })
+
+  test('bajar intercambia el bloque completo con el grupo siguiente', () => {
+    const resultado = moverBloqueAdyacente(items, 's1', 'abajo')
+    expect(resultado.map(i => i.id)).toEqual(['p0', 's2', 'p2', 'p3', 's1', 'p1'])
+  })
+
+  test('si antes solo hay puntos sueltos (sin título), la sección igual sube e intercambia con ellos', () => {
+    const resultado = moverBloqueAdyacente(items, 's1', 'arriba')
+    expect(resultado.map(i => i.id)).toEqual(['s1', 'p1', 'p0', 's2', 'p2', 'p3'])
+  })
+
+  test('la última sección no puede bajar más', () => {
+    expect(moverBloqueAdyacente(items, 's2', 'abajo').map(i => i.id)).toEqual(items.map(i => i.id))
+  })
+
+  test('id inexistente o que no es sección -> lista igual', () => {
+    expect(moverBloqueAdyacente(items, 'p1', 'arriba').map(i => i.id)).toEqual(items.map(i => i.id))
+    expect(moverBloqueAdyacente(items, 'no-existe', 'arriba').map(i => i.id)).toEqual(items.map(i => i.id))
   })
 })
