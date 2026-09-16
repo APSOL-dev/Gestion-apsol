@@ -327,7 +327,7 @@ export function resolverDiasEspera(empresa, fallback = DIAS_ESPERA_FACTURACION_D
 export function prepararFacturaParaGuardar(factura, pagos = []) {
   const {
     prospectos, contactos, contacto2, pagos: _pagos,
-    proxima_notificacion, ultima_notificacion, recordatorios_enviados,
+    proxima_notificacion, proxima_notificacion_whatsapp, ultima_notificacion, recordatorios_enviados,
     ...dataToSave
   } = factura
 
@@ -479,18 +479,24 @@ export async function saveFactura(factura) {
     //  - ultima_notificacion: el aviso "primera_vez" que se acaba de mandar
     //    ES una notificación al cliente -> se registra su fecha (antes quedaba
     //    en blanco aunque el aviso hubiera salido).
-    //  - proxima_notificacion: primer recordatorio de cobro = fecha de emisión
-    //    + los días hábiles de espera de la empresa (sumarDiasHabiles salta
-    //    sáb/dom). Las siguientes las recalcula n8n tras cada envío.
+    //  - proxima_notificacion: primer recordatorio de cobro por EMAIL = fecha
+    //    de emisión + los días hábiles de espera de la empresa (sumarDiasHabiles
+    //    salta sáb/dom).
+    //  - proxima_notificacion_whatsapp: primer recordatorio por WHATSAPP = la
+    //    misma fecha de email + 2 días hábiles más (antes quedaba en blanco
+    //    hasta que n8n mandaba el primer WhatsApp de recordatorio).
+    // Las siguientes fechas las recalcula n8n tras cada envío.
     // Un fallo acá nunca debe tirar abajo el alta, que ya está hecha.
     const fechaEmision = (facturaCompleta?.fecha_emision || '').split('T')[0]
     const fechaProxima = sumarDiasHabiles(
       fechaEmision,
       resolverDiasEspera(facturaCompleta?.prospectos?.empresas)
     )
+    const fechaProximaWhatsapp = fechaProxima ? sumarDiasHabiles(fechaProxima, 2) : ''
     const updatePostAlta = {}
     if (notificacionEnviada) updatePostAlta.ultima_notificacion = fechaEmision || fechaLocalISO()
     if (fechaProxima) updatePostAlta.proxima_notificacion = fechaProxima
+    if (fechaProximaWhatsapp) updatePostAlta.proxima_notificacion_whatsapp = fechaProximaWhatsapp
     if (Object.keys(updatePostAlta).length > 0) {
       try {
         await supabase

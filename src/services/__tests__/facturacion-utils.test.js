@@ -1092,10 +1092,12 @@ describe('prepararFacturaParaGuardar', () => {
     const out = prepararFacturaParaGuardar({
       id: 'f1',
       proxima_notificacion: '2026-09-03',
+      proxima_notificacion_whatsapp: '2026-09-07',
       ultima_notificacion: '2026-08-20',
       recordatorios_enviados: 2
     })
     expect(out).not.toHaveProperty('proxima_notificacion')
+    expect(out).not.toHaveProperty('proxima_notificacion_whatsapp')
     expect(out).not.toHaveProperty('ultima_notificacion')
     expect(out).not.toHaveProperty('recordatorios_enviados')
   })
@@ -1240,6 +1242,36 @@ describe('saveFactura', () => {
     expect(supabase.rpc).not.toHaveBeenCalled()
   })
 
+  test('al crear una factura nueva, agenda proxima_notificacion_whatsapp = proxima_notificacion (email) + 2 días hábiles', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const updateProxNotif = vi.fn().mockReturnThis()
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-08-28' })
+    supabase.from.mockReturnValueOnce({ update: updateProxNotif, eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    // proxima_notificacion (email) = jueves 2026-09-03; +2 días hábiles
+    // (viernes 09-04, salta fin de semana, lunes 09-07) = 2026-09-07.
+    expect(updateProxNotif).toHaveBeenCalledWith(expect.objectContaining({
+      proxima_notificacion: '2026-09-03',
+      proxima_notificacion_whatsapp: '2026-09-07'
+    }))
+  })
+
+  test('sin fecha de emisión no agenda proxima_notificacion_whatsapp', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const update = vi.fn().mockReturnThis()
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: null })
+    supabase.from.mockReturnValueOnce({ update, eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    const arg = update.mock.calls[0]?.[0] || {}
+    expect(arg).not.toHaveProperty('proxima_notificacion_whatsapp')
+  })
+
   test('empresa sin dias_espera_facturacion: usa el estándar de 4 días hábiles', async () => {
     const { supabase } = await import('../../lib/supabase')
     const updateProxNotif = vi.fn().mockReturnThis()
@@ -1275,8 +1307,11 @@ describe('saveFactura', () => {
 
     await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 
-    // se agenda el recordatorio, pero sin ultima_notificacion
-    expect(update).toHaveBeenCalledWith({ proxima_notificacion: '2026-09-03' })
+    // se agenda el recordatorio (email + whatsapp), pero sin ultima_notificacion
+    expect(update).toHaveBeenCalledWith({
+      proxima_notificacion: '2026-09-03',
+      proxima_notificacion_whatsapp: '2026-09-07'
+    })
     expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ ultima_notificacion: expect.anything() }))
   })
 
