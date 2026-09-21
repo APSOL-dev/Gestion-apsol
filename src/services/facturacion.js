@@ -313,6 +313,22 @@ export function resolverDiasEspera(empresa, fallback = DIAS_ESPERA_FACTURACION_D
 }
 
 /**
+ * Nueva "Próxima Factura" del prospecto tras EMITIR una factura: un mes
+ * después de la fecha que tocaba, o un mes después de la emisión si se
+ * facturó tarde (así una factura atrasada no deja la fecha clavada en el
+ * pasado). Depende de la emisión, no del cobro: un cliente que paga a los
+ * 30+ días no puede hacer que se pierda el aviso de facturar el mes
+ * siguiente. Sin Próxima Factura cargada no inventa una fecha ('').
+ */
+export function calcularProximaFacturaTrasEmitir(proximaFactura, fechaEmision) {
+  const prox = String(proximaFactura || '').split('T')[0]
+  if (!esFechaCompleta(prox)) return ''
+  const emision = String(fechaEmision || '').split('T')[0]
+  const base = esFechaCompleta(emision) && emision > prox ? emision : prox
+  return sumarMeses(base, 1)
+}
+
+/**
  * Limpia el objeto de factura que arma la pantalla de detalle antes de
  * mandarlo a `saveFactura`:
  *  - saca los campos que vienen de joins (no son columnas físicas)
@@ -508,6 +524,28 @@ export async function saveFactura(factura) {
       }
     }
 
+    // La "Próxima Factura" del prospecto avanza al EMITIR, no al cobrar:
+    // si dependiera del pago, un cliente que tarda 30+ días dejaría la
+    // fecha clavada y la app nunca avisaría de facturarle el mes siguiente.
+    if (data.prospecto_id) {
+      try {
+        const { data: prospecto } = await supabase
+          .from('apsol_prospectos')
+          .select('proxima_factura')
+          .eq('id', data.prospecto_id)
+          .maybeSingle()
+        const nuevaProxima = calcularProximaFacturaTrasEmitir(prospecto?.proxima_factura, fechaEmision)
+        if (nuevaProxima) {
+          await supabase
+            .from('apsol_prospectos')
+            .update({ proxima_factura: nuevaProxima })
+            .eq('id', data.prospecto_id)
+        }
+      } catch (proximaError) {
+        console.error('No se pudo avanzar la Próxima Factura del prospecto:', proximaError)
+      }
+    }
+
     return {
       ...data,
       ...updatePostAlta, // refleja ultima_notificacion / proxima_notificacion recién seteadas
@@ -536,9 +574,9 @@ export async function deleteFactura(id) {
 /**
  * Recalcula el estado de una factura a partir de sus pagos reales y, si
  * corresponde, lo persiste. Si la factura ACABA de quedar "Cobrada total"
- * (no lo estaba antes de este recálculo), avanza en 1 mes la "Próxima
- * Factura" del prospecto asociado, para que el ciclo de facturación
- * continúe solo.
+ * (no lo estaba antes de este recálculo), avisa el pago recibido. Ojo: NO
+ * mueve la "Próxima Factura" del prospecto — esa avanza al emitir la
+ * factura (ver saveFactura), no al cobrarla.
  */
 async function recalcularEstadoFactura(facturacionId, estadoPrevio = null) {
   const factura = await getFacturaById(facturacionId)
@@ -571,32 +609,12 @@ async function recalcularEstadoFactura(facturacionId, estadoPrevio = null) {
 
   const recienCobradaTotal = nuevoEstado === 'Cobrada total' && estadoAnterior !== 'Cobrada total'
   if (recienCobradaTotal) {
-    if (factura.prospecto_id) {
-      await avanzarProximaFacturaProspecto(factura.prospecto_id)
-    }
     try {
       await notificarFacturacion('pago_recibido', factura)
     } catch (notifError) {
       console.error('Error al notificar pago_recibido al webhook de facturación:', notifError)
     }
   }
-}
-
-async function avanzarProximaFacturaProspecto(prospectoId) {
-  const { data: prospecto, error } = await supabase
-    .from('apsol_prospectos')
-    .select('proxima_factura')
-    .eq('id', prospectoId)
-    .maybeSingle()
-  if (error || !prospecto?.proxima_factura) return
-
-  const nuevaFecha = sumarMeses(prospecto.proxima_factura, 1)
-  if (!nuevaFecha) return
-
-  await supabase
-    .from('apsol_prospectos')
-    .update({ proxima_factura: nuevaFecha })
-    .eq('id', prospectoId)
 }
 
 /**

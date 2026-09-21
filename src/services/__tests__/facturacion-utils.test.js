@@ -828,7 +828,45 @@ describe('sincronizarHistoricoUVA', () => {
 })
 
 // ──────────────────────────────────────────────────────────────
-// Tests de savePago: recálculo de estado + avance de "Próxima Factura"
+// calcularProximaFacturaTrasEmitir: la "Próxima Factura" del prospecto
+// avanza al EMITIR una factura (no al cobrarla). Un cliente que tarda 30+
+// días en pagar no puede dejar la fecha clavada en el pasado.
+// ──────────────────────────────────────────────────────────────
+describe('calcularProximaFacturaTrasEmitir', () => {
+  let calcular
+
+  beforeEach(async () => {
+    vi.resetModules()
+    const mod = await import('../facturacion.js')
+    calcular = mod.calcularProximaFacturaTrasEmitir
+  })
+
+  test('factura emitida en término: la próxima es un mes después de la fecha que tocaba', () => {
+    expect(calcular('2026-08-21', '2026-08-21')).toBe('2026-09-21')
+  })
+
+  test('factura emitida tarde: cuenta un mes desde el día que se emitió (no desde la fecha vieja)', () => {
+    // tocaba el 21/08 pero se facturó el 21/09 -> la siguiente es el 21/10, no el 21/09
+    expect(calcular('2026-08-21', '2026-09-21')).toBe('2026-10-21')
+  })
+
+  test('factura emitida antes de tiempo: cubre el ciclo que tocaba, la próxima es un mes después de ese', () => {
+    expect(calcular('2026-10-21', '2026-09-21')).toBe('2026-11-21')
+  })
+
+  test('sin fecha de emisión avanza un mes desde la fecha que tocaba', () => {
+    expect(calcular('2026-08-21', '')).toBe('2026-09-21')
+  })
+
+  test('si el prospecto no tiene Próxima Factura cargada, no inventa una fecha', () => {
+    expect(calcular('', '2026-09-21')).toBe('')
+    expect(calcular(null, '2026-09-21')).toBe('')
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Tests de savePago: recálculo de estado (la "Próxima Factura" ya NO se
+// mueve acá: avanza al emitir la factura)
 // ──────────────────────────────────────────────────────────────
 describe('savePago', () => {
   let savePago
@@ -840,7 +878,7 @@ describe('savePago', () => {
     savePago = mod.savePago
   })
 
-  test('al completar el saldo, marca la factura Cobrada total y avanza 1 mes la Próxima Factura del prospecto', async () => {
+  test('al completar el saldo, marca la factura Cobrada total y NO toca la Próxima Factura del prospecto (esa avanza al emitir, no al cobrar)', async () => {
     const { supabase } = await import('../../lib/supabase')
 
     const updateEstado = vi.fn().mockReturnThis()
@@ -881,19 +919,14 @@ describe('savePago', () => {
       })
       // 5. UPDATE del estado de la factura (fallback del trigger)
       .mockReturnValueOnce({ update: updateEstado, eq: updateEstadoEq })
-      // 6. SELECT de la próxima_factura del prospecto
-      .mockReturnValueOnce({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValueOnce({ data: { proxima_factura: '2026-08-10' }, error: null })
-      })
-      // 7. UPDATE de la próxima_factura del prospecto
-      .mockReturnValueOnce({ update: updateProxima, eq: updateProximaEq })
 
     await savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 100 })
 
     expect(updateEstado).toHaveBeenCalledWith({ estado: 'Cobrada total' })
-    expect(updateProxima).toHaveBeenCalledWith({ proxima_factura: '2026-09-10' })
+    expect(updateProxima).not.toHaveBeenCalled()
+    // estado previo + insert pago + 2 de getFacturaById + update estado.
+    // Nunca debería tocar apsol_prospectos.
+    expect(supabase.from).toHaveBeenCalledTimes(5)
 
     const { notificarFacturacion } = await import('../notificaciones.js')
     expect(notificarFacturacion).toHaveBeenCalledWith(
@@ -1270,6 +1303,44 @@ describe('saveFactura', () => {
 
     const arg = update.mock.calls[0]?.[0] || {}
     expect(arg).not.toHaveProperty('proxima_notificacion_whatsapp')
+  })
+
+  test('al crear una factura, avanza la Próxima Factura del prospecto un mes (aunque el cliente no pague)', async () => {
+    const { supabase } = await import('../../lib/supabase')
+    const updateProspecto = vi.fn().mockReturnThis()
+    const updateProspectoEq = vi.fn().mockResolvedValueOnce({ error: null })
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-09-21' })
+    // 4. UPDATE de las fechas de notificación de la factura
+    supabase.from.mockReturnValueOnce({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+    // 5. SELECT de la próxima_factura del prospecto (venía atrasada: tocaba el 21/08)
+    supabase.from.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValueOnce({ data: { proxima_factura: '2026-08-21' }, error: null })
+    })
+    // 6. UPDATE de la próxima_factura del prospecto
+    supabase.from.mockReturnValueOnce({ update: updateProspecto, eq: updateProspectoEq })
+
+    await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+
+    expect(updateProspecto).toHaveBeenCalledWith({ proxima_factura: '2026-10-21' })
+    expect(updateProspectoEq).toHaveBeenCalledWith('id', 'prospecto-1')
+  })
+
+  test('si no se puede avanzar la Próxima Factura, la factura igual queda guardada', async () => {
+    const { supabase } = await import('../../lib/supabase')
+
+    mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-09-21' })
+    supabase.from.mockReturnValueOnce({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+    supabase.from.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockRejectedValueOnce(new Error('sin conexión'))
+    })
+
+    const resultado = await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
+    expect(resultado.id).toBe('factura-1')
   })
 
   test('empresa sin dias_espera_facturacion: usa el estándar de 4 días hábiles', async () => {
