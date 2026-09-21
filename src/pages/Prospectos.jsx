@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, FolderKanban, Building2, User, ChevronRight, ChevronDown } from 'lucide-react'
 import { useData } from '../context/DataContext'
-import { getEstadoProspectoStyle, ordenarEstadosProspecto, tareaVencida, debeFacturarse } from '../utils/formateo'
+import { getEstadoProspectoStyle, ordenarEstadosProspecto, tareaVencida, debeFacturarse, textoAtrasoFacturar, resumenFacturasImpagas, textoDeuda } from '../utils/formateo'
 import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import ProspectoDrawer from '../components/ProspectoDrawer'
 
 export default function Prospectos() {
-  const { prospectos, loadingProspectos, refreshProspectos } = useData()
+  const { prospectos, loadingProspectos, refreshProspectos, facturas } = useData()
   const [search, setSearch] = useState('')
   const [filtroActivos, setFiltroActivos] = useState(true) // true = activos, false = historicos
   const [expandidos, setExpandidos] = useState({}) // { [estado]: boolean }
@@ -38,6 +38,15 @@ export default function Prospectos() {
     (prospecto.empresas?.nombre && prospecto.empresas.nombre.toLowerCase().includes(search.toLowerCase())) ||
     (prospecto.estado && prospecto.estado.toLowerCase().includes(search.toLowerCase()))
   )
+
+  // Facturas agrupadas por prospecto, para avisar si un cliente "en
+  // producción" debe facturas (impagas).
+  const facturasPorProspecto = (facturas || []).reduce((acc, f) => {
+    if (!f.prospecto_id) return acc
+    if (!acc[f.prospecto_id]) acc[f.prospecto_id] = []
+    acc[f.prospecto_id].push(f)
+    return acc
+  }, {})
 
   // Agrupar prospectos por estado real
   const prospectosPorEstado = prospectosFiltrados.reduce((acc, p) => {
@@ -207,6 +216,10 @@ export default function Prospectos() {
                           // próxima factura hoy o vencida y todavía no facturada.
                           const enProduccion = (prospecto.estado || '').toLowerCase().includes('6a')
                           const hayQueFacturar = enProduccion && debeFacturarse(prospecto)
+                          const atrasoFacturar = hayQueFacturar ? textoAtrasoFacturar(prospecto) : ''
+                          const textoDeudaCliente = enProduccion
+                            ? textoDeuda(resumenFacturasImpagas(facturasPorProspecto[prospecto.id]))
+                            : ''
                           return (
                           <tr
                             key={prospecto.id}
@@ -216,7 +229,7 @@ export default function Prospectos() {
                             style={{ cursor: 'pointer', background: filaSeleccionada ? 'var(--color-surface2, #eef2ff)' : undefined }}
                           >
                             <td style={{ paddingLeft: '20px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                 <div style={{ fontWeight: '600', color: 'var(--color-text)', fontSize: '14px' }}>
                                   {prospecto.nombre}
                                 </div>
@@ -224,12 +237,24 @@ export default function Prospectos() {
                                   <span
                                     title="La próxima factura de este prospecto es hoy o ya venció y todavía no se emitió"
                                     style={{
-                                      fontSize: '10px', fontWeight: '700', textTransform: 'uppercase',
+                                      fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', whiteSpace: 'nowrap',
                                       padding: '2px 8px', borderRadius: '10px',
                                       background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca'
                                     }}
                                   >
-                                    Facturar
+                                    Facturar · {atrasoFacturar}
+                                  </span>
+                                )}
+                                {textoDeudaCliente && (
+                                  <span
+                                    title="Este cliente tiene facturas emitidas que todavía no cobraste"
+                                    style={{
+                                      fontSize: '10px', fontWeight: '700', whiteSpace: 'nowrap',
+                                      padding: '2px 8px', borderRadius: '10px',
+                                      background: '#ffedd5', color: '#c2410c', border: '1px solid #fed7aa'
+                                    }}
+                                  >
+                                    {textoDeudaCliente}
                                   </span>
                                 )}
                               </div>

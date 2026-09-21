@@ -79,7 +79,7 @@ describe('Prospectos — alerta de "hay que facturarle" (en producción)', () =>
       { id: 'p1', nombre: 'Cliente Activo', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: ayer() },
     ])
 
-    expect(screen.getByText('Facturar')).toBeInTheDocument()
+    expect(screen.getByText(/^Facturar/)).toBeInTheDocument()
   })
 
   it('muestra el badge aunque ya haya una factura emitida después de esa fecha (era la del ciclo anterior, facturada tarde)', async () => {
@@ -89,7 +89,7 @@ describe('Prospectos — alerta de "hay que facturarle" (en producción)', () =>
       [{ prospecto_id: 'p1', fecha_emision: fechaVieja }],
     )
 
-    expect(screen.getByText('Facturar')).toBeInTheDocument()
+    expect(screen.getByText(/^Facturar/)).toBeInTheDocument()
   })
 
   it('NO muestra el badge en un prospecto que no está en producción, aunque tenga próxima_factura vencida', async () => {
@@ -97,7 +97,7 @@ describe('Prospectos — alerta de "hay que facturarle" (en producción)', () =>
       { id: 'p1', nombre: 'En Seguimiento', estado: '3A - Seguimiento', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: ayer() },
     ])
 
-    expect(screen.queryByText('Facturar')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Facturar/)).not.toBeInTheDocument()
   })
 
   it('NO muestra el badge si la próxima_factura todavía es futura', async () => {
@@ -105,6 +105,42 @@ describe('Prospectos — alerta de "hay que facturarle" (en producción)', () =>
       { id: 'p1', nombre: 'Cliente Futuro', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: manana() },
     ])
 
-    expect(screen.queryByText('Facturar')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Facturar/)).not.toBeInTheDocument()
+  })
+
+  it('el badge Facturar dice hace cuántos días tocaba facturar', async () => {
+    await renderConProspectos([
+      { id: 'p1', nombre: 'Cliente Atrasado', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: ayer() },
+    ])
+
+    expect(screen.getByText(/Facturar · hace 1 día/)).toBeInTheDocument()
+  })
+
+  it('avisa "Debe factura del ..." si el cliente tiene una factura impaga', async () => {
+    await renderConProspectos(
+      [{ id: 'p1', nombre: 'Cliente Deudor', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: manana() }],
+      [{ prospecto_id: 'p1', estado: 'Pendiente', fecha_emision: '2026-10-21' }],
+    )
+
+    expect(screen.getByText('Debe factura del 21/10')).toBeInTheDocument()
+    expect(screen.queryByText(/^Facturar/)).not.toBeInTheDocument()
+  })
+
+  it('NO avisa deuda si todas las facturas del cliente están cobradas', async () => {
+    await renderConProspectos(
+      [{ id: 'p1', nombre: 'Cliente Al Dia', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: manana() }],
+      [{ prospecto_id: 'p1', estado: 'Cobrada total', fecha_emision: '2026-10-21' }],
+    )
+
+    expect(screen.queryByText(/Debe/)).not.toBeInTheDocument()
+  })
+
+  it('NO avisa deuda en un prospecto que no está en producción', async () => {
+    await renderConProspectos(
+      [{ id: 'p1', nombre: 'En Seguimiento', estado: '3A - Seguimiento', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null }],
+      [{ prospecto_id: 'p1', estado: 'Pendiente', fecha_emision: '2026-10-21' }],
+    )
+
+    expect(screen.queryByText(/Debe/)).not.toBeInTheDocument()
   })
 })

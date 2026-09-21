@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ordenEstadoProspecto, ordenarEstadosProspecto, tareaVencida, debeFacturarse } from '../formateo'
+import { ordenEstadoProspecto, ordenarEstadosProspecto, tareaVencida, debeFacturarse, textoAtrasoFacturar, resumenFacturasImpagas, textoDeuda } from '../formateo'
 
 // ──────────────────────────────────────────────────────────────
 // ordenEstadoProspecto / ordenarEstadosProspecto: orden del pipeline de
@@ -120,5 +120,61 @@ describe('debeFacturarse', () => {
 
   it('false con una fecha inválida', () => {
     expect(debeFacturarse({ proxima_factura: 'no-es-fecha' }, HOY)).toBe(false)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Avisos de la lista de Prospectos: cuánto hace que tocaba facturar y si el
+// cliente debe facturas (impagas), para ver de un vistazo ambas cosas.
+// ──────────────────────────────────────────────────────────────
+describe('textoAtrasoFacturar', () => {
+  const HOY = new Date(2026, 10, 12) // 2026-11-12
+
+  it('hoy cuando la próxima factura es hoy', () => {
+    expect(textoAtrasoFacturar({ proxima_factura: '2026-11-12' }, HOY)).toBe('hoy')
+  })
+
+  it('"hace 1 día" en singular', () => {
+    expect(textoAtrasoFacturar({ proxima_factura: '2026-11-11' }, HOY)).toBe('hace 1 día')
+  })
+
+  it('"hace N días" cuando ya pasó (tocaba el 10/11, hoy 12/11)', () => {
+    expect(textoAtrasoFacturar({ proxima_factura: '2026-11-10' }, HOY)).toBe('hace 2 días')
+  })
+
+  it('vacío si todavía no toca o no hay fecha', () => {
+    expect(textoAtrasoFacturar({ proxima_factura: '2026-11-20' }, HOY)).toBe('')
+    expect(textoAtrasoFacturar({}, HOY)).toBe('')
+  })
+})
+
+describe('resumenFacturasImpagas', () => {
+  it('null si no hay facturas o todas están cobradas', () => {
+    expect(resumenFacturasImpagas([])).toBeNull()
+    expect(resumenFacturasImpagas(undefined)).toBeNull()
+    expect(resumenFacturasImpagas([{ estado: 'Cobrada total', fecha_emision: '2026-10-21' }])).toBeNull()
+  })
+
+  it('cuenta las pendientes y parciales, y devuelve la emisión más vieja', () => {
+    const r = resumenFacturasImpagas([
+      { estado: 'Pendiente', fecha_emision: '2026-10-21' },
+      { estado: 'Cobrada parcial', fecha_emision: '2026-09-10' },
+      { estado: 'Cobrada total', fecha_emision: '2026-08-01' },
+    ])
+    expect(r).toEqual({ cantidad: 2, desde: '2026-09-10' })
+  })
+})
+
+describe('textoDeuda', () => {
+  it('una factura: "Debe factura del 21/10"', () => {
+    expect(textoDeuda({ cantidad: 1, desde: '2026-10-21' })).toBe('Debe factura del 21/10')
+  })
+
+  it('varias: "Debe 2 facturas · desde 10/09"', () => {
+    expect(textoDeuda({ cantidad: 2, desde: '2026-09-10' })).toBe('Debe 2 facturas · desde 10/09')
+  })
+
+  it('vacío si no debe nada', () => {
+    expect(textoDeuda(null)).toBe('')
   })
 })

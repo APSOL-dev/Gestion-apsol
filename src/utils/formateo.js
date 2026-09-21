@@ -137,3 +137,52 @@ export function debeFacturarse(prospecto, hoy = new Date()) {
   const dias = diasDesde(proximaFactura, hoy)
   return dias != null && dias >= 0 // fecha inválida o todavía futura -> false
 }
+
+/**
+ * Texto para el badge FACTURAR de la lista de Prospectos: hace cuánto tocaba
+ * facturar ("hoy", "hace 1 día", "hace 2 días"). Vacío si todavía no toca o
+ * no hay fecha.
+ * @param {{proxima_factura?: string}} [prospecto]
+ * @param {Date} [hoy]
+ * @returns {string}
+ */
+export function textoAtrasoFacturar(prospecto, hoy = new Date()) {
+  if (!debeFacturarse(prospecto, hoy)) return ''
+  const dias = diasDesde(prospecto.proxima_factura, hoy)
+  if (dias === 0) return 'hoy'
+  return `hace ${dias} ${dias === 1 ? 'día' : 'días'}`
+}
+
+/**
+ * Facturas impagas (Pendiente o Cobrada parcial) de un prospecto: cuántas son
+ * y la fecha de emisión de la más vieja. null si no debe nada.
+ * @param {Array<{estado?: string, fecha_emision?: string}>} [facturasDelProspecto]
+ * @returns {{cantidad: number, desde: string}|null}
+ */
+export function resumenFacturasImpagas(facturasDelProspecto) {
+  const impagas = (facturasDelProspecto || []).filter(f => f?.estado !== 'Cobrada total')
+  if (impagas.length === 0) return null
+  const fechas = impagas
+    .map(f => String(f.fecha_emision || '').split('T')[0])
+    .filter(Boolean)
+    .sort()
+  return { cantidad: impagas.length, desde: fechas[0] || '' }
+}
+
+function diaMes(fechaISO) {
+  const [, m, d] = String(fechaISO || '').split('-')
+  return m && d ? `${d}/${m}` : ''
+}
+
+/**
+ * Texto del aviso de deuda: "Debe factura del 21/10" o
+ * "Debe 2 facturas · desde 10/09". Vacío si no debe nada.
+ * @param {{cantidad: number, desde: string}|null} resumen
+ * @returns {string}
+ */
+export function textoDeuda(resumen) {
+  if (!resumen) return ''
+  const fecha = diaMes(resumen.desde)
+  if (resumen.cantidad === 1) return fecha ? `Debe factura del ${fecha}` : 'Debe factura'
+  return fecha ? `Debe ${resumen.cantidad} facturas · desde ${fecha}` : `Debe ${resumen.cantidad} facturas`
+}
