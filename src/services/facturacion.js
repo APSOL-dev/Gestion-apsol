@@ -158,6 +158,10 @@ function soloFechaCompleta(valor) {
  *
  *  - `indice_cobro` != 'UVA'             -> actualiza (motivo 'sin-indice-uva')
  *  - sin factura previa con monto        -> actualiza (motivo 'primera-factura')
+ *  - Frecuencia Act. de 1 mes (o sin cargar) -> actualiza SIEMPRE (motivo 'mensual'):
+ *    si se ajusta todos los meses, toda factura se re-precia y no depende de
+ *    que las fechas del ciclo estén bien (con `>` un período que terminaba
+ *    justo en la Próx. Act. Tarifa quedaba congelado un mes de más).
  *  - sin 'Próx. Act. Tarifa' cargada     -> actualiza (motivo 'sin-ciclo')
  *  - periodo_hasta  >  Próx. Act. Tarifa -> actualiza (motivo 'vencio-ciclo')
  *  - si no                               -> congela  (motivo 'dentro-del-ciclo')
@@ -180,6 +184,10 @@ export function decidirActualizacionTarifa({ prospecto, ultimaFactura, periodo_h
   }
   if (!ultimaFactura || montoCongelado <= 0) {
     return { ...base, actualiza: true, motivo: 'primera-factura' }
+  }
+  const frecuencia = Number(prospecto?.frecuencia_actualizacion)
+  if (!(frecuencia > 1)) {
+    return { ...base, actualiza: true, motivo: 'mensual' }
   }
   const finPeriodo = soloFechaCompleta(periodo_hasta)
   if (!proximaActualizacion || !finPeriodo) {

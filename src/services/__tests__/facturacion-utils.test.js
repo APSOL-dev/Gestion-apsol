@@ -1655,9 +1655,36 @@ describe('decidirActualizacionTarifa', () => {
     expect(r.motivo).toBe('vencio-ciclo')
   })
 
-  test('el límite exacto (fin del período == Próx. Act. Tarifa) todavía CONGELA', () => {
+  test('el límite exacto (fin del período == Próx. Act. Tarifa) todavía CONGELA cuando el ajuste es trimestral', () => {
     const r = decidirActualizacionTarifa({ prospecto: prospectoUVA, ultimaFactura: ultima, periodo_hasta: '2026-10-01' })
     expect(r.actualiza).toBe(false)
+  })
+
+  test('ajuste MENSUAL: siempre actualiza, aunque el fin del período coincida con la Próx. Act. Tarifa (caso Mantenimiento ISAA)', () => {
+    const isaa = { indice_cobro: 'UVA', proxima_actualizacion_tarifa: '2026-09-18', frecuencia_actualizacion: 1 }
+    const r = decidirActualizacionTarifa({ prospecto: isaa, ultimaFactura: { monto: 159000 }, periodo_hasta: '2026-09-18' })
+    expect(r.actualiza).toBe(true)
+    expect(r.motivo).toBe('mensual')
+  })
+
+  test('ajuste MENSUAL: actualiza aunque la Próx. Act. Tarifa esté corrida hacia adelante (fechas de ciclo desfasadas)', () => {
+    const desfasado = { indice_cobro: 'UVA', proxima_actualizacion_tarifa: '2026-12-18', frecuencia_actualizacion: 1 }
+    const r = decidirActualizacionTarifa({ prospecto: desfasado, ultimaFactura: { monto: 159000 }, periodo_hasta: '2026-09-18' })
+    expect(r.actualiza).toBe(true)
+  })
+
+  test('sin Frecuencia Act. cargada se trata como mensual (igual que el ciclo que se calcula al emitir)', () => {
+    const sinFrecuencia = { indice_cobro: 'UVA', proxima_actualizacion_tarifa: '2026-10-01' }
+    const r = decidirActualizacionTarifa({ prospecto: sinFrecuencia, ultimaFactura: ultima, periodo_hasta: '2026-08-31' })
+    expect(r.actualiza).toBe(true)
+    expect(r.motivo).toBe('mensual')
+  })
+
+  test('ajuste ANUAL: sigue congelando dentro del ciclo', () => {
+    const anual = { indice_cobro: 'UVA', proxima_actualizacion_tarifa: '2027-01-19', frecuencia_actualizacion: 12 }
+    const r = decidirActualizacionTarifa({ prospecto: anual, ultimaFactura: ultima, periodo_hasta: '2027-01-19' })
+    expect(r.actualiza).toBe(false)
+    expect(r.motivo).toBe('dentro-del-ciclo')
   })
 
   test('ACTUALIZA siempre si el prospecto no tiene índice de ajuste UVA', () => {

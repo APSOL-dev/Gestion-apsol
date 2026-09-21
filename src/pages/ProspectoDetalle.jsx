@@ -1174,6 +1174,10 @@ export default function ProspectoDetalle() {
                     Valor Base (UVA) × <strong>valor UVA fresco</strong> del día que indique <em>“Valor UVA de referencia”</em> (inicio o fin del período).
                   </li>
                   <li>
+                    Si la <strong>Frecuencia Act.</strong> es de <strong>1 mes</strong> (o está vacía), todas las facturas se
+                    re-precian con el valor UVA fresco, sin congelar.
+                  </li>
+                  <li>
                     Al emitir esa factura, <strong>Última Act. Tarifa</strong> pasa a ser el inicio de su período y{' '}
                     <strong>Próx. Act. Tarifa</strong> se recalcula (Última + <strong>Frecuencia Act.</strong>).
                   </li>

@@ -1467,6 +1467,12 @@ export default function FacturaDetalle() {
                       {cicloTrasActualizar ? ` (${fmtFechaCorta(cicloTrasActualizar.ultima_actualizacion_tarifa)})` : ''} y{' '}
                       <strong>Próx. Act. Tarifa</strong>{cicloTrasActualizar ? ` = ${fmtFechaCorta(cicloTrasActualizar.proxima_actualizacion_tarifa)}` : ' = + Frecuencia Act.'}
                     </>
+                  ) : decisionTarifa.motivo === 'mensual' ? (
+                    <>
+                      <strong>🔄 Actualiza tarifa.</strong> El prospecto se ajusta todos los meses: se toma el valor
+                      UVA de {uvaRefTexto} del período. Al guardar, la Próx. Act. Tarifa del prospecto
+                      pasa a {cicloTrasActualizar ? fmtFechaCorta(cicloTrasActualizar.proxima_actualizacion_tarifa) : '+ Frecuencia Act.'}
+                    </>
                   ) : decisionTarifa.motivo === 'sin-ciclo' ? (
                     <>
                       <strong>ℹ️ El prospecto no tiene “Próx. Act. Tarifa” cargada.</strong> Sin ciclo definido, la
