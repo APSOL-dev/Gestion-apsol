@@ -82,14 +82,14 @@ describe('Prospectos — alerta de "hay que facturarle" (en producción)', () =>
     expect(screen.getByText('Facturar')).toBeInTheDocument()
   })
 
-  it('NO muestra el badge si ya se facturó desde la próxima_factura', async () => {
+  it('muestra el badge aunque ya haya una factura emitida después de esa fecha (era la del ciclo anterior, facturada tarde)', async () => {
     const fechaVieja = ayer()
     await renderConProspectos(
-      [{ id: 'p1', nombre: 'Cliente Al Dia', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: fechaVieja }],
+      [{ id: 'p1', nombre: 'Cliente Atrasado', estado: '6A - En producción', empresas: null, contactos: null, proxima_tarea: null, fecha_proxima_tarea: null, proxima_factura: fechaVieja }],
       [{ prospecto_id: 'p1', fecha_emision: fechaVieja }],
     )
 
-    expect(screen.queryByText('Facturar')).not.toBeInTheDocument()
+    expect(screen.getByText('Facturar')).toBeInTheDocument()
   })
 
   it('NO muestra el badge en un prospecto que no está en producción, aunque tenga próxima_factura vencida', async () => {

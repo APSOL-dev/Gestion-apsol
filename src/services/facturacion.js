@@ -313,19 +313,18 @@ export function resolverDiasEspera(empresa, fallback = DIAS_ESPERA_FACTURACION_D
 }
 
 /**
- * Nueva "Próxima Factura" del prospecto tras EMITIR una factura: un mes
- * después de la fecha que tocaba, o un mes después de la emisión si se
- * facturó tarde (así una factura atrasada no deja la fecha clavada en el
- * pasado). Depende de la emisión, no del cobro: un cliente que paga a los
- * 30+ días no puede hacer que se pierda el aviso de facturar el mes
- * siguiente. Sin Próxima Factura cargada no inventa una fecha ('').
+ * Nueva "Próxima Factura" del prospecto tras EMITIR una factura: siempre un
+ * mes después de la fecha que tocaba, sin importar cuándo se facturó (el día
+ * de facturación es fijo: si tocaba el 10 y se facturó tarde el 21, la
+ * siguiente sigue siendo el 10). Depende de la emisión, no del cobro: un
+ * cliente que paga a los 30+ días no puede hacer que se pierda el aviso de
+ * facturar el mes siguiente. Sin Próxima Factura cargada no inventa una
+ * fecha ('').
  */
-export function calcularProximaFacturaTrasEmitir(proximaFactura, fechaEmision) {
+export function calcularProximaFacturaTrasEmitir(proximaFactura) {
   const prox = String(proximaFactura || '').split('T')[0]
   if (!esFechaCompleta(prox)) return ''
-  const emision = String(fechaEmision || '').split('T')[0]
-  const base = esFechaCompleta(emision) && emision > prox ? emision : prox
-  return sumarMeses(base, 1)
+  return sumarMeses(prox, 1)
 }
 
 /**
@@ -534,7 +533,7 @@ export async function saveFactura(factura) {
           .select('proxima_factura')
           .eq('id', data.prospecto_id)
           .maybeSingle()
-        const nuevaProxima = calcularProximaFacturaTrasEmitir(prospecto?.proxima_factura, fechaEmision)
+        const nuevaProxima = calcularProximaFacturaTrasEmitir(prospecto?.proxima_factura)
         if (nuevaProxima) {
           await supabase
             .from('apsol_prospectos')

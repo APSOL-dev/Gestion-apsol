@@ -845,13 +845,13 @@ describe('calcularProximaFacturaTrasEmitir', () => {
     expect(calcular('2026-08-21', '2026-08-21')).toBe('2026-09-21')
   })
 
-  test('factura emitida tarde: cuenta un mes desde el día que se emitió (no desde la fecha vieja)', () => {
-    // tocaba el 21/08 pero se facturó el 21/09 -> la siguiente es el 21/10, no el 21/09
-    expect(calcular('2026-08-21', '2026-09-21')).toBe('2026-10-21')
+  test('factura emitida tarde: la próxima sigue siendo el día que corresponde (el ciclo no se corre)', () => {
+    // tocaba el 10/09 y se facturó el 21/09 -> la siguiente es el 10/10, no el 21/10
+    expect(calcular('2026-09-10', '2026-09-21')).toBe('2026-10-10')
   })
 
-  test('factura emitida antes de tiempo: cubre el ciclo que tocaba, la próxima es un mes después de ese', () => {
-    expect(calcular('2026-10-21', '2026-09-21')).toBe('2026-11-21')
+  test('factura emitida antes de tiempo: la próxima también es un mes después de la fecha que tocaba', () => {
+    expect(calcular('2026-09-10', '2026-09-05')).toBe('2026-10-10')
   })
 
   test('sin fecha de emisión avanza un mes desde la fecha que tocaba', () => {
@@ -1313,18 +1313,18 @@ describe('saveFactura', () => {
     mockearAltaFactura(supabase, { empresa: { dias_espera_facturacion: 4 }, fechaEmision: '2026-09-21' })
     // 4. UPDATE de las fechas de notificación de la factura
     supabase.from.mockReturnValueOnce({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValueOnce({ error: null }) })
-    // 5. SELECT de la próxima_factura del prospecto (venía atrasada: tocaba el 21/08)
+    // 5. SELECT de la próxima_factura del prospecto (tocaba el 10/09, se facturó tarde el 21/09)
     supabase.from.mockReturnValueOnce({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValueOnce({ data: { proxima_factura: '2026-08-21' }, error: null })
+      maybeSingle: vi.fn().mockResolvedValueOnce({ data: { proxima_factura: '2026-09-10' }, error: null })
     })
     // 6. UPDATE de la próxima_factura del prospecto
     supabase.from.mockReturnValueOnce({ update: updateProspecto, eq: updateProspectoEq })
 
     await saveFactura({ numero_factura: '303', contacto_id: 'contacto-1' })
 
-    expect(updateProspecto).toHaveBeenCalledWith({ proxima_factura: '2026-10-21' })
+    expect(updateProspecto).toHaveBeenCalledWith({ proxima_factura: '2026-10-10' })
     expect(updateProspectoEq).toHaveBeenCalledWith('id', 'prospecto-1')
   })
 

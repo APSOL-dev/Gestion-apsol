@@ -7,7 +7,7 @@ import { useNavegacionLista } from '../hooks/useNavegacionLista'
 import ProspectoDrawer from '../components/ProspectoDrawer'
 
 export default function Prospectos() {
-  const { prospectos, loadingProspectos, refreshProspectos, facturas } = useData()
+  const { prospectos, loadingProspectos, refreshProspectos } = useData()
   const [search, setSearch] = useState('')
   const [filtroActivos, setFiltroActivos] = useState(true) // true = activos, false = historicos
   const [expandidos, setExpandidos] = useState({}) // { [estado]: boolean }
@@ -38,15 +38,6 @@ export default function Prospectos() {
     (prospecto.empresas?.nombre && prospecto.empresas.nombre.toLowerCase().includes(search.toLowerCase())) ||
     (prospecto.estado && prospecto.estado.toLowerCase().includes(search.toLowerCase()))
   )
-
-  // Facturas agrupadas por prospecto, para saber si a un prospecto "en
-  // producción" ya se le facturó desde su "Próxima Factura" o no.
-  const facturasPorProspecto = (facturas || []).reduce((acc, f) => {
-    if (!f.prospecto_id) return acc
-    if (!acc[f.prospecto_id]) acc[f.prospecto_id] = []
-    acc[f.prospecto_id].push(f)
-    return acc
-  }, {})
 
   // Agrupar prospectos por estado real
   const prospectosPorEstado = prospectosFiltrados.reduce((acc, p) => {
@@ -215,7 +206,7 @@ export default function Prospectos() {
                           // Alerta de facturación: solo aplica a "en producción" —
                           // próxima factura hoy o vencida y todavía no facturada.
                           const enProduccion = (prospecto.estado || '').toLowerCase().includes('6a')
-                          const hayQueFacturar = enProduccion && debeFacturarse(prospecto, facturasPorProspecto[prospecto.id])
+                          const hayQueFacturar = enProduccion && debeFacturarse(prospecto)
                           return (
                           <tr
                             key={prospecto.id}

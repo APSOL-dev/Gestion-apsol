@@ -121,26 +121,19 @@ export function tareaVencida(fechaProximaTarea) {
 
 /**
  * ¿Hay que facturarle a este prospecto? True cuando su "Próxima Factura"
- * (prospecto.proxima_factura) es HOY, o ya pasó, y todavía no se emitió
- * ninguna factura desde esa fecha (fecha_emision >= proxima_factura). Se usa
- * para marcar en rojo a los prospectos "en producción" a los que hay que
- * facturarles.
+ * (prospecto.proxima_factura) es HOY o ya pasó. Emitir una factura avanza esa
+ * fecha un mes, así que si sigue vencida es que falta facturar un ciclo. No
+ * mira las facturas ya emitidas: una hecha después de la fecha vencida puede
+ * ser la del ciclo anterior (facturada tarde). Se usa para marcar en rojo a
+ * los prospectos "en producción" a los que hay que facturarles.
  * @param {{proxima_factura?: string}} [prospecto]
- * @param {Array<{fecha_emision?: string}>} [facturasDelProspecto] - solo las
- *   facturas DE ESE prospecto (el caller filtra por prospecto_id)
  * @param {Date} [hoy]
  * @returns {boolean}
  */
-export function debeFacturarse(prospecto, facturasDelProspecto = [], hoy = new Date()) {
+export function debeFacturarse(prospecto, hoy = new Date()) {
   const proximaFactura = prospecto?.proxima_factura
   if (!proximaFactura) return false
 
   const dias = diasDesde(proximaFactura, hoy)
-  if (dias == null || dias < 0) return false // fecha inválida o todavía futura
-
-  const yaFacturado = (facturasDelProspecto || []).some(f => {
-    const fechaEmision = String(f?.fecha_emision || '').split('T')[0]
-    return fechaEmision && fechaEmision >= proximaFactura
-  })
-  return !yaFacturado
+  return dias != null && dias >= 0 // fecha inválida o todavía futura -> false
 }

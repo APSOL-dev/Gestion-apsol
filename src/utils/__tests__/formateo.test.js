@@ -93,41 +93,32 @@ describe('tareaVencida', () => {
 
 // ──────────────────────────────────────────────────────────────
 // debeFacturarse: prospectos "en producción" a los que hay que facturarles —
-// la próxima_factura es HOY, o ya pasó y todavía no se emitió ninguna
-// factura desde esa fecha.
+// la próxima_factura es HOY o ya pasó. Emitir una factura ya avanza esa
+// fecha (un mes), así que si sigue vencida es que falta facturar un ciclo.
+// No mira las facturas emitidas: una factura hecha después de la fecha
+// vencida puede ser la del ciclo anterior (facturada tarde).
 // ──────────────────────────────────────────────────────────────
 describe('debeFacturarse', () => {
   const HOY = new Date(2026, 7, 31) // 2026-08-31 (medianoche local)
 
   it('true cuando la próxima factura es exactamente hoy', () => {
-    expect(debeFacturarse({ proxima_factura: '2026-08-31' }, [], HOY)).toBe(true)
+    expect(debeFacturarse({ proxima_factura: '2026-08-31' }, HOY)).toBe(true)
   })
 
-  it('true cuando la próxima factura ya pasó y no hay ninguna factura posterior', () => {
-    expect(debeFacturarse({ proxima_factura: '2026-08-01' }, [], HOY)).toBe(true)
-  })
-
-  it('false cuando la próxima factura ya pasó pero ya se emitió una factura desde esa fecha', () => {
-    const facturas = [{ fecha_emision: '2026-08-05' }]
-    expect(debeFacturarse({ proxima_factura: '2026-08-01' }, facturas, HOY)).toBe(false)
+  it('true cuando la próxima factura ya pasó', () => {
+    expect(debeFacturarse({ proxima_factura: '2026-08-01' }, HOY)).toBe(true)
   })
 
   it('false cuando la próxima factura todavía es futura', () => {
-    expect(debeFacturarse({ proxima_factura: '2026-09-15' }, [], HOY)).toBe(false)
+    expect(debeFacturarse({ proxima_factura: '2026-09-15' }, HOY)).toBe(false)
   })
 
   it('false cuando el prospecto no tiene próxima_factura cargada', () => {
-    expect(debeFacturarse({ proxima_factura: null }, [], HOY)).toBe(false)
-    expect(debeFacturarse({}, [], HOY)).toBe(false)
+    expect(debeFacturarse({ proxima_factura: null }, HOY)).toBe(false)
+    expect(debeFacturarse({}, HOY)).toBe(false)
   })
 
-  it('una factura emitida el mismo día de la próxima_factura cuenta como ya facturado', () => {
-    const facturas = [{ fecha_emision: '2026-08-01' }]
-    expect(debeFacturarse({ proxima_factura: '2026-08-01' }, facturas, HOY)).toBe(false)
-  })
-
-  it('ignora facturas de otros prospectos si vienen mezcladas (el caller debe filtrar, pero no debe romper con fechas anteriores)', () => {
-    const facturas = [{ fecha_emision: '2020-01-01' }]
-    expect(debeFacturarse({ proxima_factura: '2026-08-01' }, facturas, HOY)).toBe(true)
+  it('false con una fecha inválida', () => {
+    expect(debeFacturarse({ proxima_factura: 'no-es-fecha' }, HOY)).toBe(false)
   })
 })

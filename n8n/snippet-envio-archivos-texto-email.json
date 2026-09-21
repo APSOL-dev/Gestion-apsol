@@ -256,7 +256,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE apsol_private.facturacion\nSET proxima_notificacion_whatsapp = public.apsol_sumar_dias_habiles(CURRENT_DATE, {{ $('Armar mensaje recordatorio').item.json.dias_espera_facturacion }} + 2),\n    ultima_notificacion           = CURRENT_DATE,\n    recordatorios_enviados        = recordatorios_enviados + 1\nWHERE id = {{ $('Armar mensaje recordatorio').item.json.id }};",
+        "query": "=UPDATE apsol_private.facturacion\nSET proxima_notificacion_whatsapp = public.apsol_sumar_dias_habiles(CURRENT_DATE, {{ $('Armar mensaje recordatorio').item.json.dias_espera_facturacion }} + 2),\n    ultima_notificacion           = CURRENT_DATE,\n    recordatorios_enviados        = recordatorios_enviados + 1\nWHERE id = '{{ $('Armar mensaje recordatorio').item.json.id }}'::uuid;",
         "options": {}
       },
       "id": "c2d3e4f5-0002-4a1a-8002-actualizarwap1",
@@ -339,7 +339,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE apsol_private.facturacion\nSET proxima_notificacion    = public.apsol_sumar_dias_habiles(CURRENT_DATE, {{ $('Armar mensaje recordatorio').item.json.dias_espera_facturacion }}),\n    ultima_notificacion    = CURRENT_DATE,\n    recordatorios_enviados = recordatorios_enviados + 1\nWHERE id = {{ $('Armar mensaje recordatorio').item.json.id }};",
+        "query": "=UPDATE apsol_private.facturacion\nSET proxima_notificacion    = public.apsol_sumar_dias_habiles(CURRENT_DATE, {{ $('Armar mensaje recordatorio').item.json.dias_espera_facturacion }}),\n    ultima_notificacion    = CURRENT_DATE,\n    recordatorios_enviados = recordatorios_enviados + 1\nWHERE id = '{{ $('Armar mensaje recordatorio').item.json.id }}'::uuid;",
         "options": {}
       },
       "id": "8b1e6c2a-9d4f-4a11-8c3a-actualizarprox1",
