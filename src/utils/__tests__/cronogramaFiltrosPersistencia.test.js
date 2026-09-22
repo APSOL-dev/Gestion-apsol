@@ -68,6 +68,18 @@ describe('cronogramaFiltrosPersistencia', () => {
     })
   })
 
+  test('personalTocado y prospectosTocado (si el usuario ya tocó el filtro a mano, aunque haya quedado vacío) se guardan y validan como booleanos', () => {
+    guardarFiltros('user-1', { personalTocado: true, prospectosTocado: false })
+    expect(leerFiltrosGuardados('user-1')).toEqual({ personalTocado: true, prospectosTocado: false })
+  })
+
+  test('descarta personalTocado/prospectosTocado con forma inválida y conserva el resto', () => {
+    localStorage.setItem(CLAVE, JSON.stringify({
+      'user-1': { personalTocado: 'si', prospectosTocado: 1, verHistorico: true },
+    }))
+    expect(leerFiltrosGuardados('user-1')).toEqual({ verHistorico: true })
+  })
+
   test('JSON corrupto en localStorage no rompe, devuelve {}', () => {
     localStorage.setItem(CLAVE, '{no es json')
     expect(leerFiltrosGuardados('user-1')).toEqual({})

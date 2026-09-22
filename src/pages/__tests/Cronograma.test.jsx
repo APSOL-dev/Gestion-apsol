@@ -275,7 +275,7 @@ describe('Cronograma', () => {
     expect(screen.getByRole('button', { name: /Personal/ })).not.toHaveTextContent('Personal (')
   })
 
-  test('si el usuario destilda manualmente su preselección de "Personal", no se le vuelve a imponer', async () => {
+  test('si el usuario destilda manualmente su preselección de "Personal" (queda vacío), filtra a NADIE — no vuelve a "ver a todos"', async () => {
     mockUseData({
       colaboradores: [
         { id: 'col-1', usuario_id: 'user-1', nombre: 'Ana', apellido: 'López' },
@@ -288,15 +288,76 @@ describe('Cronograma', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Personal/ })).toHaveTextContent('Personal (1)')
     })
+    // Con Ana preseleccionada, el evento de Carlos ya está filtrado.
+    expect(screen.getByTestId('event-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
 
-    // Abre el desplegable y destilda a Ana (la única preseleccionada)
+    // Abre el desplegable y destilda a Ana (la única preseleccionada): queda vacío
     fireEvent.click(screen.getByRole('button', { name: /Personal/ }))
     fireEvent.click(screen.getByText('Ana López'))
 
+    // Vacío a mano = filtra a nadie, ni siquiera vuelve a mostrar el evento
+    // de Ana (antes cambiaba a "ver a todos" y reaparecían los dos).
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Personal/ })).toHaveTextContent('Personal')
-      expect(screen.getByRole('button', { name: /Personal/ })).not.toHaveTextContent('Personal (')
+      expect(screen.queryByTestId('event-1')).not.toBeInTheDocument()
     })
+    expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    expect(caja).toHaveTextContent('Nadie')
+  })
+
+  test('deseleccionar a mano el único prospecto elegido deja el filtro en cero (no "todos")', async () => {
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    const dd = screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown')
+    fireEvent.click(within(dd).getByText('Escobar'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos (1)')
+    })
+
+    // Lo vuelvo a tocar: queda destildado, selección vacía
+    fireEvent.click(within(dd).getByText('Escobar'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('event-1')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
+    })
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    expect(caja).toHaveTextContent('Ningún prospecto')
+    expect(caja).toHaveTextContent('0.00h')
+  })
+
+  test('"Deseleccionar todos" en Prospectos, tras tildar todos, deja el indicador en cero', async () => {
+    mockServiciosCronograma({ actividades: ACTIVIDADES_MOCK })
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    const dd = screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown')
+    fireEvent.click(within(dd).getByText('Seleccionar todos'))
+    await waitFor(() => {
+      expect(within(dd).getByText('Deseleccionar todos')).toBeInTheDocument()
+    })
+
+    fireEvent.click(within(dd).getByText('Deseleccionar todos'))
+
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    await waitFor(() => {
+      expect(caja).toHaveTextContent('Ningún prospecto')
+      expect(caja).toHaveTextContent('0.00h')
+    })
+    expect(screen.queryByTestId('event-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('event-2')).not.toBeInTheDocument()
+  })
+
+  test('sin tocar nunca los filtros, arranca mostrando todo (el vaciado a cero es solo tras una acción manual)', async () => {
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    const caja = screen.getByText('Horas dedicadas — según filtros').closest('.sidebar-section')
+    expect(caja).toHaveTextContent('Todo el personal · Todos los prospectos')
   })
 
   // ─── Indicadores de dedicación (recuadro bajo el saldo) ─────────────────────
@@ -642,6 +703,51 @@ describe('Cronograma', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos')
       expect(screen.getByRole('button', { name: /Prospectos/ })).not.toHaveTextContent('Prospectos (')
+    })
+  })
+
+  test('al montar la pantalla con un prospecto fantasma guardado en el filtro (ya no visible), se poda solo, sin tocar "Ver histórico"', async () => {
+    mockUseAuth({ id: 'user-1' })
+    // pros-4 (Cliente Cerrado) es 5H - Finalizados: con "Ver histórico" apagado
+    // no es una opción visible. Simula quedarse con el filtro puesto desde
+    // antes de que el prospecto se diera de baja.
+    localStorage.setItem('apsol_cronograma_filtros', JSON.stringify({
+      'user-1': { selectedColab: [], selectedProspectos: ['pros-4'], verHistorico: false, verAgendaExterna: true }
+    }))
+
+    render(<Cronograma />)
+    await esperarCargaInicial()
+
+    await waitFor(() => {
+      const btn = screen.getByRole('button', { name: /Prospectos/ })
+      expect(btn).toHaveTextContent('Prospectos')
+      expect(btn).not.toHaveTextContent('Prospectos (')
+    })
+  })
+
+  test('si el prospecto seleccionado deja de estar en producción mientras la pantalla sigue abierta, se poda del filtro (no queda invisible sumando horas)', async () => {
+    const { rerender } = render(<Cronograma />)
+    await esperarCargaInicial()
+
+    fireEvent.click(screen.getByRole('button', { name: /Prospectos/ }))
+    fireEvent.click(within(screen.getByLabelText('Buscar en Prospectos').closest('.picker-dropdown'))
+      .getByText('Escobar'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Prospectos/ })).toHaveTextContent('Prospectos (1)')
+    })
+
+    // Escobar (pros-1) pasa a Finalizado en otra pantalla/sesión; el
+    // Cronograma refresca su lista de prospectos (useData) sin que nadie
+    // toque el tilde "Ver histórico".
+    mockUseData({
+      prospectos: PROSPECTOS_MOCK.map(p => p.id === 'pros-1' ? { ...p, estado: '5H - Finalizados' } : p)
+    })
+    rerender(<Cronograma />)
+
+    await waitFor(() => {
+      const btn = screen.getByRole('button', { name: /Prospectos/ })
+      expect(btn).toHaveTextContent('Prospectos')
+      expect(btn).not.toHaveTextContent('Prospectos (')
     })
   })
 

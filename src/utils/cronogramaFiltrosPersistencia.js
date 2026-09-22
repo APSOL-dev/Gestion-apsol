@@ -35,8 +35,13 @@ function esArrayDeStrings(v) {
  * Filtros guardados para ese usuario, ya validados. Solo incluye las claves
  * cuyo valor guardado tiene la forma esperada; el resto se omite para que el
  * caller use su default.
+ * `personalTocado` / `prospectosTocado` distinguen "el usuario ya interactuó
+ * con ese filtro a mano" de "nunca lo tocó": una selección vacía significa
+ * cosas distintas en cada caso (ver el useEffect de podado y el cálculo de
+ * `*FiltraCero` en Cronograma.jsx) — vacío-nunca-tocado sigue mostrando
+ * todo, vacío-tocado filtra a nada.
  * @param {string|null|undefined} userId
- * @returns {{fechaDesde?: string, fechaHasta?: string, selectedColab?: string[], selectedProspectos?: string[], verHistorico?: boolean, verAgendaExterna?: boolean}}
+ * @returns {{fechaDesde?: string, fechaHasta?: string, selectedColab?: string[], selectedProspectos?: string[], verHistorico?: boolean, verAgendaExterna?: boolean, personalTocado?: boolean, prospectosTocado?: boolean}}
  */
 export function leerFiltrosGuardados(userId) {
   const guardado = leerTodo()[claveUsuario(userId)]
@@ -49,6 +54,8 @@ export function leerFiltrosGuardados(userId) {
   if (esArrayDeStrings(guardado.selectedProspectos)) out.selectedProspectos = guardado.selectedProspectos
   if (typeof guardado.verHistorico === 'boolean') out.verHistorico = guardado.verHistorico
   if (typeof guardado.verAgendaExterna === 'boolean') out.verAgendaExterna = guardado.verAgendaExterna
+  if (typeof guardado.personalTocado === 'boolean') out.personalTocado = guardado.personalTocado
+  if (typeof guardado.prospectosTocado === 'boolean') out.prospectosTocado = guardado.prospectosTocado
   return out
 }
 

@@ -219,6 +219,20 @@ export default function Cronograma() {
   const [selectedColab, setSelectedColab] = useState(() => filtrosGuardados.selectedColab ?? [])
   const [selectedProspectos, setSelectedProspectos] = useState(() => filtrosGuardados.selectedProspectos ?? [])
 
+  // Si el usuario ya interactuó a mano con cada filtro (tildar/destildar,
+  // "(De)seleccionar todos"), aunque haya quedado vacío. Una selección vacía
+  // significa cosas distintas según esto: nunca tocado -> sin filtro, se ve
+  // todo (el comportamiento de siempre); tocado -> filtra a NADIE, no vuelve
+  // a "ver a todos" solo. Sin esto, destildar todo no tenía forma de
+  // distinguirse de "todavía no elegiste nada" y el total seguía sumando
+  // todo en vez de cero. El preseleccionado automático de "Personal" (más
+  // abajo) NO cuenta como tocado: es un default programático, no una
+  // acción del usuario.
+  const [personalTocado, setPersonalTocado] = useState(() => filtrosGuardados.personalTocado ?? false)
+  const [prospectosTocado, setProspectosTocado] = useState(() => filtrosGuardados.prospectosTocado ?? false)
+  const personalFiltraCero = personalTocado && selectedColab.length === 0
+  const prospectosFiltraCero = prospectosTocado && selectedProspectos.length === 0
+
   // Por defecto, el filtro "Personal" arranca con el usuario logueado ya
   // tildado (lo más común es que cada uno quiera ver su propia agenda al
   // entrar) - una sola vez, apenas están disponibles los colaboradores y
@@ -233,13 +247,13 @@ export default function Cronograma() {
   // reescribiendo lo mismo que se restauró: inocuo). El rango de fechas solo
   // se guarda si el usuario lo tocó (ver `rangoTocado`).
   useEffect(() => {
-    const payload = { selectedColab, selectedProspectos, verHistorico, verAgendaExterna }
+    const payload = { selectedColab, selectedProspectos, verHistorico, verAgendaExterna, personalTocado, prospectosTocado }
     if (rangoTocado) {
       payload.fechaDesde = fechaDesde
       payload.fechaHasta = fechaHasta
     }
     guardarFiltros(user?.id, payload)
-  }, [user?.id, rangoTocado, fechaDesde, fechaHasta, selectedColab, selectedProspectos, verHistorico, verAgendaExterna])
+  }, [user?.id, rangoTocado, fechaDesde, fechaHasta, selectedColab, selectedProspectos, verHistorico, verAgendaExterna, personalTocado, prospectosTocado])
   useEffect(() => {
     if (colabDefaultAplicado) return
     if (!user || colaboradores.length === 0) return
@@ -459,19 +473,29 @@ export default function Cronograma() {
     ...opcionesCategoriasFiltro
   ]
 
-  // Al APAGAR "Ver histórico", saco de los filtros lo que dejó de estar
-  // visible: si no, queda un chip "(1)" fantasma cuya opción ya no aparece
-  // en la lista y no se puede destildar. Las categorías nunca se podan.
   function toggleVerHistorico() {
-    const siguiente = !verHistorico
-    setVerHistorico(siguiente)
-    if (!siguiente) {
-      setSelectedColab(sel => filtrosCronograma.podarSeleccion(
-        sel, filtrosCronograma.personalVisible(colaboradores, false)))
-      setSelectedProspectos(sel => filtrosCronograma.podarSeleccion(
-        sel, [...filtrosCronograma.prospectosFiltrables(prospectos, false), ...opcionesCategoriasFiltro]))
-    }
+    setVerHistorico(v => !v)
   }
+
+  // Poda de los filtros: saca cualquier id que dejó de ser una opción visible
+  // (colaborador/prospecto dado de baja, o el tilde "Ver histórico" que se
+  // apaga). Antes esto solo corría dentro de toggleVerHistorico, así que un id
+  // fantasma quedaba pegado para siempre si: (a) la pantalla se montaba con un
+  // filtro guardado de antes de la baja (localStorage), o (b) el prospecto/
+  // colaborador cambiaba de estado en otro lado mientras esta pantalla seguía
+  // abierta. El fantasma no aparece tildado en la lista (no se puede destildar
+  // a mano) pero sigue sumando horas al total. podarSeleccion devuelve el
+  // MISMO array si no hubo que sacar nada, así que estos efectos no generan
+  // un re-render de más.
+  useEffect(() => {
+    setSelectedColab(sel => filtrosCronograma.podarSeleccion(sel, personalVisible))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colaboradores, verHistorico])
+
+  useEffect(() => {
+    setSelectedProspectos(sel => filtrosCronograma.podarSeleccion(sel, prospectosFiltrables))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prospectos, verHistorico, opcionesCategoriasFiltro])
 
   // Opciones del selector "Prospecto / Cliente": prospectos EN PRODUCCIÓN +
   // categorías internas fijas, deduplicadas (por si un prospecto se llama
@@ -550,17 +574,20 @@ export default function Cronograma() {
   // que el usuario tenga filtrado arriba, acotado al rango de fechas visible
   // (las mismas actividades que alimentan el calendario). Sin filtro de
   // personal cuenta a todos; sin filtro de prospecto, todos.
-  const indicadores = useMemo(
-    () => calcularIndicadoresDedicacion(actividadesRangoResueltas, {
+  const indicadores = useMemo(() => {
+    // Filtro vaciado a mano (Personal o Prospectos): no hay nada que sumar.
+    if (personalFiltraCero || prospectosFiltraCero) {
+      return { horas: 0, horasPonderadas: 0, actividades: 0 }
+    }
+    return calcularIndicadoresDedicacion(actividadesRangoResueltas, {
       colaboradoresIds: selectedColab,
       prospectosIds: selectedProspectos,
       // Se le suman las categorías como pseudo-prospectos ("categoria:Consultora")
       // para que calcularIndicadoresDedicacion resuelva sus actividades (que van
       // sin prospecto_id) contra la selección del filtro.
       prospectos: [...prospectos, ...opcionesCategoriasFiltro]
-    }),
-    [actividadesRangoResueltas, selectedColab, selectedProspectos, prospectos, opcionesCategoriasFiltro]
-  )
+    })
+  }, [actividadesRangoResueltas, selectedColab, selectedProspectos, prospectos, opcionesCategoriasFiltro, personalFiltraCero, prospectosFiltraCero])
 
   // Texto que aclara qué está sumando el recuadro de indicadores según los
   // filtros activos ("Mateo · Prospecto uno", "3 personas · Todos los
@@ -573,14 +600,18 @@ export default function Cronograma() {
     const nombreProsp = id => id.startsWith(filtrosCronograma.CAT_PREFIX)
       ? id.slice(filtrosCronograma.CAT_PREFIX.length)
       : (prospectos.find(x => x.id === id)?.nombre || '—')
-    const personal = selectedColab.length === 0
-      ? 'Todo el personal'
-      : selectedColab.length === 1 ? nombreColab(selectedColab[0]) : `${selectedColab.length} personas`
-    const prosp = selectedProspectos.length === 0
-      ? 'Todos los prospectos'
-      : selectedProspectos.length === 1 ? nombreProsp(selectedProspectos[0]) : `${selectedProspectos.length} prospectos`
+    const personal = personalFiltraCero
+      ? 'Nadie'
+      : selectedColab.length === 0
+        ? 'Todo el personal'
+        : selectedColab.length === 1 ? nombreColab(selectedColab[0]) : `${selectedColab.length} personas`
+    const prosp = prospectosFiltraCero
+      ? 'Ningún prospecto'
+      : selectedProspectos.length === 0
+        ? 'Todos los prospectos'
+        : selectedProspectos.length === 1 ? nombreProsp(selectedProspectos[0]) : `${selectedProspectos.length} prospectos`
     return `${personal} · ${prosp}`
-  }, [selectedColab, selectedProspectos, colaboradores, prospectos])
+  }, [selectedColab, selectedProspectos, colaboradores, prospectos, personalFiltraCero, prospectosFiltraCero])
 
   // Color por prospecto: estable y distinto para cada nombre, así se nota
   // el corte entre un bloque y el siguiente en el calendario (ver
@@ -592,11 +623,13 @@ export default function Cronograma() {
   // (actividadesRango), no hace falta re-filtrarlo acá.
   const eventsApp = actividadesRangoResueltas
     .filter(act => {
+      if (personalFiltraCero) return false
       if (selectedColab.length > 0) {
         if (!act.responsable_id) return false
         if (!selectedColab.includes(act.responsable_id)) return false
       }
 
+      if (prospectosFiltraCero) return false
       if (!filtrosCronograma.actividadEnFiltroProspectos(act, selectedProspectos)) return false
 
       return true
@@ -624,7 +657,7 @@ export default function Cronograma() {
   const eventosDeCalendar = (mostrarAgendaExterna
     ? fusionarEventosCalendar(eventosCalendar, actividadesRangoResueltas)
     : [])
-    .filter(() => selectedProspectos.length === 0)
+    .filter(() => selectedProspectos.length === 0 && !prospectosFiltraCero)
     .map(ev => ({
       id: ev.id,
       title: `📅 ${ev.prospecto_nombre}`,
@@ -1016,7 +1049,7 @@ export default function Cronograma() {
               label="Personal"
               options={personalVisible}
               selectedIds={selectedColab}
-              onChange={setSelectedColab}
+              onChange={updater => { setPersonalTocado(true); setSelectedColab(updater) }}
               getLabel={c => `${c.nombre} ${c.apellido || ''}`.trim()}
               emptyMessage="No hay colaboradores para asignar"
             />
@@ -1027,7 +1060,7 @@ export default function Cronograma() {
               label="Prospectos"
               options={prospectosFiltrables}
               selectedIds={selectedProspectos}
-              onChange={setSelectedProspectos}
+              onChange={updater => { setProspectosTocado(true); setSelectedProspectos(updater) }}
               emptyMessage="No hay prospectos en producción o finalizados"
             />
 
