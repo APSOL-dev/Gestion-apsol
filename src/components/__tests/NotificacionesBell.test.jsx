@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { vi, describe, test, expect, beforeEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import NotificacionesBell from '../NotificacionesBell'
@@ -197,5 +197,52 @@ describe('NotificacionesBell', () => {
 
     await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument())
     expect(screen.queryByRole('heading', { name: 'Notificaciones nuevas' })).not.toBeInTheDocument()
+  })
+
+  // ──────────────────────────────────────────────────────────────
+  // Pedido: la campanita debe tener una burbuja roja con la CANTIDAD de
+  // notificaciones sin leer, siempre visible y al día.
+  // ──────────────────────────────────────────────────────────────
+  const sinLeer = (n) => ({ id: 'x' + n, tipo: 'ticket_asignado', titulo: 'Ticket ' + n, entidad_tipo: 'ticket', entidad_id: 't' + n, leido_en: null, creado_en: '2026-09-01T00:00:00.000Z' })
+
+  test('la burbuja es roja y muestra la cantidad exacta de sin leer', async () => {
+    getNotificaciones.mockResolvedValue([sinLeer(1), sinLeer(2), sinLeer(3), notifs[1]])
+    renderBell()
+    const burbuja = await screen.findByTestId('burbuja-notificaciones')
+    expect(burbuja).toHaveTextContent('3')
+    expect(burbuja).toHaveStyle({ background: 'var(--color-danger)' })
+  })
+
+  test('pasado 99 muestra 99+', async () => {
+    getNotificaciones.mockResolvedValue(Array.from({ length: 120 }, (_, i) => sinLeer(i)))
+    renderBell()
+    expect(await screen.findByTestId('burbuja-notificaciones')).toHaveTextContent('99+')
+  })
+
+  test('sin sin-leer no hay burbuja', async () => {
+    getNotificaciones.mockResolvedValue([notifs[1]])
+    renderBell()
+    await waitFor(() => expect(getNotificaciones).toHaveBeenCalled())
+    expect(screen.queryByTestId('burbuja-notificaciones')).not.toBeInTheDocument()
+  })
+
+  test('la burbuja se ve también con el menú colapsado', async () => {
+    render(<MemoryRouter><NotificacionesBell collapsed /></MemoryRouter>)
+    expect(await screen.findByTestId('burbuja-notificaciones')).toHaveTextContent('1')
+  })
+
+  test('respaldo si Realtime falla: cada tanto vuelve a consultar y la burbuja se actualiza sola', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      renderBell()
+      expect(await screen.findByTestId('burbuja-notificaciones')).toHaveTextContent('1')
+
+      getNotificaciones.mockResolvedValue([sinLeer(7), ...notifs])
+      await act(async () => { vi.advanceTimersByTime(61000) })
+
+      await waitFor(() => expect(screen.getByTestId('burbuja-notificaciones')).toHaveTextContent('2'))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

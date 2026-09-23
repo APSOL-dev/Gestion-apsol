@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Activity, Clock, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { formatearFechaTicket, colorPrioridadTicket } from '../utils/tickets'
 
 export default function Tickets() {
   const { tickets, loadingTickets, refreshTickets } = useData()
@@ -78,7 +79,7 @@ export default function Tickets() {
           <p>{search ? 'Intenta con otra búsqueda.' : 'No se encontraron registros.'}</p>
         </div>
       ) : (
-        <div className="table-container">
+        <div className="table-container" style={{ overflowX: 'auto' }}>
           <table>
             <thead>
               <tr>
@@ -111,7 +112,7 @@ export default function Tickets() {
                   <td>
                     <span style={{ 
                       fontSize: '12px', fontWeight: '600',
-                      color: t.prioridad === 'Alta' ? 'var(--color-danger)' : t.prioridad === 'Media' ? 'var(--color-orange)' : 'var(--color-text-muted)' 
+                      color: colorPrioridadTicket(t.prioridad)
                     }}>
                       {t.prioridad}
                     </span>
@@ -128,7 +129,7 @@ export default function Tickets() {
                     {t.colaboradores ? `${t.colaboradores.nombre} ${t.colaboradores.apellido}` : '-'}
                   </td>
                   <td style={{ fontSize: '13px' }}>
-                    {new Date(t.fecha_creacion).toLocaleDateString('es-AR')}
+                    {formatearFechaTicket(t.fecha_creacion)}
                   </td>
                 </tr>
               ))}

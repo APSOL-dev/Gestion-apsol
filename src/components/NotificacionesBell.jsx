@@ -9,6 +9,8 @@ import {
 } from '../services/notificaciones'
 import { linkDeNotificacion, URGENCIA_POR_TIPO, ETIQUETA_POR_TIPO, filtrarPorPreferencias } from '../services/notificaciones-utils'
 
+const INTERVALO_REFRESCO_MS = 60_000
+
 const COLOR_URGENCIA = {
   alta: 'var(--color-danger)',
   media: 'var(--color-orange)',
@@ -83,6 +85,21 @@ export default function NotificacionesBell({ collapsed }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { cargar() }, [user?.id])
 
+  // Respaldo por si la suscripción en vivo (Realtime) se cae o no está
+  // habilitada: cada minuto vuelve a consultar en silencio, así la burbuja
+  // nunca queda desactualizada hasta que se recargue la página.
+  useEffect(() => {
+    if (!user?.id) return undefined
+    const timer = setInterval(async () => {
+      try {
+        setNotificaciones(await getNotificaciones(user.id))
+      } catch (err) {
+        console.error('Error al refrescar notificaciones:', err)
+      }
+    }, INTERVALO_REFRESCO_MS)
+    return () => clearInterval(timer)
+  }, [user?.id])
+
   useEffect(() => {
     if (!user?.id) return undefined
     return suscribirseANotificaciones(user.id, (nueva) => {
@@ -153,12 +170,17 @@ export default function NotificacionesBell({ collapsed }) {
         <span style={{ position: 'relative' }}>
           <Bell size={16} />
           {noLeidas.length > 0 && (
-            <span style={{
-              position: 'absolute', top: -6, right: -7, minWidth: 14, height: 14, borderRadius: 7,
-              background: 'var(--color-danger)', color: '#fff', fontSize: 10, fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px',
-            }}>
-              {noLeidas.length > 9 ? '9+' : noLeidas.length}
+            <span
+              data-testid="burbuja-notificaciones"
+              aria-label={`${noLeidas.length} notificaciones sin leer`}
+              style={{
+                position: 'absolute', top: -9, right: -12, minWidth: 18, height: 18, borderRadius: 9,
+                background: 'var(--color-danger)', color: '#fff', fontSize: 11, fontWeight: 700, lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px',
+                boxShadow: '0 0 0 2px var(--color-surface)',
+              }}
+            >
+              {noLeidas.length > 99 ? '99+' : noLeidas.length}
             </span>
           )}
         </span>
