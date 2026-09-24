@@ -14,6 +14,7 @@ import { sincronizarHistoricoUVA } from '../services/sincronizacionUva'
 import { getCuentasBancarias } from '../services/cuentasBancarias'
 import { crearRefrescador } from '../utils/precargaModulo'
 import { useAuth } from './AuthContext'
+import { esAdminCargo } from '../utils/permisos'
 
 const DataContext = createContext({})
 
@@ -35,7 +36,7 @@ const TTL_MS = 90_000
 const TIMEOUT_MS = 12_000
 
 export function DataProvider({ children }) {
-  const { user } = useAuth()
+  const { user, perfil } = useAuth()
 
   // 13 módulos de datos
   const [facturas, setFacturas] = useState([])
@@ -147,7 +148,6 @@ export function DataProvider({ children }) {
       for (const clave of MODULOS_PRECARGA_LOGIN) {
         refrescadores[clave]?.({ silencioso: true, forzar: true })
       }
-      sincronizarValoresUVA()
     } else {
       // Limpiar datos y metadata de caché al cerrar sesión
       cacheMeta.current = {}
@@ -158,6 +158,19 @@ export function DataProvider({ children }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
+
+  // La sincronización UVA escribe en valores_uva, y la RLS solo lo permite a
+  // Admin/Dueño: para un Colaborador (o mientras el perfil no cargó) no se
+  // dispara, así no llena la consola de 403. Una sola vez por usuario.
+  const uvaSincronizadoPara = useRef(null)
+  const cargo = perfil?.cargo
+  useEffect(() => {
+    if (!user) { uvaSincronizadoPara.current = null; return }
+    if (!esAdminCargo(cargo) || uvaSincronizadoPara.current === user.id) return
+    uvaSincronizadoPara.current = user.id
+    sincronizarValoresUVA()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, cargo])
 
   return (
     <DataContext.Provider value={{

@@ -13,6 +13,11 @@ export function esColaboradorCargo(cargo) {
   return cargo === 'Colaborador'
 }
 
+/** Roles administradores (Admin / Dueño): los únicos con escritura en tablas de configuración como valores_uva. */
+export function esAdminCargo(cargo) {
+  return cargo === 'Admin' || cargo === 'Dueño'
+}
+
 /**
  * ¿El rol `cargo` puede ver la ruta `ruta`?
  * - Colaborador: solo las de RUTAS_COLABORADOR ('/' exacta, el resto por prefijo).
