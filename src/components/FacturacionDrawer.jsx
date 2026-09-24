@@ -5,6 +5,7 @@ import { X, MessageCircle, Plus, Trash2, Pencil, FileText } from 'lucide-react'
 import { getFacturaById, savePago, deletePago, deleteFactura } from '../services/facturacion'
 import { fechaLocalISO } from '../utils/fecha'
 import { useDrawerTeclado } from '../hooks/useDrawerTeclado'
+import { mensajeAvisoPago } from '../utils/avisoPago'
 
 export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
   const navigate = useNavigate()
@@ -25,9 +26,12 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
     observaciones: ''
   })
   const [error, setError] = useState('')
+  // Resultado del aviso de "pago recibido" al cliente tras registrar un pago.
+  const [avisoPago, setAvisoPago] = useState(null)
 
   useEffect(() => {
     if (id) {
+      setAvisoPago(null)
       cargarDetalle()
     }
   }, [id])
@@ -95,7 +99,7 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
         fecha: fechaLocalISO(),
         monto: saldo,
         observaciones: 'Pago completo (acción rápida)'
-      })
+      }, { onAviso: setAvisoPago })
       setNuevoPago({ fecha: fechaLocalISO(), monto: '', observaciones: '' })
       setMostrandoFormPago(false)
       await cargarDetalle()
@@ -120,7 +124,7 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
         fecha: nuevoPago.fecha,
         monto: Number(nuevoPago.monto),
         observaciones: nuevoPago.observaciones || 'Pago registrado desde panel rápido'
-      })
+      }, { onAviso: setAvisoPago })
       // Limpiar y ocultar form
       setNuevoPago({
         fecha: fechaLocalISO(),
@@ -301,7 +305,21 @@ export default function FacturacionDrawer({ id, onClose, onPagoRegistrado }) {
             <div style={{ color: '#888', textAlign: 'center', padding: '20px' }}>No se pudo encontrar la información de la factura.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              
+
+              {avisoPago && (() => {
+                const m = mensajeAvisoPago(avisoPago)
+                return (
+                  <div
+                    data-testid="aviso-pago"
+                    role="status"
+                    className={m.tipo === 'error' ? 'alert alert-error' : 'alert alert-success'}
+                    style={{ margin: 0, fontSize: '13px' }}
+                  >
+                    {m.texto}
+                  </div>
+                )
+              })()}
+
               {/* Badge de Estado y Botón WhatsApp */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ 

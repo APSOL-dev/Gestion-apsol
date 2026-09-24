@@ -984,6 +984,95 @@ describe('savePago', () => {
 })
 
 // ──────────────────────────────────────────────────────────────
+// Aviso de pago recibido: quien registra el pago tiene que enterarse si el
+// aviso al cliente (webhook de n8n) salió o no. Antes, si fallaba, solo
+// quedaba en la consola y parecía que no había pasado nada.
+// ──────────────────────────────────────────────────────────────
+describe('savePago — resultado del aviso de pago recibido', () => {
+  let savePago
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    const mod = await import('../facturacion.js')
+    savePago = mod.savePago
+  })
+
+  async function armarPago({ montoPago, montoFactura = 100 }) {
+    const { supabase } = await import('../../lib/supabase')
+    supabase.from
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValueOnce({ data: { estado: 'Pendiente' }, error: null })
+      })
+      .mockReturnValueOnce({
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({ data: { id: 'pago-1', monto: montoPago }, error: null })
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValueOnce({
+          data: { id: 'factura-1', estado: 'Pendiente', prospecto_id: 'p1', monto: montoFactura, tarifa_base_uva: null, valor_uva_dia: null, porcentaje_descuento: 0 },
+          error: null
+        })
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValueOnce({ data: [{ id: 'pago-1', monto: montoPago }], error: null })
+      })
+      .mockReturnValueOnce({ update: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValueOnce({ error: null }) })
+    return import('../notificaciones.js')
+  }
+
+  test('si el pago salda la factura y el aviso sale, informa ok', async () => {
+    const { notificarFacturacion } = await armarPago({ montoPago: 100 })
+    notificarFacturacion.mockResolvedValueOnce(undefined)
+    const onAviso = vi.fn()
+
+    await savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 100 }, { onAviso })
+
+    expect(onAviso).toHaveBeenCalledTimes(1)
+    expect(onAviso).toHaveBeenCalledWith({ ok: true })
+  })
+
+  test('si el aviso falla, el pago igual se guarda y se informa el error', async () => {
+    const { notificarFacturacion } = await armarPago({ montoPago: 100 })
+    notificarFacturacion.mockRejectedValueOnce(new Error('Error al notificar al webhook de facturación (status 404)'))
+    const onAviso = vi.fn()
+    const consola = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const saved = await savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 100 }, { onAviso })
+
+    expect(saved).toEqual({ id: 'pago-1', monto: 100 })
+    expect(onAviso).toHaveBeenCalledWith({ ok: false, error: 'Error al notificar al webhook de facturación (status 404)' })
+    consola.mockRestore()
+  })
+
+  test('si es un pago parcial no hay aviso que informar', async () => {
+    const { notificarFacturacion } = await armarPago({ montoPago: 40 })
+    const onAviso = vi.fn()
+
+    await savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 40 }, { onAviso })
+
+    expect(notificarFacturacion).not.toHaveBeenCalled()
+    expect(onAviso).not.toHaveBeenCalled()
+  })
+
+  test('sin callback sigue funcionando igual que antes', async () => {
+    const { notificarFacturacion } = await armarPago({ montoPago: 100 })
+    notificarFacturacion.mockRejectedValueOnce(new Error('caído'))
+    const consola = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(savePago({ facturacion_id: 'factura-1', fecha: '2026-08-10', monto: 100 })).resolves.toBeTruthy()
+    consola.mockRestore()
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
 // BUG real: el webhook de n8n manda WhatsApp al contacto de cobro, pero
 // getFacturaById nunca traía su teléfono (el select de los joins de
 // contactos solo pedía nombre/apellido/email) — por eso llegaba el aviso

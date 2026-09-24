@@ -585,7 +585,7 @@ export async function deleteFactura(id) {
  * mueve la "Próxima Factura" del prospecto — esa avanza al emitir la
  * factura (ver saveFactura), no al cobrarla.
  */
-async function recalcularEstadoFactura(facturacionId, estadoPrevio = null) {
+async function recalcularEstadoFactura(facturacionId, estadoPrevio = null, onAviso = null) {
   const factura = await getFacturaById(facturacionId)
   if (!factura || factura.estado === 'Anulada') return
 
@@ -616,10 +616,15 @@ async function recalcularEstadoFactura(facturacionId, estadoPrevio = null) {
 
   const recienCobradaTotal = nuevoEstado === 'Cobrada total' && estadoAnterior !== 'Cobrada total'
   if (recienCobradaTotal) {
+    // El pago ya está guardado: si el aviso falla NO se revierte nada, pero
+    // se le informa a quien registró el pago (onAviso) para que no crea que
+    // el cliente fue avisado cuando no fue así.
     try {
       await notificarFacturacion('pago_recibido', factura)
+      if (onAviso) onAviso({ ok: true })
     } catch (notifError) {
       console.error('Error al notificar pago_recibido al webhook de facturación:', notifError)
+      if (onAviso) onAviso({ ok: false, error: notifError?.message || 'Error desconocido' })
     }
   }
 }
@@ -650,7 +655,13 @@ export async function actualizarCicloTarifaProspecto(prospectoId, { periodo_desd
 }
 
 // Servicios para Pagos
-export async function savePago(pago) {
+/**
+ * Guarda un pago y recalcula el estado de la factura. Si el pago la deja
+ * saldada se avisa al cliente (webhook 'pago_recibido'); el resultado de ese
+ * aviso se informa por onAviso({ ok, error? }) (solo cuando corresponde
+ * avisar: un pago parcial no dispara ninguno).
+ */
+export async function savePago(pago, { onAviso } = {}) {
   // Limpiar campos de joins
   const { cuentas_bancarias, ...dataToSave } = pago
 
@@ -691,7 +702,7 @@ export async function savePago(pago) {
     saved = data
   }
 
-  await recalcularEstadoFactura(dataToSave.facturacion_id, estadoPrevio)
+  await recalcularEstadoFactura(dataToSave.facturacion_id, estadoPrevio, onAviso)
   return saved
 }
 

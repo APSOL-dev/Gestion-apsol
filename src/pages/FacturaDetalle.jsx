@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Trash2, Receipt, DollarSign, Calendar, UploadCloud, Plus, Search, Copy, Check, FileText, Upload, Briefcase, Building2, Download } from 'lucide-react'
+import { mensajeAvisoPago } from '../utils/avisoPago'
 import { getFacturaById, saveFactura, deleteFactura, savePago, deletePago, getNextInvoiceNumber, calcularMontosFactura, calcularPrefillFactura, getUltimaFacturaProspecto, prepararFacturaParaGuardar, componerLeyendaFactura, fechaReferenciaUva, validarFacturaParaGuardar, decidirActualizacionTarifa, calcularCicloTarifaTrasActualizar, actualizarCicloTarifaProspecto } from '../services/facturacion'
 import BotonCopiar from '../components/BotonCopiar'
 import { useData } from '../context/DataContext'
@@ -102,6 +103,8 @@ export default function FacturaDetalle() {
   // Estado para modal de nuevo pago
   const [mostrandoFormPago, setMostrandoFormPago] = useState(false)
   const [nuevoPago, setNuevoPago] = useState({ fecha: fechaLocalISO(), monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
+  // Resultado del aviso de "pago recibido" al cliente tras registrar un pago.
+  const [avisoPago, setAvisoPago] = useState(null)
   const [mostrarContacto2, setMostrarContacto2] = useState(false)
 
   // Borrador local (localStorage) para "Nueva Factura": lo que hay guardado
@@ -723,12 +726,13 @@ export default function FacturaDetalle() {
     e.preventDefault()
     if (!nuevoPago.monto || !nuevoPago.fecha) return
 
+    setAvisoPago(null)
     try {
       await savePago({
         ...nuevoPago,
         facturacion_id: id,
         cuenta_bancaria_id: nuevoPago.cuenta_bancaria_id || null
-      })
+      }, { onAviso: setAvisoPago })
       setNuevoPago({ fecha: fechaLocalISO(), monto: 0, cuenta_bancaria_id: '', comprobante: '', observaciones: '' })
       setMostrandoFormPago(false)
 
@@ -948,6 +952,11 @@ export default function FacturaDetalle() {
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: '20px' }}>{error}</div>}
+      {avisoPago && (
+        <div data-testid="aviso-pago" role="status" className={mensajeAvisoPago(avisoPago).tipo === 'error' ? 'alert alert-error' : 'alert alert-success'} style={{ marginBottom: '20px' }}>
+          {mensajeAvisoPago(avisoPago).texto}
+        </div>
+      )}
 
       {esNueva && borrador && !factura.prospecto_id && (
         <div className="alert alert-warning" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
