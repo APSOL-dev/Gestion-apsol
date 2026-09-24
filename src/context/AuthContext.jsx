@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { esAdminCargo } from '../utils/permisos'
 
 const AuthContext = createContext({})
 
@@ -138,7 +139,7 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut()
   }
 
-  const esDuenio = perfil?.cargo === 'Admin' || perfil?.cargo === 'Dueño'
+  const esDuenio = esAdminCargo(perfil?.cargo)
   const esColaborador = perfil?.cargo === 'Colaborador'
   const esTeamLead = perfil?.es_team_lead === true
 
