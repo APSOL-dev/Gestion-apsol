@@ -24,6 +24,13 @@ describe('rutaVisibleParaRol', () => {
     }
   })
 
+  it('Colaborador entra a Keys y también puede cargar una nueva', () => {
+    expect(rutaVisibleParaRol('/keys', 'Colaborador')).toBe(true)
+    expect(rutaVisibleParaRol('/keys/abc-123', 'Colaborador')).toBe(true)
+    expect(rutaVisibleParaRol('/keys/nueva', 'Colaborador')).toBe(true)
+    expect(rutaVisibleParaRol('/keys/nueva', 'Admin')).toBe(true)
+  })
+
   it('Admin y Dueño ven todo, salvo "Mi Perfil"', () => {
     for (const cargo of ['Admin', 'Dueño']) {
       expect(rutaVisibleParaRol('/facturacion', cargo)).toBe(true)

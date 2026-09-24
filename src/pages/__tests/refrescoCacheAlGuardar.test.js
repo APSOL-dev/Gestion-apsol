@@ -24,7 +24,8 @@ function leer(nombre) {
 const PANTALLAS = {
   'ProspectoDetalle.jsx': ['refreshProspectos'],
   'EmpresaDetalle.jsx': ['refreshEmpresas'],
-  'ContactoDetalle.jsx': ['refreshContactos']
+  'ContactoDetalle.jsx': ['refreshContactos'],
+  'KeyDetalle.jsx': ['refreshCredenciales']
 }
 
 describe('Detalle: refresca la caché de DataContext al guardar', () => {

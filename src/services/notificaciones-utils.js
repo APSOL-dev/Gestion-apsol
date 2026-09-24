@@ -114,6 +114,7 @@ export const URGENCIA_POR_TIPO = {
   sprint_item_rojo: 'alta',
   factura_colaborador_pagar: 'media',
   factura_colaborador_pagada: 'alta',
+  key_nueva: 'media',
 }
 
 export const ETIQUETA_POR_TIPO = {
@@ -121,6 +122,7 @@ export const ETIQUETA_POR_TIPO = {
   sprint_item_rojo: 'Punto de sprint bloqueado',
   factura_colaborador_pagar: 'Factura de colaborador para pagar',
   factura_colaborador_pagada: 'Me pagaron una factura',
+  key_nueva: 'Un colaborador cargó una key',
 }
 
 // Fase 3: preferencias por usuario (apsol_usuarios.notif_tipos_desactivados).
@@ -141,6 +143,7 @@ export function linkDeNotificacion(n) {
   switch (n?.entidad_tipo) {
     case 'ticket': return `/tickets/${n.entidad_id}`
     case 'sprint': return `/sprints/${n.entidad_id}`
+    case 'key': return `/keys/${n.entidad_id}`
     case 'colaborador':
       return n.tipo === 'factura_colaborador_pagada' ? '/mi-perfil' : `/colaboradores/${n.entidad_id}`
     default: return '/'

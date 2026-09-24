@@ -216,6 +216,10 @@ describe('linkDeNotificacion', () => {
     expect(linkDeNotificacion({ tipo: 'factura_colaborador_pagada', entidad_tipo: 'colaborador', entidad_id: 'c1' })).toBe('/mi-perfil')
   })
 
+  test('key_nueva (un colaborador cargó una key) -> la ficha de la key', () => {
+    expect(linkDeNotificacion({ tipo: 'key_nueva', entidad_tipo: 'key', entidad_id: 'k1' })).toBe('/keys/k1')
+  })
+
   test('tipo desconocido no rompe, manda a Inicio', () => {
     expect(linkDeNotificacion({ tipo: 'algo_nuevo', entidad_tipo: 'algo', entidad_id: 'x' })).toBe('/')
     expect(linkDeNotificacion({})).toBe('/')
@@ -224,7 +228,7 @@ describe('linkDeNotificacion', () => {
 
 describe('URGENCIA_POR_TIPO', () => {
   test('todos los tipos de evento conocidos tienen una urgencia asignada', () => {
-    for (const tipo of ['ticket_asignado', 'sprint_item_rojo', 'factura_colaborador_pagar', 'factura_colaborador_pagada']) {
+    for (const tipo of ['ticket_asignado', 'sprint_item_rojo', 'factura_colaborador_pagar', 'factura_colaborador_pagada', 'key_nueva']) {
       expect(['alta', 'media', 'baja']).toContain(URGENCIA_POR_TIPO[tipo])
     }
   })

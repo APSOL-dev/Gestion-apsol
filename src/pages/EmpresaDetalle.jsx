@@ -4,6 +4,7 @@ import { ArrowLeft, Save, Trash2, Building2, Plus, ChevronRight, Globe, FileText
 import { getEmpresaById, saveEmpresa, deleteEmpresa, getEmpresas, saveRazonSocial, deleteRazonSocial } from '../services/empresas'
 import { getContactos, saveContacto } from '../services/contactos'
 import { useData } from '../context/DataContext'
+import KeysDeEmpresa from '../components/KeysDeEmpresa'
 
 const PAISES_LATAM = [
   'Argentina', 'Bolivia', 'Brasil', 'Chile', 'Colombia', 'Costa Rica', 'Cuba', 
@@ -206,7 +207,7 @@ export default function EmpresaDetalle() {
       'Eliminar esta empresa también borrará permanentemente: \n' +
       '• Todos sus contactos asociados \n' +
       '• Todos sus prospectos y proyectos \n' +
-      '• Sus razones sociales y credenciales \n\n' +
+      '• Sus razones sociales y keys \n\n' +
       'Esta acción no se puede deshacer.'
     )
     
@@ -540,6 +541,8 @@ export default function EmpresaDetalle() {
                 </div>
               )}
             </div>
+
+            <KeysDeEmpresa empresaId={id} />
           </div>
         )}
 

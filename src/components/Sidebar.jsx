@@ -53,7 +53,7 @@ const navSections = [
       { to: '/facturacion', icon: Receipt, label: 'Facturación' },
       { to: '/colaboradores', icon: UserCog, label: 'Colaboradores' },
       { to: '/capacitacion', icon: BookOpen, label: 'Capacitación' },
-      { to: '/credenciales', icon: KeyRound, label: 'Credenciales' },
+      { to: '/keys', icon: KeyRound, label: 'Keys' },
     ]
   },
   {

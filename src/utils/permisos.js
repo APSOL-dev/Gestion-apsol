@@ -7,7 +7,7 @@
  * (Admin, Dueño) ve todo, salvo "Mi Perfil" que es exclusivo de Colaborador
  * (el Admin gestiona su cuenta desde Colaboradores).
  */
-export const RUTAS_COLABORADOR = ['/', '/mi-perfil', '/cronograma', '/proyectos', '/sprints', '/tickets', '/preventivos']
+export const RUTAS_COLABORADOR = ['/', '/mi-perfil', '/cronograma', '/proyectos', '/sprints', '/tickets', '/preventivos', '/keys']
 
 export function esColaboradorCargo(cargo) {
   return cargo === 'Colaborador'

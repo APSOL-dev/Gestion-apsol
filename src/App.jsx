@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react'
 import { 
   LayoutDashboard, Building2, Users, FileText, Target, Briefcase, 
   Wrench, Activity, GraduationCap, Calendar as CalendarIcon, 
-  ShieldCheck, Receipt, DollarSign, Wallet, Mail, Menu, X, ChevronLeft, ChevronRight, LogOut, Pin, HelpCircle, UserCircle
+  ShieldCheck, KeyRound, Receipt, DollarSign, Wallet, Mail, Menu, X, ChevronLeft, ChevronRight, LogOut, Pin, HelpCircle, UserCircle
 } from 'lucide-react'
 import PageLoader from './components/PageLoader'
 import NotificacionesBell from './components/NotificacionesBell'
@@ -22,7 +22,7 @@ const MiPerfil         = lazy(() => import('./pages/MiPerfil'))
 const ICON_MAP = {
   LayoutDashboard, Building2, Users, FileText, Target, Briefcase, 
   Wrench, Activity, GraduationCap, Calendar: CalendarIcon, 
-  ShieldCheck, Receipt, DollarSign, Wallet, Mail, Menu, X, Pin
+  ShieldCheck, KeyRound, Receipt, DollarSign, Wallet, Mail, Menu, X, Pin
 }
 
 const Empresas         = lazy(() => import('./pages/Empresas'))
@@ -49,8 +49,8 @@ const PreventivoDetalle = lazy(() => import('./pages/PreventivoDetalle'))
 const Capacitacion        = lazy(() => import('./pages/Capacitacion'))
 const CapacitacionDetalle = lazy(() => import('./pages/CapacitacionDetalle'))
 const Cronograma          = lazy(() => import('./pages/Cronograma'))
-const Credenciales        = lazy(() => import('./pages/Credenciales'))
-const CredencialDetalle   = lazy(() => import('./pages/CredencialDetalle'))
+const Keys                = lazy(() => import('./pages/Keys'))
+const KeyDetalle          = lazy(() => import('./pages/KeyDetalle'))
 const Planificacion       = lazy(() => import('./pages/Planificacion'))
 const PlanDetalle         = lazy(() => import('./pages/PlanDetalle'))
 const Sprints             = lazy(() => import('./pages/Sprints'))
@@ -196,7 +196,7 @@ function Layout() {
       id: 'Configuración',
       icon: 'ShieldCheck',
       items: [
-        { to: '/credenciales', icon: 'ShieldCheck', label: 'Credenciales' },
+        { to: '/keys', icon: 'KeyRound', label: 'Keys' },
         { to: '/valores-uva', icon: 'DollarSign', label: 'Valores UVA' },
         { to: '/cuentas-bancarias', icon: 'Wallet', label: 'Cuentas Bancarias' },
       ]
@@ -444,10 +444,12 @@ export default function App() {
                   <Route path=":id" element={<PlanDetalle />} />
                 </Route>
                 <Route path="cronograma" element={<Cronograma />} />
-                <Route path="credenciales">
-                  <Route index element={<Credenciales />} />
-                  <Route path=":id" element={<CredencialDetalle />} />
+                <Route path="keys">
+                  <Route index element={<Keys />} />
+                  <Route path=":id" element={<KeyDetalle />} />
                 </Route>
+                {/* Nombre viejo de la sección: favoritos/links guardados */}
+                <Route path="credenciales/*" element={<Navigate to="/keys" replace />} />
               </Route>
             </Routes>
           </Suspense>
