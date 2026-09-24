@@ -34,6 +34,7 @@ describe('KeysDeEmpresa (bloque en la ficha de la empresa)', () => {
     expect(screen.queryByText('Otra empresa')).not.toBeInTheDocument()
     expect(screen.queryByText('Propia')).not.toBeInTheDocument()
     expect(screen.queryByText('SECRETO')).not.toBeInTheDocument()
+    expect(screen.queryByText('Alta')).not.toBeInTheDocument()
     expect(refreshCredenciales).toHaveBeenCalled()
   })
 

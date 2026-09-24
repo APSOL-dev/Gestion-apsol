@@ -3,14 +3,12 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, KeyRound, ExternalLink, ShieldAlert, RotateCcw } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
-import { getColaboradoresLista } from '../services/colaboradores'
 import {
-  filtrarKeys, ordenarKeys, linkDeKey, nombresLectores, esAdminKeys,
-  tiposDisponibles, CRITICIDADES,
+  filtrarKeys, ordenarKeys, linkDeKey, esAdminKeys, tiposDisponibles,
 } from '../utils/keys'
-import { BotonCopiar, BadgeCriticidad } from '../components/KeysUI'
+import { BotonCopiar } from '../components/KeysUI'
 
-const FILTROS_INICIALES = { busqueda: '', ambito: 'Todo', tipo: '', criticidad: '', verInactivas: false }
+const FILTROS_INICIALES = { busqueda: '', ambito: 'Todo', tipo: '', verInactivas: false }
 
 export default function Keys() {
   const { credenciales, loadingCredenciales, errorCredenciales, refreshCredenciales } = useData()
@@ -19,19 +17,11 @@ export default function Keys() {
   const navigate = useNavigate()
 
   const [filtros, setFiltros] = useState(FILTROS_INICIALES)
-  const [colaboradores, setColaboradores] = useState([])
 
   useEffect(() => {
     refreshCredenciales?.({ silencioso: (credenciales || []).length > 0 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  useEffect(() => {
-    if (!esAdmin) return
-    getColaboradoresLista({ soloActivos: false })
-      .then(setColaboradores)
-      .catch(err => console.error(err))
-  }, [esAdmin])
 
   const keys = useMemo(() => credenciales || [], [credenciales])
   const set = (campo) => (valor) => setFiltros(f => ({ ...f, [campo]: valor }))
@@ -94,11 +84,6 @@ export default function Keys() {
           {tipos.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        <select aria-label="Filtrar por criticidad" value={filtros.criticidad} onChange={e => set('criticidad')(e.target.value)}>
-          <option value="">Toda criticidad</option>
-          {CRITICIDADES.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-
         <label className="keys-check">
           <input
             type="checkbox"
@@ -159,14 +144,12 @@ export default function Keys() {
                 <th>Cliente</th>
                 <th>Usuario</th>
                 <th>Contraseña</th>
-                {esAdmin && <th>Lectores</th>}
                 <th aria-label="Link" />
               </tr>
             </thead>
             <tbody>
               {visibles.map(k => {
                 const link = linkDeKey(k)
-                const lectores = nombresLectores(k.lectores, colaboradores)
                 return (
                   <tr
                     key={k.id}
@@ -177,7 +160,6 @@ export default function Keys() {
                     <td>
                       <div className="keys-nombre">
                         <Link to={`/keys/${k.id}`} data-testid="nombre-key" onClick={e => e.stopPropagation()}>{k.nombre}</Link>
-                        <BadgeCriticidad criticidad={k.criticidad} />
                         {k.estado === 'Inactivo' && <span className="badge badge-gray">Inactiva</span>}
                       </div>
                     </td>
@@ -187,7 +169,7 @@ export default function Keys() {
                     <td data-label="Usuario">
                       {k.usuario ? (
                         <div className="keys-celda-copiable">
-                          <span className="keys-mono">{k.usuario}</span>
+                          <span className="keys-mono keys-recortar" title={k.usuario}>{k.usuario}</span>
                           <BotonCopiar texto={k.usuario} etiqueta="Copiar usuario" />
                         </div>
                       ) : <span className="keys-muted">—</span>}
@@ -198,11 +180,6 @@ export default function Keys() {
                         <BotonCopiar texto={k.password} etiqueta="Copiar contraseña" />
                       </div>
                     </td>
-                    {esAdmin && (
-                      <td className="keys-muted keys-lectores" data-label="Lectores">
-                        {lectores.length ? lectores.map((n, i) => <span key={i}>{n}</span>) : 'Solo admins'}
-                      </td>
-                    )}
                     <td>
                       {link && (
                         <a

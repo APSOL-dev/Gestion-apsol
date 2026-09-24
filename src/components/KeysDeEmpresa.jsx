@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { KeyRound, Plus, ChevronRight } from 'lucide-react'
 import { useData } from '../context/DataContext'
 import { ordenarKeys } from '../utils/keys'
-import { BadgeCriticidad } from './KeysUI'
 
 /** Bloque "Keys" dentro de la ficha de una empresa (solo admins la ven). */
 export default function KeysDeEmpresa({ empresaId }) {
@@ -36,7 +35,6 @@ export default function KeysDeEmpresa({ empresaId }) {
               <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                 <span style={{ fontWeight: 500, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   {k.nombre}
-                  <BadgeCriticidad criticidad={k.criticidad} />
                   {k.estado === 'Inactivo' && <span className="badge badge-gray">Inactiva</span>}
                 </span>
                 <span style={{ fontSize: '11px', opacity: 0.6 }}>{k.servicio} · {k.tipo}</span>

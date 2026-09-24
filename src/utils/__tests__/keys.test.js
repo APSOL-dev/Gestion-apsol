@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest'
 import {
   TIPOS_KEY, CRITICIDADES, KEY_VACIA,
   validarKey, prepararKeyParaGuardar, filtrarKeys, ordenarKeys,
-  urlAbrible, linkDeKey, generarPassword, cadenaConexionBD, nombresLectores,
+  urlAbrible, linkDeKey, generarPassword, cadenaConexionBD,
   esAdminKeys, puedeEditarKey, validarArchivoKey, tiposDisponibles, hayCambiosKey,
 } from '../keys'
 
@@ -131,15 +131,15 @@ describe('filtrarKeys', () => {
 })
 
 describe('ordenarKeys', () => {
-  test('primero las de criticidad Alta, después Media y Baja; dentro, por nombre', () => {
+  test('orden alfabético por nombre, sin importar mayúsculas ni acentos', () => {
     const l = [
-      { nombre: 'b', criticidad: 'Baja' }, { nombre: 'z', criticidad: 'Alta' },
-      { nombre: 'a', criticidad: 'Media' }, { nombre: 'c', criticidad: 'Alta' },
+      { nombre: 'b', criticidad: 'Baja' }, { nombre: 'Z', criticidad: 'Alta' },
+      { nombre: 'á', criticidad: 'Media' }, { nombre: 'c', criticidad: 'Alta' },
     ]
-    expect(ordenarKeys(l).map(k => k.nombre)).toEqual(['c', 'z', 'a', 'b'])
+    expect(ordenarKeys(l).map(k => k.nombre)).toEqual(['á', 'b', 'c', 'Z'])
   })
   test('no modifica la lista original', () => {
-    const l = [{ nombre: 'b', criticidad: 'Baja' }, { nombre: 'a', criticidad: 'Alta' }]
+    const l = [{ nombre: 'b' }, { nombre: 'a' }]
     ordenarKeys(l)
     expect(l[0].nombre).toBe('b')
   })
@@ -207,16 +207,6 @@ describe('cadenaConexionBD', () => {
     expect(cadenaConexionBD({ ...bd, tipo: 'API' })).toBeNull()
     expect(cadenaConexionBD({ ...bd, url: '' })).toBeNull()
     expect(cadenaConexionBD({ ...bd, usuario: '' })).toBeNull()
-  })
-})
-
-describe('nombresLectores', () => {
-  const colabs = [{ id: 'a', nombre: 'Santiago', apellido: 'Pérez' }, { id: 'b', nombre: 'Renata', apellido: null }]
-  test('devuelve los nombres en el orden guardado y avisa si alguno ya no existe', () => {
-    expect(nombresLectores(['b', 'a', 'x'], colabs)).toEqual(['Renata', 'Santiago Pérez', 'Colaborador eliminado'])
-  })
-  test('sin lectores, lista vacía', () => {
-    expect(nombresLectores(null, colabs)).toEqual([])
   })
 })
 

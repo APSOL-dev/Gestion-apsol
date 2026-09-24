@@ -62,9 +62,19 @@ describe('Keys (lista)', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('tori@gmail.com'))
   })
 
-  test('las de criticidad Alta van primero y las inactivas no se ven', () => {
+  test('orden alfabético y las inactivas no se ven', () => {
     renderLista()
-    expect(nombresFilas()).toEqual(['Email Tori', 'Chat GPT'])
+    expect(nombresFilas()).toEqual(['Chat GPT', 'Email Tori'])
+  })
+
+  test('la lista es limpia: sin criticidad ni lectores', () => {
+    renderLista()
+    expect(screen.queryByText('Alta')).not.toBeInTheDocument()
+    expect(screen.queryByText('Media')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Filtrar por criticidad')).not.toBeInTheDocument()
+    expect(screen.queryByText('Lectores')).not.toBeInTheDocument()
+    expect(screen.queryByText('Solo admins')).not.toBeInTheDocument()
+    expect(getColaboradoresLista).not.toHaveBeenCalled()
   })
 
   test('"Ver inactivas" las muestra', () => {
@@ -103,23 +113,12 @@ describe('Keys (lista)', () => {
     expect(within(tori).getByText('Conexion Market')).toBeInTheDocument()
   })
 
-  test('el admin ve quién puede leer cada key', async () => {
-    renderLista()
-    const fila = filas().find(f => f.textContent.includes('Chat GPT'))
-    expect(await within(fila).findByText('Santiago Pérez')).toBeInTheDocument()
-    const tori = filas().find(f => f.textContent.includes('Email Tori'))
-    expect(within(tori).getByText('Solo admins')).toBeInTheDocument()
-  })
-
-  test('admin y colaborador pueden cargar keys; solo el admin ve la columna de lectores', () => {
+  test('admin y colaborador pueden cargar keys', () => {
     const { unmount } = renderLista()
     expect(screen.getByRole('link', { name: /Nueva key/i })).toHaveAttribute('href', '/keys/nueva')
     unmount()
-    getColaboradoresLista.mockClear()
     renderLista({ cargo: 'Colaborador' })
     expect(screen.getByRole('link', { name: /Nueva key/i })).toHaveAttribute('href', '/keys/nueva')
-    expect(screen.queryByText('Lectores')).not.toBeInTheDocument()
-    expect(getColaboradoresLista).not.toHaveBeenCalled()
   })
 
   test('el colaborador también puede ver sus keys dadas de baja', () => {

@@ -2788,7 +2788,10 @@ fieldset[disabled] .herr-chip {
 .keys-check input { width: auto; }
 
 .keys-tabla { overflow-x: auto; }
-.keys-tabla table { min-width: 860px; }
+.keys-tabla table { min-width: 760px; }
+.keys-tabla td:first-child { min-width: 170px; }
+.keys-tabla td[data-label="Servicio"] { overflow-wrap: anywhere; min-width: 140px; }
+.keys-recortar { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .keys-tabla tbody tr { cursor: pointer; }
 .keys-tabla tbody tr.is-inactiva { opacity: 0.55; }
 .keys-nombre { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -2798,7 +2801,6 @@ fieldset[disabled] .herr-chip {
 .keys-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
 .keys-romper { word-break: break-all; }
 .keys-celda-copiable { display: inline-flex; align-items: center; gap: 4px; }
-.keys-lectores { display: flex; flex-wrap: wrap; gap: 4px 8px; max-width: 220px; }
 
 .key-icon-btn {
   position: relative;
@@ -2890,7 +2892,8 @@ fieldset[disabled] .herr-chip {
   .keys-tabla table { min-width: 0; }
   .keys-tabla tbody tr { cursor: pointer; }
   .keys-tabla td[data-label] { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-  .keys-lectores { max-width: none; }
+  .keys-tabla td:first-child { min-width: 0; }
+  .keys-recortar { max-width: 60vw; }
   .keys-tabs button { flex: 1; justify-content: center; padding: 7px 8px; }
   .keys-dato { grid-template-columns: 1fr; gap: 4px; }
   .keys-acciones { position: sticky; bottom: 0; background: var(--color-bg, var(--color-surface)); padding: 12px 0; margin-bottom: 0; }

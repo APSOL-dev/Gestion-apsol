@@ -81,12 +81,9 @@ export function filtrarKeys(keys, f = {}) {
   })
 }
 
-const PESO_CRITICIDAD = { Alta: 0, Media: 1, Baja: 2 }
-
-/** Alta primero, después Media y Baja; dentro de cada una, por nombre. */
+/** Orden alfabético por nombre (sin distinguir mayúsculas ni acentos). */
 export function ordenarKeys(keys) {
   return [...(keys || [])].sort((a, b) =>
-    (PESO_CRITICIDAD[a.criticidad] ?? 1) - (PESO_CRITICIDAD[b.criticidad] ?? 1) ||
     texto(a.nombre).localeCompare(texto(b.nombre), 'es', { sensitivity: 'base' })
   )
 }
@@ -144,13 +141,6 @@ export function cadenaConexionBD(key) {
 
 export function nombreColaborador(c) {
   return [c?.nombre, c?.apellido].filter(Boolean).join(' ')
-}
-
-export function nombresLectores(ids, colaboradores) {
-  return (ids || []).map(id => {
-    const c = (colaboradores || []).find(x => x.id === id)
-    return c ? nombreColaborador(c) : 'Colaborador eliminado'
-  })
 }
 
 // Lo que la persona edita en el formulario. El adjunto no va: se guarda
